@@ -94,18 +94,20 @@ func RootCmd() *cobra.Command {
 	}
 	compare.Flags().StringVar(&manifests, "manifests", "", "directory to write NAME.md5 into (empty: do not write)")
 	file := &cobra.Command{
-		Use: "file PATH", Short: "compare a real MP4/MKV file; prints hashes only", Args: cobra.ExactArgs(1),
+		Use: "file PATH...", Short: "compare real MP4/MKV files; prints hashes only", Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			r, err := compareFile(args[0])
-			fmt.Fprintf(cmd.OutOrStdout(), "%s | frames %d/%d | match %v | md5-of-md5s %s\n",
-				filepath.Base(args[0]), r.Ours, r.Ref, r.Match, r.Digest)
-			if err != nil {
-				return err
+			var failed error
+			for _, p := range args {
+				start := time.Now()
+				r, err := compareFile(p)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s | %s | frames %d/%d | match %v | md5-of-md5s %s | ours %.1fs | %v\n",
+					filepath.Base(p), r.Profile, r.Ours, r.Ref, r.Match, r.Digest, r.Seconds, err)
+				_ = start
+				if err != nil || !r.Match {
+					failed = errors.New("a file did not match")
+				}
 			}
-			if !r.Match {
-				return errors.New("no match")
-			}
-			return nil
+			return failed
 		},
 	}
 	bits := &cobra.Command{
@@ -126,7 +128,7 @@ func RootCmd() *cobra.Command {
 			return nil
 		},
 	}
-	root.AddCommand(fetch, compare, file, bits)
+	root.AddCommand(fetch, compare, file, bits, diffCmd(), clipCmd(), seedsCmd())
 	return root
 }
 
@@ -227,6 +229,7 @@ type result struct {
 	Match         bool
 	Err           string
 	Digest        string
+	Seconds       float64 // decode time of our decoder, wall clock
 }
 
 func (r result) row() string {
@@ -261,12 +264,21 @@ func compareBitstream(r result, path, manifests string) result {
 		return r
 	}
 	r.Ref = len(ref)
-	ours, err := decodeAnnexB(data)
+	ours, size, err := decodeAnnexBSize(data)
 	r.Ours = len(ours)
 	if err != nil {
 		r.Err = err.Error()
 	}
 	r.Match = err == nil && equal(ours, ref)
+	if err == nil && !r.Match {
+		r.Err = fmt.Sprintf("first difference at picture %d", firstDiff(ours, ref))
+	}
+	if y := refYUV(path); y != "" {
+		if yref, yerr := yuvMD5s(y, size); yerr == nil {
+			r.Err += fmt.Sprintf(" [conformance yuv: %d pictures, ours equal %v, ffmpeg equal %v]",
+				len(yref), equal(ours, yref), equal(ref, yref))
+		}
+	}
 	if r.Match && manifests != "" {
 		if err := writeManifest(filepath.Join(manifests, r.Name+".md5"), ref); err != nil {
 			r.Err = err.Error()
@@ -292,7 +304,14 @@ func compareFile(path string) (result, error) {
 			break
 		}
 	}
+	start := time.Now()
 	frames, err := decode.DecodeTrack(rd, id, decode.Config{MaxFrameMBs: 1 << 17})
+	r.Seconds = time.Since(start).Seconds()
+	for _, t := range rd.File().Tracks {
+		if t.ID == id {
+			r.Profile = fmt.Sprintf("%s %dx%d", t.Codec, t.Width, t.Height)
+		}
+	}
 	ours := make([]string, len(frames))
 	for i, f := range frames {
 		ours[i] = frameMD5(f)
@@ -310,6 +329,17 @@ func compareFile(path string) (result, error) {
 	sum := md5.Sum([]byte(strings.Join(ours, "\n")))
 	r.Digest = hex.EncodeToString(sum[:])
 	return r, nil
+}
+
+// firstDiff is the index of the first picture where a and b differ, or the
+// length of the shorter when one is a prefix of the other.
+func firstDiff(a, b []string) int {
+	for i := range min(len(a), len(b)) {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return min(len(a), len(b))
 }
 
 func equal(a, b []string) bool {
@@ -335,15 +365,21 @@ func frameMD5(f decode.Frame) string {
 // decodeAnnexB decodes a whole raw stream, returning each picture's MD5 in
 // display order. Pictures decoded before an error are kept.
 func decodeAnnexB(data []byte) ([]string, error) {
+	out, _, err := decodeAnnexBSize(data)
+	return out, err
+}
+
+// decodeAnnexBSize also returns the byte size of one picture.
+func decodeAnnexBSize(data []byte) (out []string, size int, err error) {
 	d, err := decode.New(decode.Config{MaxFrameMBs: 1 << 17}, 4)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer d.Close()
-	var out []string
 	add := func(fs []decode.Frame) {
 		for _, f := range fs {
 			out = append(out, frameMD5(f))
+			size = len(f.Y) + len(f.Cb) + len(f.Cr)
 		}
 	}
 	const chunk = 1 << 20
@@ -352,13 +388,37 @@ func decodeAnnexB(data []byte) ([]string, error) {
 		fs, err := d.DecodeAnnexB(data[:n])
 		add(fs)
 		if err != nil {
-			return out, err
+			return out, size, err
 		}
 		data = data[n:]
 	}
 	fs, err := d.Flush()
 	add(fs)
-	return out, err
+	return out, size, err
+}
+
+// yuvMD5s hashes a conformance suite's own reference output, a concatenation
+// of size-byte pictures, so that ffmpeg is not the only witness.
+func yuvMD5s(path string, size int) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil || size <= 0 {
+		return nil, fmt.Errorf("no reference yuv (%v)", err)
+	}
+	var out []string
+	for ; len(data) >= size; data = data[size:] {
+		s := md5.Sum(data[:size])
+		out = append(out, hex.EncodeToString(s[:]))
+	}
+	return out, nil
+}
+
+// refYUV finds the suite's reference output beside a bitstream.
+func refYUV(bitstream string) string {
+	m, _ := filepath.Glob(filepath.Join(filepath.Dir(bitstream), "*.yuv"))
+	if len(m) == 1 {
+		return m[0]
+	}
+	return ""
 }
 
 // ffmpegMD5s runs ffmpeg -f framemd5 and returns the MD5 column. forceH264
@@ -374,7 +434,9 @@ func ffmpegMD5s(path string, forceH264 bool) ([]string, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		// ffmpeg repeats one message per slice; the first line says it all.
+		first, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n")
+		return nil, fmt.Errorf("%w: %.120s", err, first)
 	}
 	return parseFrameMD5(out)
 }
