@@ -77,9 +77,12 @@ committed corpus (`testdata/fuzz`, from `go run ./tools/jvt seeds`) and run in C
   Table 7-9), 8.2.1 (tempPicOrderCnt after operation 5; 8.2.1.1 to 8.2.1.3
   prevPicOrderCntMsb/Lsb and prevFrameNumOffset after it), 8.2.5.1 to 8.2.5.4
   (marking, gaps in frame_num, sliding window) and C.4.4 (output order and
-  operation 5). The fix upstream (oops1/go.264#2) follows those clauses.
-  Known approximation: prevPicOrderCntLsb after operation 5 is set to 0, which
-  is exact unless delta_pic_order_cnt_bottom is negative.
+  operation 5). The fix upstream (oops1/go.264#2) follows those clauses,
+  including the rebased prevPicOrderCntLsb. ffmpeg (libavcodec h264_refs.c,
+  h264_picture.c, h264_slice.c, h264_parse.c, opened) sets frame_num to 0 on
+  MMCO_RESET and takes the frame order count as the Min of the two field
+  counts; I found no rebase of prev_poc_lsb in those files. The spec text is
+  the reference.
 * ITU-T H.264.1, conformance specification and the bitstream list at
   <https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/AVCv1/> (listing
   and each stream's readme opened).
