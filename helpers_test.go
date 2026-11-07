@@ -39,6 +39,8 @@ func reference(t *testing.T, stream string) []string {
 	t.Helper()
 	var md5s []string
 	for _, l := range strings.Split(string(readFile(t, strings.TrimSuffix(stream, ".264")+".md5")), "\n") {
+		// A checkout with autocrlf (Windows) ends the lines with \r\n.
+		l = strings.TrimRight(l, "\r")
 		if l != "" && l[0] != '#' {
 			md5s = append(md5s, l)
 		}
