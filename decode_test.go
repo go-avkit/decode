@@ -252,7 +252,7 @@ func TestParameterSetRefusals(t *testing.T) {
 	}
 }
 
-// sps writes a Main profile sequence parameter set (H.264 section 7.3.2.1.1)
+// sps writes a Main profile sequence parameter set (H.264 clause 7.3.2.1, seq_parameter_set_data)
 // for a picture of w x h macroblocks.
 func sps(w, h int, frameMbsOnly bool) []byte {
 	var b bitWriter

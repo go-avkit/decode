@@ -10,7 +10,7 @@
 // for and the conformance bitstreams it was measured on.
 //
 // Input is what a container hands over: an AVCDecoderConfigurationRecord
-// (ISO/IEC 14496-15 section 5.3.3.1) or the parameter sets of a
+// (ISO/IEC 14496-15) or the parameter sets of a
 // container.TrackConfig, then one length-prefixed access unit per sample.
 // Output is every picture in display order as planar YUV, with its chroma
 // format, bit depth and presentation time.
@@ -50,7 +50,7 @@ var (
 // bounded before the first of them is.
 const (
 	// DefaultMaxFrameMBs is 36864 macroblocks, a 4096x2304 picture: level 5.1
-	// of H.264 Table A-1.
+	// of H.264 Annex A.
 	DefaultMaxFrameMBs = 36864
 	// DefaultMaxSampleBytes is 64 MiB, far above any single access unit a
 	// level 6.2 stream can carry at its maximum bit rate and frame rate.
@@ -65,7 +65,7 @@ type Config struct {
 	// MaxSampleBytes is the largest sample (access unit) accepted.
 	MaxSampleBytes int
 	// EnforceLevel also refuses a stream that exceeds its own declared
-	// level's limits (Table A-1), where MaxFrameMBs alone would admit it.
+	// level's limits (Annex A), where MaxFrameMBs alone would admit it.
 	EnforceLevel bool
 }
 
@@ -86,7 +86,7 @@ func (c Config) sampleBytes() int {
 // Chroma is the chroma sampling of a Frame.
 type Chroma uint8
 
-// The chroma formats of H.264 (chroma_format_idc, Table 6-1). Only Chroma420 is
+// The chroma formats of H.264 (chroma_format_idc). Only Chroma420 is
 // produced today; the others are named so that a Frame can describe the
 // profiles that are not decoded yet without an API change.
 const (

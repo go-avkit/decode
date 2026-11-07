@@ -71,16 +71,21 @@ committed corpus (`testdata/fuzz`, from `go run ./tools/jvt seeds`) and run in C
 
 ## Bibliography
 
-* ITU-T H.264 (current edition 06/26, in force). The PDF could not be fetched
-  whole (10 MB fetch cap); clause numbers in comments (7.4.3, 8.2.1, 8.2.5.2,
-  C.4.4) are from memory and **not re-read against the text**. The behaviour
-  they describe is what ffmpeg and the suite's reference yuv confirm.
+* ITU-T H.264 (V16, 06/2026, in force), opened as the PDF. Read and checked:
+  7.3.2.1 (SPS syntax entry), 7.4.3 (frame_num semantics: a picture with
+  memory_management_control_operation 5 is inferred to have had frame_num 0;
+  Table 7-9), 8.2.1 (tempPicOrderCnt after operation 5; 8.2.1.1 to 8.2.1.3
+  prevPicOrderCntMsb/Lsb and prevFrameNumOffset after it), 8.2.5.1 to 8.2.5.4
+  (marking, gaps in frame_num, sliding window) and C.4.4 (output order and
+  operation 5). The fix upstream (oops1/go.264#2) follows those clauses.
+  Known approximation: prevPicOrderCntLsb after operation 5 is set to 0, which
+  is exact unless delta_pic_order_cnt_bottom is negative.
 * ITU-T H.264.1, conformance specification and the bitstream list at
   <https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/AVCv1/> (listing
   and each stream's readme opened).
-* ISO/IEC 14496-15, avcC (5.3.3.1): paywalled, not opened; the record layout is
-  implemented from the published description of
-  AVCDecoderConfigurationRecord and fuzzed.
+* ISO/IEC 14496-15 (avcC): paywalled, **not opened**. The record layout is that
+  of mp4ff v0.62.0 `avc/avcdecoderconfigurationrecord.go` (opened), which
+  cites 14496-15 itself; it is fuzzed here.
 
 ## Performance
 

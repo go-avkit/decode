@@ -142,7 +142,7 @@ func parameterSets(aus [][][]byte) (sps, pps [][]byte, samples [][][]byte) {
 	return
 }
 
-// avcC builds an AVCDecoderConfigurationRecord (ISO/IEC 14496-15 5.3.3.1.2).
+// avcC builds an AVCDecoderConfigurationRecord (layout as in mp4ff's avc package).
 func avcC(sps, pps [][]byte, lengthSize int, high bool) []byte {
 	b := []byte{1, sps[0][1], sps[0][2], sps[0][3], 0xfc | byte(lengthSize-1), 0xe0 | byte(len(sps))}
 	for _, s := range sps {

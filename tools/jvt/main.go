@@ -470,7 +470,7 @@ func writeManifest(path string, md5s []string) error {
 }
 
 // profileOf names the profile and level of the first SPS: profile_idc and
-// constraint flags (H.264 section 7.3.2.1.1, Annex A).
+// constraint flags (H.264 clause 7.3.2.1, seq_parameter_set_data).
 func profileOf(data []byte) string {
 	for i := 0; i+6 < len(data); i++ {
 		if data[i] == 0 && data[i+1] == 0 && data[i+2] == 1 && data[i+3]&0x1f == 7 {

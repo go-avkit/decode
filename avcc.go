@@ -11,7 +11,9 @@ import (
 )
 
 // AVCConfig is an AVCDecoderConfigurationRecord, the content of the avcC box
-// (ISO/IEC 14496-15 section 5.3.3.1).
+// (ISO/IEC 14496-15). The standard's text is paywalled and was not opened; the
+// layout is that of mp4ff v0.62.0, avc/avcdecoderconfigurationrecord.go, which
+// was.
 type AVCConfig struct {
 	// Profile, Compatibility and Level are AVCProfileIndication,
 	// profile_compatibility and AVCLevelIndication, the first three bytes of
@@ -55,11 +57,13 @@ func ParseAVCC(b []byte) (AVCConfig, error) {
 		return c, err
 	}
 	switch c.Profile {
-	case 100, 110, 122, 144:
+	case 66, 77, 88:
+	default:
 		// chroma_format, bit_depth_luma_minus8, bit_depth_chroma_minus8,
-		// numOfSequenceParameterSetExt and the extensions. Absent in
+		// numOfSequenceParameterSetExt and the extensions, for every profile
+		// but Baseline, Main and Extended (as mp4ff reads it). Absent in
 		// records written before the High profiles were added, which is
-		// tolerated as every demuxer does.
+		// tolerated.
 		if pos+4 <= len(b) {
 			if _, _, err = avcSets(b, pos+3, int(b[pos+3]), "SPS extension"); err != nil {
 				return c, err
