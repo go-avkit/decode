@@ -152,16 +152,31 @@ func RootCmd() *cobra.Command {
 		_ = c.MarkFlagRequired("dir")
 	}
 	compare.Flags().StringVar(&manifests, "manifests", "", "directory to write NAME.md5 into (empty: do not write)")
+	var clipFrames int
+	var clipDir string
 	file := &cobra.Command{
-		Use: "file PATH...", Short: "compare real MP4/MKV files; prints hashes only", Args: cobra.MinimumNArgs(1),
+		Use: "file PATH|@CENSUS...", Short: "compare real MP4/MKV files; prints hashes only (@CENSUS: the paths of a census list)", Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			paths, err := expandPaths(args)
+			if err != nil {
+				return err
+			}
 			var failed error
-			for _, p := range args {
-				start := time.Now()
+			for i, p := range paths {
+				label := filepath.Base(p)
+				if clipFrames > 0 {
+					// The first N packets only, cut into clipDir, and the file left unnamed.
+					label = fmt.Sprintf("file %d", i+1)
+					dst := filepath.Join(clipDir, fmt.Sprintf("real-%d%s", i+1, filepath.Ext(p)))
+					if out, err := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", p, "-map", "0:v:0",
+						"-c", "copy", "-frames:v", strconv.Itoa(clipFrames), "-an", "-sn", dst).CombinedOutput(); err != nil {
+						return fmt.Errorf("clip %d: %w: %.200s", i+1, err, out)
+					}
+					p = dst
+				}
 				r, err := compareFile(p)
 				fmt.Fprintf(cmd.OutOrStdout(), "%s | %s | frames %d/%d | match %v | md5-of-md5s %s | ours %.1fs | %v\n",
-					filepath.Base(p), r.Profile, r.Ours, r.Ref, r.Match, r.Digest, r.Seconds, err)
-				_ = start
+					label, r.Profile, r.Ours, r.Ref, r.Match, r.Digest, r.Seconds, err)
 				if err != nil || !r.Match {
 					failed = errors.New("a file did not match")
 				}
@@ -169,6 +184,8 @@ func RootCmd() *cobra.Command {
 			return failed
 		},
 	}
+	file.Flags().IntVar(&clipFrames, "frames", 0, "decode only the first N video packets (cut with ffmpeg, stream copy) and do not name the file")
+	file.Flags().StringVar(&clipDir, "clipdir", "", "durable directory for the clips (with --frames)")
 	bits := &cobra.Command{
 		Use: "bits PATH...", Short: "compare raw bitstream files; writes PATH-without-extension.md5 beside each", Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, paths []string) error {

@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -56,6 +57,29 @@ func streamNames(all bool, args []string) ([]string, error) {
 		return nil, fmt.Errorf("name at least one stream, or pass --all")
 	}
 	return args, nil
+}
+
+// expandPaths replaces each @LIST argument by the paths a census list holds, the
+// text before the first " | " of each line.
+func expandPaths(args []string) ([]string, error) {
+	var out []string
+	for _, a := range args {
+		list, ok := strings.CutPrefix(a, "@")
+		if !ok {
+			out = append(out, a)
+			continue
+		}
+		b, err := os.ReadFile(list)
+		if err != nil {
+			return nil, err
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			if p, _, ok := strings.Cut(line, " | "); ok {
+				out = append(out, p)
+			}
+		}
+	}
+	return out, nil
 }
 
 var zipLink = regexp.MustCompile(`(?i)href="[^"]*/([^"/]+)\.zip"`)

@@ -5,12 +5,13 @@
 // demuxes into pictures.
 //
 // The first codec is H.264 (ITU-T H.264 | ISO/IEC 14496-10), through
-// github.com/oops1/go.264, a pure Go decoder that is checked here, picture for
+// github.com/oops1/go.264, the second HEVC (ITU-T H.265), through
+// github.com/gen2brain/h265: pure Go decoders that are checked here, picture for
 // picture, against ffmpeg. See the README for the profiles that claim holds
 // for and the conformance bitstreams it was measured on.
 //
-// Input is what a container hands over: an AVCDecoderConfigurationRecord
-// (ISO/IEC 14496-15) or the parameter sets of a
+// Input is what a container hands over: an AVCDecoderConfigurationRecord or an
+// HEVCDecoderConfigurationRecord (ISO/IEC 14496-15) or the parameter sets of a
 // container.TrackConfig, then one length-prefixed access unit per sample.
 // Output is every picture in display order as planar YUV, with its chroma
 // format, bit depth and presentation time.
@@ -39,8 +40,11 @@ var (
 	// It is raised before anything sized by the stream is allocated.
 	ErrOverLimit = errors.New("decode: stream exceeds the configured limits")
 	// ErrUnsupported means the stream uses a coding tool this decoder does
-	// not implement (see the README): interlaced coding, a chroma format
-	// other than 4:2:0, a bit depth above 8, lossless transform bypass.
+	// not implement (see the README): for H.264 interlaced coding, a chroma
+	// format other than 4:2:0, a bit depth above 8, lossless transform bypass;
+	// for HEVC a chroma format other than 4:2:0, a bit depth other than 8 or
+	// 10, and, because the HEVC decoder reports both the same way, a picture
+	// larger than Config.MaxFrameMBs.
 	ErrUnsupported = errors.New("decode: unsupported coding tool")
 	// ErrClosed means the decoder was used after Close.
 	ErrClosed = errors.New("decode: use of a closed decoder")

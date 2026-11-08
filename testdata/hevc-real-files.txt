@@ -1,0 +1,17 @@
+# Real HEVC files decoded through avkit's container.Reader (MP4 and Matroska)
+# and compared picture by picture with ffmpeg 9.0.2 -f framemd5 (native pixel
+# format, one thread). The files are not in this repository and are not named:
+# only what describes them and the hash of the result. Each is the first 200
+# video packets of the file in decoding order, cut with
+# `jvt --codec hevc file --frames 200` (stream copy). Taken 2026-11-08 with
+# gen2brain/h265 v0.2.4; ffmpeg matched on every picture. The files come from a
+# census of 195 HEVC files in one library: 173 Main, 21 Main 10 (all 4:2:0).
+#
+# sample entry, size, profile, pixel format, frames, md5-of-the-per-picture-md5s (joined by newline)
+hev1 1280x720   Main     yuv420p     200 70d44fc9e20e965575e57d4dddac2854
+hev1 540x960    Main10   yuv420p10le 200 b64bf841278b41959384e8b523dd99ea
+hvc1 886x1578   Main     yuvj420p    200 be67e195e563cfaded4f8932870695b6
+hev1 1920x1080  Main     yuv420p     200 d5b1bc9609d572d33313746760ac280d
+hev1 1920x1080  Main     yuv420p     200 fc590ac69656fdb19650bd2b2387f3c8
+hev1 1920x1080  Main     yuv420p     200 1eeccdd95591d979e2017eeb2ed6f2b0
+hvc1 3840x1606  Main10   yuv420p10le 200 fea5fd908be2f889ec770699804f2036

@@ -72,6 +72,9 @@ jobs:
       - run: go test -run XXX -fuzz FuzzDecodeSample -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzDecodeAnnexB -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzParseAVCC -fuzztime 20s .
+      - run: go test -run XXX -fuzz FuzzHEVCSample -fuzztime 60s .
+      - run: go test -run XXX -fuzz FuzzHEVCAnnexB -fuzztime 60s .
+      - run: go test -run XXX -fuzz FuzzParseHVCC -fuzztime 20s .
 
   vuln:
     runs-on: ubuntu-latest
