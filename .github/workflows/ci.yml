@@ -1,0 +1,165 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# CI pins the Go release below (Renovate moves it). The go.mod floor is 1.27.1.
+jobs:
+  # Every file must be gofmt-clean.
+  gofmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.3'
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt-clean:"; echo "$unformatted"
+            exit 1
+          fi
+
+  # Build, vet, race-test, and gate every statement of the library: covergate
+  # reads the profile itself, because `go tool cover -func` prints 99.97% as
+  # 100.0%. The tools module (the ffmpeg oracle harness and covergate) is tested
+  # on the same three systems; its own tests skip what needs ffmpeg.
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # PowerShell splits `-coverprofile=cover.out` at the dot.
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.3'
+      - run: go version
+      - run: go vet ./...
+      - run: go build ./...
+      - name: Test with the race detector and write the coverage profile
+        run: go test -race -coverprofile=cover.out ./...
+      - name: Coverage gate, every statement
+        working-directory: tools
+        run: go run ./covergate ../cover.out
+      - name: Tools module
+        working-directory: tools
+        run: go vet ./... && go test ./...
+
+  # A stream is untrusted input. The corpus in testdata/fuzz runs as ordinary
+  # tests above; this job also mutates it for a while. A crash fails the job and
+  # go test prints the input it found, to be committed to the corpus with its fix.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.3'
+      - run: go test -run XXX -fuzz FuzzDecodeSample -fuzztime 60s .
+      - run: go test -run XXX -fuzz FuzzDecodeAnnexB -fuzztime 60s .
+      - run: go test -run XXX -fuzz FuzzParseAVCC -fuzztime 20s .
+
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.3'
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+      - run: govulncheck ./...
+        working-directory: tools
+
+  # The six supported 64-bit targets: amd64/arm64 natively, the rest under
+  # qemu-user. s390x is big-endian, so it is also the byte-order gate for the
+  # length prefixes and the avcC reader.
+  arch-native:
+    name: arch ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    label: amd64 }
+          - { os: ubuntu-24.04-arm, label: arm64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.3'
+      - run: go env GOARCH && go test ./...
+
+  # The one 32-bit target, where int is 32 bits wide: a length converted to int
+  # before it is compared wraps only here. It runs natively on the amd64 runner.
+  # Coverage is gated on the 64-bit lanes; this one only vets and tests.
+  arch-386:
+    name: arch 386
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.2'
+      - run: GOARCH=386 go vet ./...
+      - run: GOARCH=386 go test ./...
+
+  arch-qemu:
+    name: arch ${{ matrix.goarch }} (qemu)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goarch: riscv64, qemu: qemu-riscv64-static }
+          # loong64 carries a known upstream code-generation defect,
+          # golang/go#81000, that this lane cannot fully rule out: float to
+          # integer conversions are declared with a floating-point output on
+          # LOONG64, and an integer that inherits an FP register is spilled
+          # with an 8-byte store, which destroys its neighbour when it is a
+          # byte. go.264 stores pictures as bytes. If this lane goes red on
+          # loong64 alone, suspect that before the code. See
+          # go-avkit/avkit .github/workflows/ci.yml for the full account.
+          - { goarch: loong64, qemu: qemu-loongarch64-static }
+          - { goarch: ppc64le, qemu: qemu-ppc64le-static }
+          - { goarch: s390x,   qemu: qemu-s390x-static }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.3'
+      # `qemu-user-static` is a virtual package on Ubuntu 26.04; install the
+      # dynamic emulators, which is all `go test -exec` needs, and accept either
+      # name below.
+      - name: install qemu user-mode emulators
+        timeout-minutes: 10
+        run: sudo apt-get update && sudo apt-get install -y qemu-user qemu-user-binfmt
+      - name: Test under qemu (${{ matrix.goarch }})
+        run: |
+          base="${{ matrix.qemu }}"
+          q=""
+          for cand in "$base" "${base%-static}"; do
+            command -v "$cand" >/dev/null 2>&1 && q="$cand" && break
+          done
+          # A missing emulator FAILS this lane: a lane that reports success for
+          # an architecture it never ran is the outcome this matrix rules out.
+          if [ -z "$q" ]; then
+            echo "::error::no qemu user emulator for ${{ matrix.goarch }} (looked for $base and ${base%-static})"
+            exit 1
+          fi
+          echo "running ${{ matrix.goarch }} under $q"
+          GOARCH=${{ matrix.goarch }} go test -exec="$q" ./...

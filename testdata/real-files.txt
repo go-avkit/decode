@@ -1,0 +1,13 @@
+# Real files decoded through avkit's container.Reader (MP4 and Matroska) and
+# compared picture by picture with ffmpeg -f framemd5. The files are not in this
+# repository and are not named: only what describes them and the hash of the
+# result. Each is the first 900 video packets of the file in decoding order,
+# cut with `jvt clip` (stream copy). Taken 2026-11-07 with go.264 v1.12.0 plus
+# the MMCO 5 / frame_num gap fix; ffmpeg matched on every picture.
+#
+# container codec size frames md5-of-the-per-picture-md5s (joined by newline)
+mp4 avc1 720x302 900 dcf680e0b96ca87cc83f46f9a29c714f
+mkv avc1 1920x1080 900 ffbcedc9afb30c9f25ce5a9e51611c65
+mp4 avc1 720x300 900 460a49735c65b11f41d3c6d5ff8db476
+mp4 avc1 720x358 900 e058060467c08336da8cd7e53e0607af
+mkv avc1 1280x720 900 a4170ae534bc43e733c60c10ea075cca
