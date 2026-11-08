@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/gen2brain/h265/hevc"
 	"github.com/oops1/go.264"
 )
 
@@ -117,12 +118,18 @@ type Frame struct {
 	// of the sample plus its composition offset. For a raw Annex B stream it
 	// is the picture's index in display order.
 	PTS int64
+	// Corrupt reports that the HEVC decoder lost a slice of the picture, failed
+	// partway through it, or predicted it from a reference the stream never
+	// delivered. The picture is still returned, as far as it was decoded. It is
+	// never set for H.264.
+	Corrupt bool
 }
 
-// Decoder decodes one H.264 elementary stream. It is not safe for concurrent
-// use.
+// Decoder decodes one H.264 or HEVC elementary stream. It is not safe for
+// concurrent use.
 type Decoder struct {
 	dec        *go264.Decoder
+	h265       *hevc.Decoder // set for HEVC, in which case dec is nil
 	cfg        Config
 	lengthSize int
 	annexB     []byte
@@ -172,6 +179,9 @@ func (d *Decoder) DecodeSample(data []byte, pts int64) ([]Frame, error) {
 	if len(data) > d.cfg.sampleBytes() {
 		return nil, fmt.Errorf("%w: sample of %d bytes, the limit is %d", ErrOverLimit, len(data), d.cfg.sampleBytes())
 	}
+	if d.h265 != nil {
+		return d.hevcSample(data, pts)
+	}
 	annexB, err := d.toAnnexB(data)
 	if err != nil {
 		return nil, err
@@ -192,6 +202,9 @@ func (d *Decoder) DecodeAnnexB(data []byte) ([]Frame, error) {
 	if len(data) > d.cfg.sampleBytes() {
 		return nil, fmt.Errorf("%w: chunk of %d bytes, the limit is %d", ErrOverLimit, len(data), d.cfg.sampleBytes())
 	}
+	if d.h265 != nil {
+		return d.hevcAnnexB(data)
+	}
 	return d.run(data)
 }
 
@@ -206,6 +219,9 @@ func (d *Decoder) Flush() ([]Frame, error) {
 	if d.closed {
 		return nil, ErrClosed
 	}
+	if d.h265 != nil {
+		return d.hevcFlush()
+	}
 	pics, err := d.dec.Flush()
 	return d.collect(pics, err)
 }
@@ -217,6 +233,10 @@ func (d *Decoder) Close() error {
 	}
 	d.closed = true
 	d.annexB, d.pending = nil, nil
+	if d.h265 != nil {
+		d.h265.Reset()
+		return nil
+	}
 	return d.dec.Close()
 }
 

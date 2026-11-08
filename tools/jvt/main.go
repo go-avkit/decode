@@ -36,7 +36,40 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const baseURL = "https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/AVCv1/"
+// codecSpec is what differs between the codecs the harness measures.
+type codecSpec struct {
+	name      string
+	baseURL   string          // the conformance suite's directory
+	demuxer   string          // ffmpeg's name for a bare bitstream of this codec
+	pixFmt    string          // forced -pix_fmt for ffmpeg; empty keeps the native one
+	extension map[string]bool // bitstream file extensions
+	newRaw    func(decode.Config, int) (*decode.Decoder, error)
+	profile   func([]byte) string
+}
+
+var h264Spec = codecSpec{
+	name:      "h264",
+	baseURL:   "https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/AVCv1/",
+	demuxer:   "h264",
+	pixFmt:    "yuv420p",
+	extension: map[string]bool{".264": true, ".jvt": true, ".avc": true, ".26l": true, ".h264": true, ".jsv": true, ".bit": true, ".bits": true},
+	newRaw:    decode.New,
+	profile:   profileOf,
+}
+
+// hevcSpec: the JCT-VC conformance suite (ITU-T H.265.1), and the native pixel
+// format, so that a Main 10 stream is compared as yuv420p10le.
+var hevcSpec = codecSpec{
+	name:      "hevc",
+	baseURL:   "https://www.itu.int/wftp3/av-arch/jctvc-site/bitstream_exchange/draft_conformance/HEVC_v1/",
+	demuxer:   "hevc",
+	extension: map[string]bool{".bit": true, ".bin": true, ".bitstream": true, ".hevc": true, ".h265": true, ".265": true},
+	newRaw:    decode.NewHEVC,
+	profile:   profileOfHEVC,
+}
+
+// spec is the codec of this run, chosen by --codec.
+var spec = h264Spec
 
 var osExit = os.Exit
 
@@ -44,8 +77,6 @@ const (
 	maxZip     = 300 << 20
 	maxExtract = 1 << 30
 )
-
-var bitstreamExt = map[string]bool{".264": true, ".jvt": true, ".avc": true, ".26l": true, ".h264": true, ".jsv": true, ".bit": true, ".bits": true}
 
 func main() {
 	if err := RootCmd().Execute(); err != nil {
@@ -55,23 +86,50 @@ func main() {
 
 // RootCmd builds the command tree.
 func RootCmd() *cobra.Command {
-	root := &cobra.Command{Use: "jvt", Short: "measure the H.264 decoder against ffmpeg", SilenceUsage: true}
-	var dir, manifests string
+	root := &cobra.Command{Use: "jvt", Short: "measure the H.264 and HEVC decoders against ffmpeg", SilenceUsage: true}
+	var dir, manifests, codec string
+	root.PersistentFlags().StringVar(&codec, "codec", "h264", "h264 or hevc")
+	root.PersistentPreRunE = func(*cobra.Command, []string) error {
+		switch codec {
+		case "h264":
+			spec = h264Spec
+		case "hevc":
+			spec = hevcSpec
+		default:
+			return fmt.Errorf("unknown codec %q, want h264 or hevc", codec)
+		}
+		return nil
+	}
+	var all bool
 	fetch := &cobra.Command{
-		Use: "fetch NAME...", Short: "download and unpack JVT conformance streams", Args: cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, names []string) error {
+		Use: "fetch [NAME...]", Short: "download and unpack conformance streams (--all: the whole suite)", Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			names, err := streamNames(all, args)
+			if err != nil {
+				return err
+			}
+			failed := 0
 			for _, n := range names {
 				if _, err := fetchStream(dir, n); err != nil {
-					return fmt.Errorf("%s: %w", n, err)
+					fmt.Fprintf(cmd.OutOrStdout(), "FAILED %s: %v\n", n, err)
+					failed++
+					continue
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), "fetched", n)
+			}
+			if failed > 0 {
+				return fmt.Errorf("%d of %d streams could not be fetched", failed, len(names))
 			}
 			return nil
 		},
 	}
 	compare := &cobra.Command{
-		Use: "compare NAME...", Short: "decode and compare with ffmpeg's framemd5", Args: cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, names []string) error {
+		Use: "compare [NAME...]", Short: "decode and compare with ffmpeg's framemd5 (--all: the whole suite)", Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			names, err := streamNames(all, args)
+			if err != nil {
+				return err
+			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintln(out, "bitstream | profile | frames(ours/ffmpeg) | match")
 			bad := 0
@@ -90,6 +148,7 @@ func RootCmd() *cobra.Command {
 	}
 	for _, c := range []*cobra.Command{fetch, compare} {
 		c.Flags().StringVar(&dir, "dir", "", "durable directory for downloaded streams")
+		c.Flags().BoolVar(&all, "all", false, "every stream the codec's conformance suite lists")
 		_ = c.MarkFlagRequired("dir")
 	}
 	compare.Flags().StringVar(&manifests, "manifests", "", "directory to write NAME.md5 into (empty: do not write)")
@@ -128,7 +187,7 @@ func RootCmd() *cobra.Command {
 			return nil
 		},
 	}
-	root.AddCommand(fetch, compare, file, bits, diffCmd(), clipCmd(), seedsCmd())
+	root.AddCommand(fetch, compare, file, bits, diffCmd(), clipCmd(), seedsCmd(), censusCmd())
 	return root
 }
 
@@ -144,7 +203,7 @@ func fetchStream(dir, name string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+name+".zip", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, spec.baseURL+name+".zip", nil)
 	if err != nil {
 		return "", err
 	}
@@ -209,7 +268,7 @@ func findBitstream(dir string) (string, error) {
 	}
 	best, size := "", int64(-1)
 	for _, e := range entries {
-		if !bitstreamExt[strings.ToLower(filepath.Ext(e.Name()))] {
+		if !spec.extension[strings.ToLower(filepath.Ext(e.Name()))] {
 			continue
 		}
 		if info, err := e.Info(); err == nil && info.Size() > size {
@@ -257,14 +316,14 @@ func compareBitstream(r result, path, manifests string) result {
 		r.Err = err.Error()
 		return r
 	}
-	r.Profile = profileOf(data)
+	r.Profile = spec.profile(data)
 	ref, err := ffmpegMD5s(path, true)
 	if err != nil {
 		r.Err = "ffmpeg: " + err.Error()
 		return r
 	}
 	r.Ref = len(ref)
-	ours, size, err := decodeAnnexBSize(data)
+	ours, size, whole, err := decodeAnnexBFull(data)
 	r.Ours = len(ours)
 	if err != nil {
 		r.Err = err.Error()
@@ -272,6 +331,10 @@ func compareBitstream(r result, path, manifests string) result {
 	r.Match = err == nil && equal(ours, ref)
 	if err == nil && !r.Match {
 		r.Err = fmt.Sprintf("first difference at picture %d", firstDiff(ours, ref))
+	}
+	// The JCT-VC suite ships one MD5 of the whole output beside the bitstream.
+	if want := suiteMD5(path); want != "" {
+		r.Err += fmt.Sprintf(" [suite md5 equal %v]", want == whole)
 	}
 	if y := refYUV(path); y != "" {
 		if yref, yerr := yuvMD5s(y, size); yerr == nil {
@@ -371,15 +434,26 @@ func decodeAnnexB(data []byte) ([]string, error) {
 
 // decodeAnnexBSize also returns the byte size of one picture.
 func decodeAnnexBSize(data []byte) (out []string, size int, err error) {
-	d, err := decode.New(decode.Config{MaxFrameMBs: 1 << 17}, 4)
+	out, size, _, err = decodeAnnexBFull(data)
+	return out, size, err
+}
+
+// decodeAnnexBFull also returns the MD5 of every picture's planes, in display
+// order, as one stream: what a conformance suite's own md5 file holds.
+func decodeAnnexBFull(data []byte) (out []string, size int, whole string, err error) {
+	d, err := spec.newRaw(decode.Config{MaxFrameMBs: 1 << 17}, 4)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	defer d.Close()
+	all := md5.New()
 	add := func(fs []decode.Frame) {
 		for _, f := range fs {
 			out = append(out, frameMD5(f))
 			size = len(f.Y) + len(f.Cb) + len(f.Cr)
+			all.Write(f.Y)
+			all.Write(f.Cb)
+			all.Write(f.Cr)
 		}
 	}
 	const chunk = 1 << 20
@@ -388,13 +462,40 @@ func decodeAnnexBSize(data []byte) (out []string, size int, err error) {
 		fs, err := d.DecodeAnnexB(data[:n])
 		add(fs)
 		if err != nil {
-			return out, size, err
+			return out, size, hex.EncodeToString(all.Sum(nil)), err
 		}
 		data = data[n:]
 	}
 	fs, err := d.Flush()
 	add(fs)
-	return out, size, err
+	return out, size, hex.EncodeToString(all.Sum(nil)), err
+}
+
+// suiteMD5 reads the MD5 of the whole decoded output that a JCT-VC conformance
+// package carries beside its bitstream (a file ending in md5, named for the
+// stream or its yuv), or "" when there is none. The file's first token is the
+// hash.
+func suiteMD5(bitstream string) string {
+	if spec.name != "hevc" {
+		return ""
+	}
+	// Some packages also ship the MD5 of the bitstream itself, "..._bit.md5";
+	// the one of the decoded output is named for the yuv, or is the only one.
+	yuv, _ := filepath.Glob(filepath.Join(filepath.Dir(bitstream), "*[yY][uU][vV]*[mM][dD]5*"))
+	any, _ := filepath.Glob(filepath.Join(filepath.Dir(bitstream), "*[mM][dD]5*"))
+	for _, p := range append(yuv, any...) {
+		if strings.Contains(strings.ToLower(filepath.Base(p)), "_bit") {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil || len(b) > 4096 {
+			continue
+		}
+		if f := strings.Fields(string(b)); len(f) > 0 && len(f[0]) == 32 {
+			return strings.ToLower(f[0])
+		}
+	}
+	return ""
 }
 
 // yuvMD5s hashes a conformance suite's own reference output, a concatenation
@@ -421,14 +522,18 @@ func refYUV(bitstream string) string {
 	return ""
 }
 
-// ffmpegMD5s runs ffmpeg -f framemd5 and returns the MD5 column. forceH264
-// names the raw demuxer for bare bitstreams, whose extension may be foreign.
-func ffmpegMD5s(path string, forceH264 bool) ([]string, error) {
+// ffmpegMD5s runs ffmpeg -f framemd5 and returns the MD5 column. raw names the
+// codec's raw demuxer for bare bitstreams, whose extension may be foreign.
+func ffmpegMD5s(path string, raw bool) ([]string, error) {
 	args := []string{"-hide_banner", "-loglevel", "error", "-threads", "1"}
-	if forceH264 {
-		args = append(args, "-f", "h264")
+	if raw {
+		args = append(args, "-f", spec.demuxer)
 	}
-	args = append(args, "-i", path, "-map", "0:v:0", "-fps_mode", "passthrough", "-pix_fmt", "yuv420p", "-f", "framemd5", "-")
+	args = append(args, "-i", path, "-map", "0:v:0", "-fps_mode", "passthrough")
+	if spec.pixFmt != "" {
+		args = append(args, "-pix_fmt", spec.pixFmt)
+	}
+	args = append(args, "-f", "framemd5", "-")
 	var stderr bytes.Buffer
 	cmd := exec.Command("ffmpeg", args...)
 	cmd.Stderr = &stderr

@@ -100,10 +100,14 @@ func NewAVCC(avcC []byte, cfg Config) (*Decoder, error) {
 	return newWithSets(cfg, c.LengthSize, c.SPS, c.PPS)
 }
 
-// NewTrack returns a decoder for an avkit container track. Samples are
-// length-prefixed with four-byte lengths, which is what container.Reader hands
-// over for MP4 and Matroska. The track's SPS and PPS are decoded first.
+// NewTrack returns a decoder for an avkit container track: an HEVC decoder for a
+// track whose sample entry is hvc1 or hev1, an H.264 decoder otherwise. Samples
+// are length-prefixed with four-byte lengths, which is what container.Reader
+// hands over for MP4 and Matroska. The track's parameter sets are decoded first.
 func NewTrack(tc container.TrackConfig, cfg Config) (*Decoder, error) {
+	if isHEVC(tc) {
+		return newHEVCWithSets(cfg, 4, tc.VPS, tc.SPS, tc.PPS)
+	}
 	return newWithSets(cfg, 4, tc.SPS, tc.PPS)
 }
 
@@ -146,24 +150,38 @@ func (d *Decoder) begin() []byte {
 	return out
 }
 
-// toAnnexB rewrites one length-prefixed sample as Annex B. Every length is
-// checked against what is left of the sample before anything is copied.
-func (d *Decoder) toAnnexB(data []byte) ([]byte, error) {
-	out := d.begin()
+// splitSample cuts one length-prefixed sample into its NAL units. Every length is
+// checked against what is left of the sample before anything is returned, so a
+// malformed sample yields no units at all.
+func splitSample(data []byte, lengthSize int) ([][]byte, error) {
+	var units [][]byte
 	for len(data) > 0 {
-		if len(data) < d.lengthSize {
-			return nil, fmt.Errorf("%w: %d bytes left, a length is %d", ErrSample, len(data), d.lengthSize)
+		if len(data) < lengthSize {
+			return nil, fmt.Errorf("%w: %d bytes left, a length is %d", ErrSample, len(data), lengthSize)
 		}
 		var l uint32
-		for _, c := range data[:d.lengthSize] {
+		for _, c := range data[:lengthSize] {
 			l = l<<8 | uint32(c)
 		}
-		data = data[d.lengthSize:]
+		data = data[lengthSize:]
 		if l == 0 || uint64(l) > uint64(len(data)) {
 			return nil, fmt.Errorf("%w: NAL unit of %d bytes with %d left", ErrSample, l, len(data))
 		}
-		out = d.appendNAL(out, data[:l])
+		units = append(units, data[:l])
 		data = data[l:]
+	}
+	return units, nil
+}
+
+// toAnnexB rewrites one length-prefixed sample as Annex B.
+func (d *Decoder) toAnnexB(data []byte) ([]byte, error) {
+	units, err := splitSample(data, d.lengthSize)
+	if err != nil {
+		return nil, err
+	}
+	out := d.begin()
+	for _, u := range units {
+		out = d.appendNAL(out, u)
 	}
 	d.annexB, d.started = out, true
 	return out, nil
