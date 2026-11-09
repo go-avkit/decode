@@ -50,6 +50,42 @@ reordering. `Frame.Corrupt` marks a picture the decoder lost a slice of.
 `Config.MaxFrameMBs` counts 256 luma samples for HEVC; `EnforceLevel` applies to
 H.264 only.
 
+## Audio
+
+Audio decoders wrap pure Go libraries and are checked against ffmpeg, like the
+video ones. Wave D3 of [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89),
+one codec per pull request, **FLAC** first.
+
+```go
+id, _ := decode.FirstAudioTrack(r)
+pcm, err := decode.DecodeAudioTrack(r, id, decode.AudioConfig{})
+for _, a := range pcm {   // presentation order, trimmed as the container states
+    use(a.Data, a.Format, a.SampleRate, a.Channels, a.Layout, a.PTS)
+}
+```
+
+Streaming: `decode.NewAudioTrack(trackConfig, cfg)`, then `DecodeSample(sample)` per
+`container.Sample` and `Flush()`. `Audio.Data` is interleaved little-endian PCM in
+`Format` (`SampleS16`, `SampleS32`, `SampleF32`: ffmpeg's `s16le`, `s32le`,
+`f32le`); `Layout` is a speaker mask in WAVE order; `PTS` counts samples of
+`SampleRate` from the first presented sample. The start of the track is dropped as
+its container states it (edit list, `StartDelay`, Opus pre-skip) and an edit list's
+end cuts the last buffer, which is what ffmpeg does.
+
+| Codec | Library | Licence | Output | Oracle |
+|---|---|---|---|---|
+| FLAC (`fLaC`) | [`mewkiz/flac`](https://github.com/mewkiz/flac) v1.0.14 | Unlicense (public domain) | `s16le` up to 16 bits, `s32le` (left-justified) up to 24 | bit-exact, 13 fixtures |
+
+FLAC: 4 to 24 bits per sample, 1 to 8 channels, every channel mode, native `.flac`,
+Matroska and MP4. A 32-bit stream is `ErrAudioUnsupported` (the library reads the
+code RFC 9639 9.1.4 gives it as reserved). `mewkiz/flac` writes a line to the
+standard logger the first time it meets 176.4 kHz or 24 kHz; this package cannot
+silence it. The fixtures are in `testdata/audio`, made by `tools/audiofix` with
+ffmpeg together with the PCM it decodes them to, so the tests need no ffmpeg.
+Bounds: `AudioConfig` limits the channel count, the block size (checked from the
+frame header, before the subframes are allocated), a coded sample and the PCM a
+track may return.
+
 ## HEVC
 
 The decoding is [`github.com/gen2brain/h265`](https://github.com/gen2brain/h265)
@@ -177,6 +213,9 @@ TestWritePosterSeeds`), and runs in CI under `GOMEMLIMIT` and `ulimit -v`.
 * ITU-T H.264.1, conformance specification and the bitstream list at
   <https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/AVCv1/> (listing
   and each stream's readme opened).
+* RFC 9639 (FLAC), opened as text: 9.1.3 channel layouts (5 channels are "back/surround"
+  in the RFC, side in ffmpeg, whose layout the output follows), 9.1.4 bit depth
+  code 0b111 is 32 bits, 9.1.6 block size 65536 forbidden.
 * ISO/IEC 14496-15 (avcC): paywalled, **not opened**. The record layout is that
   of mp4ff v0.62.0 `avc/avcdecoderconfigurationrecord.go` (opened), which
   cites 14496-15 itself; it is fuzzed here.
