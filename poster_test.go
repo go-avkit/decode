@@ -105,7 +105,7 @@ func TestPosterFrameMatchesDecodeTrack(t *testing.T) {
 }
 
 func TestPosterFrameRealFiles(t *testing.T) {
-	for _, name := range []string{"bframes.mp4", "bframes.mkv", "bframes-delayed.mp4"} {
+	for _, name := range []string{"bframes.mp4", "bframes.mkv", "bframes-delayed.mp4", "hevc-main-ipb.mp4", "hevc-main10-ipb.mp4"} {
 		t.Run(name, func(t *testing.T) {
 			r, err := container.NewReader(readFile(t, filepath.Join("testdata", "files", name)))
 			if err != nil {
@@ -211,7 +211,7 @@ func TestPosterFrameErrors(t *testing.T) {
 }
 
 func TestPosterFrameUnsupported(t *testing.T) {
-	for _, name := range []string{"hvc1.mp4", "ffmpeg-aaclc.mp4"} {
+	for _, name := range []string{"ffmpeg-aaclc.mp4"} {
 		r, err := container.NewReader(readFile(t, filepath.Join("testdata", "files", name)))
 		if err != nil {
 			t.Fatal(err)
@@ -220,6 +220,19 @@ func TestPosterFrameUnsupported(t *testing.T) {
 		if _, err := PosterFrame(r, id, 0, PosterConfig{}); !errors.Is(err, ErrUnsupported) {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// hvc1.mp4 is a container fixture whose samples are not a decodable HEVC
+// stream (ffmpeg decodes no picture from it either: "PPS id out of range"), so
+// HEVC is reached and the stream itself is refused.
+func TestPosterFrameMalformedHEVC(t *testing.T) {
+	r, err := container.NewReader(readFile(t, filepath.Join("testdata", "files", "hvc1.mp4")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PosterFrame(r, r.TrackIDs()[0], 0, PosterConfig{}); !errors.Is(err, ErrBitstream) {
+		t.Errorf("hvc1.mp4: %v, want ErrBitstream", err)
 	}
 }
 

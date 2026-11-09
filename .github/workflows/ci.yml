@@ -72,6 +72,9 @@ jobs:
       - run: go test -run XXX -fuzz FuzzDecodeSample -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzDecodeAnnexB -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzParseAVCC -fuzztime 20s .
+      - run: go test -run XXX -fuzz FuzzHEVCSample -fuzztime 60s .
+      - run: go test -run XXX -fuzz FuzzHEVCAnnexB -fuzztime 60s .
+      - run: go test -run XXX -fuzz FuzzParseHVCC -fuzztime 20s .
       # An MP4 or Matroska file sizes the work PosterFrame does, so this target
       # runs under a memory limit: GOMEMLIMIT for the Go heap, ulimit -v (4 GiB)
       # for everything else. A bound that fails to refuse is an out of memory

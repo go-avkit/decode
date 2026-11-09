@@ -147,8 +147,10 @@ func FuzzPosterFrame(f *testing.F) {
 		if err != nil {
 			return
 		}
+		// A sample deeper than 8 bits takes two bytes (Main 10).
+		bytesPerSample := (fr.BitDepth + 7) / 8
 		if fr.Width <= 0 || fr.Height <= 0 || fr.Width*fr.Height > fuzzConfig.MaxFrameMBs*256 ||
-			len(fr.Y) != fr.Width*fr.Height || at < 0 || at != at {
+			len(fr.Y) != fr.Width*fr.Height*bytesPerSample || at < 0 || at != at {
 			t.Fatalf("picture %dx%d with %d luma bytes for t=%v", fr.Width, fr.Height, len(fr.Y), at)
 		}
 	})

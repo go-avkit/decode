@@ -24,8 +24,11 @@ func seedsCmd() *cobra.Command {
 		Use: "seeds STREAMS_DIR CORPUS_DIR", Short: "write the committed fuzz corpus from the test streams", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			streams, err := filepath.Glob(filepath.Join(args[0], "*.264"))
-			if err != nil || len(streams) == 0 {
-				return fmt.Errorf("no streams in %s", args[0])
+			if err == nil && len(streams) == 0 {
+				return hevcSeeds(cmd, args[0], args[1])
+			}
+			if err != nil {
+				return err
 			}
 			for _, s := range streams {
 				data, err := os.ReadFile(s)

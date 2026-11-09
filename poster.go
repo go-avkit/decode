@@ -80,7 +80,7 @@ func FirstVideoTrack(r *container.Reader) (uint32, error) {
 // starts at the last sample marked Sync at or before the picture's sample (the
 // first sample when none is) and stops as soon as the picture is out, so the work
 // is bounded by cfg.MaxSamples, not by the length of the track (ErrPosterLimit).
-// Only H.264 is decoded; another codec is ErrUnsupported.
+// Only H.264 and HEVC are decoded; another codec is ErrUnsupported.
 //
 // The track's samples are listed by container.Reader.Samples, which a reader on
 // a file that stays on disk (container.NewFileReader) fetches whole: the limit on
@@ -93,8 +93,10 @@ func PosterFrame(r *container.Reader, trackID uint32, t float64, cfg PosterConfi
 	if err != nil {
 		return Frame{}, err
 	}
-	if tc.Codec != "avc1" && tc.Codec != "avc3" {
-		return Frame{}, fmt.Errorf("%w: codec %q, only H.264 (avc1, avc3) is decoded", ErrUnsupported, tc.Codec)
+	switch tc.Codec {
+	case "avc1", "avc3", "hvc1", "hev1":
+	default:
+		return Frame{}, fmt.Errorf("%w: codec %q, only H.264 (avc1, avc3) and HEVC (hvc1, hev1) are decoded", ErrUnsupported, tc.Codec)
 	}
 	samples, err := r.Samples(trackID)
 	if err != nil {

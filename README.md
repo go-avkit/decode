@@ -3,8 +3,9 @@
 [![ci](https://github.com/go-avkit/decode/actions/workflows/ci.yml/badge.svg)](https://github.com/go-avkit/decode/actions/workflows/ci.yml)
 
 Video decoders for [avkit](https://github.com/go-avkit/avkit), pure Go, no cgo.
-The first codec is **H.264** (ITU-T H.264 | ISO/IEC 14496-10). Wave D1 of
-[go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89).
+The first codec is **H.264** (ITU-T H.264 | ISO/IEC 14496-10), the second
+**HEVC / H.265** (ITU-T H.265 | ISO/IEC 23008-2): Main and Main 10, 4:2:0.
+Waves D1 and D2 of [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89).
 
 ```go
 r, _ := container.NewReader(file)                   // MP4, Matroska, ...
@@ -27,7 +28,8 @@ the very bytes `DecodeTrack` returns for it. A `t` past the end gives the last
 picture, one before the first presentation time gives the first, a negative or NaN
 `t` is `ErrTime`. Decoding starts at the last sync sample at or before the
 picture's sample (the first sample if none is flagged) and stops as soon as the
-picture is out. H.264 only: another codec is `ErrUnsupported`.
+picture is out. H.264 (`avc1`, `avc3`) and HEVC (`hvc1`, `hev1`); another codec is
+`ErrUnsupported`.
 
 Streaming: `decode.NewTrack(trackConfig, cfg)` or `decode.NewAVCC(avcC, cfg)`,
 then `DecodeSample(sample.Data, pts)` per sample and `Flush()` at the end.
@@ -38,7 +40,61 @@ Raw `.264` files: `decode.New(cfg, 4)` and `DecodeAnnexB`.
 converting to RGBA is a field copy; `yuv.Picture` has no bit depth or time, which
 is why it is not used as is.
 
-## What is decoded
+HEVC takes the same calls: `DecodeTrack` and `NewTrack` choose HEVC for a track
+whose sample entry is `hvc1` or `hev1`; `decode.NewHVCC(hvcC, cfg)` takes an
+hvcC record (`ParseHVCC` reads one), `decode.NewHEVC(cfg, 4)` takes in-band
+parameter sets and `DecodeAnnexB` a raw `.265` stream. Main 10 frames hold
+little-endian 16-bit samples (ffmpeg's `yuv420p10le`). Each picture's `PTS` is
+that of the sample holding its first slice, so it is exact whatever the
+reordering. `Frame.Corrupt` marks a picture the decoder lost a slice of.
+`Config.MaxFrameMBs` counts 256 luma samples for HEVC; `EnforceLevel` applies to
+H.264 only.
+
+## HEVC
+
+The decoding is [`github.com/gen2brain/h265`](https://github.com/gen2brain/h265)
+v0.2.4 (MIT, pure Go, assembly kernels with a `noasm` build tag), the `hevc`
+package. It decodes more than is claimed here; only what was measured is
+accepted:
+
+| Profile | State |
+| --- | --- |
+| Main, Main Still Picture, 4:2:0 8-bit | bit-exact against ffmpeg |
+| Main 10, 4:2:0 10-bit | bit-exact against ffmpeg |
+| Other chroma formats, bit depths other than 8 and 10, unequal luma and chroma depths | refused with `ErrUnsupported` |
+
+Measured, every picture's MD5 against `ffmpeg -f framemd5` (ffmpeg 9.0.2, one
+thread, native pixel format):
+
+* **JCT-VC conformance suite HEVC_v1** (ITU-T H.265.1): 147 bitstreams. 143 match
+  ffmpeg on every picture (`testdata/hevc-conformance`), and wherever the package
+  ships the MD5 of the whole output it equals ours too. Three are
+  decided by the suite's own MD5, because ffmpeg disagrees with it and we agree:
+  `SAODBLK_A_MainConcept_4`, `SAODBLK_B_MainConcept_4` (ffmpeg's output differs
+  from picture 0, with or without its assembly) and `VPSSPSPPS_A_MainConcept_1`
+  (ffmpeg reports missing parameter sets and outputs 2 pictures of the 6). One,
+  `TSUNEQBD_A_MAIN10_Technicolor_2` (luma and chroma bit depths differ), is
+  refused here and by ffmpeg. The bitstreams are not in the repository (their
+  redistribution terms are not stated); `TestHEVCConformance` runs when
+  `DECODE_HEVC_DIR` points at them (`go run ./tools/jvt --codec hevc fetch --all`).
+* **5 streams in `testdata/hevc/streams`** (made here with x265 from ffmpeg's
+  `testsrc2`; intra, B pyramid, slices, wavefronts, weighted prediction, cropping,
+  Main and Main 10) run in CI against ffmpeg's MD5s, plus a 4:4:4 one that must be
+  refused.
+* **7 real files** (MP4 and Matroska, 540x960 to 3840x1606, Main and Main 10), 200
+  pictures each: `testdata/hevc-real-files.txt`, hashes only.
+
+Speed against ffmpeg is not measured: the machine's 1-minute load was 27 to 38
+during this work. Tracked for decode#2.
+
+Bibliography: ITU-T H.265 (V11, 01/2026), opened as the PDF; read and checked:
+Annex B (B.2, B.3: byte stream and its NAL unit extraction) and C.5.2.2 to C.5.2.4
+(output order DPB, bumping, cropping). ISO/IEC 14496-15 (hvcC) is paywalled and
+**not opened**: the record layout is that of mp4ff v0.62.0
+`hevc/hevcdecoderconfigurationrecord.go` (opened); it is fuzzed here. The JCT-VC
+suite listing was opened.
+
+## What is decoded (H.264)
 
 The decoding is [`github.com/oops1/go.264`](https://github.com/oops1/go.264)
 (BSD-2-Clause, pure Go with assembly kernels), pinned and forced onto its
@@ -82,7 +138,15 @@ stream is allocated; go.264 also refuses pictures past its level ceiling and
 bounds its reference frames by `max_num_ref_frames`. `TestBombRefusedUnderMemoryLimit`
 runs three bomb SPSs under a 256 MiB memory limit and asserts a refusal and under
 8 MiB allocated. `FuzzParseAVCC`, `FuzzDecodeSample` and `FuzzDecodeAnnexB` have a
-committed corpus (`testdata/fuzz`, from `go run ./tools/jvt seeds`) and run in CI.
+committed corpus (`testdata/fuzz`, from `go run ./tools/jvt seeds`) and run in CI;
+so do `FuzzParseHVCC`, `FuzzHEVCSample` and `FuzzHEVCAnnexB`. For HEVC the picture
+size is checked by the decoder at the first slice, from the SPS, before any plane is
+allocated, and what an Annex B stream may hold waiting for its next start code is
+bounded by `MaxSampleBytes`; `TestHEVCSizeBomb` declares pictures up to 1048576
+square under a 256 MiB memory limit and asserts a refusal and under 32 MiB allocated.
+A picture over the limit is refused with `ErrUnsupported`, not `ErrOverLimit`,
+because gen2brain/h265 reports it with the error it uses for an unimplemented
+tool.
 
 `PosterFrame` adds two bounds of its own, in `PosterConfig`: `MaxSamples` (default
 600) caps the samples decoded for one picture, counted from the keyframe it starts

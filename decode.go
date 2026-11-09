@@ -5,12 +5,13 @@
 // demuxes into pictures.
 //
 // The first codec is H.264 (ITU-T H.264 | ISO/IEC 14496-10), through
-// github.com/oops1/go.264, a pure Go decoder that is checked here, picture for
+// github.com/oops1/go.264, the second HEVC (ITU-T H.265), through
+// github.com/gen2brain/h265: pure Go decoders that are checked here, picture for
 // picture, against ffmpeg. See the README for the profiles that claim holds
 // for and the conformance bitstreams it was measured on.
 //
-// Input is what a container hands over: an AVCDecoderConfigurationRecord
-// (ISO/IEC 14496-15) or the parameter sets of a
+// Input is what a container hands over: an AVCDecoderConfigurationRecord or an
+// HEVCDecoderConfigurationRecord (ISO/IEC 14496-15) or the parameter sets of a
 // container.TrackConfig, then one length-prefixed access unit per sample.
 // Output is every picture in display order as planar YUV, with its chroma
 // format, bit depth and presentation time.
@@ -22,6 +23,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/gen2brain/h265/hevc"
 	"github.com/oops1/go.264"
 )
 
@@ -38,8 +40,11 @@ var (
 	// It is raised before anything sized by the stream is allocated.
 	ErrOverLimit = errors.New("decode: stream exceeds the configured limits")
 	// ErrUnsupported means the stream uses a coding tool this decoder does
-	// not implement (see the README): interlaced coding, a chroma format
-	// other than 4:2:0, a bit depth above 8, lossless transform bypass.
+	// not implement (see the README): for H.264 interlaced coding, a chroma
+	// format other than 4:2:0, a bit depth above 8, lossless transform bypass;
+	// for HEVC a chroma format other than 4:2:0, a bit depth other than 8 or
+	// 10, and, because the HEVC decoder reports both the same way, a picture
+	// larger than Config.MaxFrameMBs.
 	ErrUnsupported = errors.New("decode: unsupported coding tool")
 	// ErrClosed means the decoder was used after Close.
 	ErrClosed = errors.New("decode: use of a closed decoder")
@@ -117,12 +122,18 @@ type Frame struct {
 	// of the sample plus its composition offset. For a raw Annex B stream it
 	// is the picture's index in display order.
 	PTS int64
+	// Corrupt reports that the HEVC decoder lost a slice of the picture, failed
+	// partway through it, or predicted it from a reference the stream never
+	// delivered. The picture is still returned, as far as it was decoded. It is
+	// never set for H.264.
+	Corrupt bool
 }
 
-// Decoder decodes one H.264 elementary stream. It is not safe for concurrent
-// use.
+// Decoder decodes one H.264 or HEVC elementary stream. It is not safe for
+// concurrent use.
 type Decoder struct {
 	dec        *go264.Decoder
+	h265       *hevc.Decoder // set for HEVC, in which case dec is nil
 	cfg        Config
 	lengthSize int
 	annexB     []byte
@@ -172,6 +183,9 @@ func (d *Decoder) DecodeSample(data []byte, pts int64) ([]Frame, error) {
 	if len(data) > d.cfg.sampleBytes() {
 		return nil, fmt.Errorf("%w: sample of %d bytes, the limit is %d", ErrOverLimit, len(data), d.cfg.sampleBytes())
 	}
+	if d.h265 != nil {
+		return d.hevcSample(data, pts)
+	}
 	annexB, err := d.toAnnexB(data)
 	if err != nil {
 		return nil, err
@@ -192,6 +206,9 @@ func (d *Decoder) DecodeAnnexB(data []byte) ([]Frame, error) {
 	if len(data) > d.cfg.sampleBytes() {
 		return nil, fmt.Errorf("%w: chunk of %d bytes, the limit is %d", ErrOverLimit, len(data), d.cfg.sampleBytes())
 	}
+	if d.h265 != nil {
+		return d.hevcAnnexB(data)
+	}
 	return d.run(data)
 }
 
@@ -206,6 +223,9 @@ func (d *Decoder) Flush() ([]Frame, error) {
 	if d.closed {
 		return nil, ErrClosed
 	}
+	if d.h265 != nil {
+		return d.hevcFlush()
+	}
 	pics, err := d.dec.Flush()
 	return d.collect(pics, err)
 }
@@ -217,6 +237,10 @@ func (d *Decoder) Close() error {
 	}
 	d.closed = true
 	d.annexB, d.pending = nil, nil
+	if d.h265 != nil {
+		d.h265.Reset()
+		return nil
+	}
 	return d.dec.Close()
 }
 

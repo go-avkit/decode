@@ -3,6 +3,7 @@ module github.com/go-avkit/decode
 go 1.27.1
 
 require (
+	github.com/gen2brain/h265 v0.2.4
 	github.com/go-avkit/avkit v0.15.0
 	github.com/oops1/go.264 v1.12.0
 )
