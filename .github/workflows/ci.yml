@@ -75,6 +75,11 @@ jobs:
       - run: go test -run XXX -fuzz FuzzHEVCSample -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzHEVCAnnexB -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzParseHVCC -fuzztime 20s .
+      # An MP4 or Matroska file sizes the work PosterFrame does, so this target
+      # runs under a memory limit: GOMEMLIMIT for the Go heap, ulimit -v (4 GiB)
+      # for everything else. A bound that fails to refuse is an out of memory
+      # crash here, not a test failure on a large host.
+      - run: ulimit -v 4194304 && GOMEMLIMIT=1GiB go test -run XXX -fuzz FuzzPosterFrame -fuzztime 60s .
 
   vuln:
     runs-on: ubuntu-latest

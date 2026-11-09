@@ -15,6 +15,22 @@ for _, f := range frames {                          // display order
 }
 ```
 
+One picture, for a poster or a thumbnail, without decoding the track:
+
+```go
+id, _ := decode.FirstVideoTrack(r)
+f, err := decode.PosterFrame(r, id, 12.5, decode.PosterConfig{}) // the picture shown at 12.5 s
+```
+
+`PosterFrame` returns the picture with the greatest presentation time at or
+before `t` (decode time plus composition offset, as `DecodeTrack` labels them), and
+the very bytes `DecodeTrack` returns for it. A `t` past the end gives the last
+picture, one before the first presentation time gives the first, a negative or NaN
+`t` is `ErrTime`. Decoding starts at the last sync sample at or before the
+picture's sample (the first sample if none is flagged) and stops as soon as the
+picture is out. H.264 (`avc1`, `avc3`) and HEVC (`hvc1`, `hev1`); another codec is
+`ErrUnsupported`.
+
 Streaming: `decode.NewTrack(trackConfig, cfg)` or `decode.NewAVCC(avcC, cfg)`,
 then `DecodeSample(sample.Data, pts)` per sample and `Flush()` at the end.
 Raw `.264` files: `decode.New(cfg, 4)` and `DecodeAnnexB`.
@@ -131,6 +147,18 @@ square under a 256 MiB memory limit and asserts a refusal and under 32 MiB alloc
 A picture over the limit is refused with `ErrUnsupported`, not `ErrOverLimit`,
 because gen2brain/h265 reports it with the error it uses for an unimplemented
 tool.
+
+`PosterFrame` adds two bounds of its own, in `PosterConfig`: `MaxSamples` (default
+600) caps the samples decoded for one picture, counted from the keyframe it starts
+at to the sample that outputs it (the decoder outputs a picture at least one
+sample late); past it the error is `ErrPosterLimit`, raised before a decoder is
+built when the picture's sample is already too far from its keyframe.
+`MaxTrackSamples` (default 1<<20) refuses a longer sample list, checked once
+`container.Reader.Samples` has listed it (a reader on a file left on disk
+fetches every sample there, which this package cannot avoid). `FuzzPosterFrame`
+reads an MP4 or Matroska file from bytes with any `t`, has a committed corpus
+(`testdata/fuzz/FuzzPosterFrame`, rewritten with `DECODE_WRITE_SEEDS=1 go test -run
+TestWritePosterSeeds`), and runs in CI under `GOMEMLIMIT` and `ulimit -v`.
 
 ## Bibliography
 
