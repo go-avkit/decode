@@ -25,7 +25,7 @@ func streams(t *testing.T) []string {
 	return paths
 }
 
-func readFile(t *testing.T, path string) []byte {
+func readFile(t testing.TB, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
