@@ -26,6 +26,37 @@ var ErrEditList = errors.New("decode: edit list not supported")
 // would otherwise cost a million decodes.
 const maxEditWork = 16
 
+// presented returns tc with the edit list the track is presented by, or the
+// track as it is when it has none and none is implied.
+//
+// A Matroska or WebM block states its presentation time. container.Reader turns
+// the blocks into samples that decode from 0, as an MP4 track does, which needs a
+// composition offset of the longest reordering delay on every sample, and states
+// no edit list for it: the pictures would be presented that delay late (40 ms on
+// bframes.mkv, where the blocks start at 0 and ffmpeg's first picture is at 0).
+// The delay is the smallest composition time, so the implied edit list is one
+// that starts the presentation there, the one an MP4 muxer writes for the same
+// delay.
+func presented(r *container.Reader, tc container.TrackConfig, samples []container.Sample) container.TrackConfig {
+	if tc.EditList != nil || (r.File().Format != "matroska" && r.File().Format != "webm") {
+		return tc
+	}
+	var dts, delay int64
+	for i, s := range samples {
+		if c := dts + int64(s.CompositionOffset); i == 0 || c < delay {
+			delay = c
+		}
+		dts += int64(s.Duration)
+	}
+	if delay <= 0 {
+		return tc
+	}
+	tc.EditList = &container.EditList{MovieTimescale: tc.Timescale, Edits: []container.Edit{{
+		SegmentDuration: 1 << 62, MediaTime: delay, Rate: container.NormalRate,
+	}}}
+	return tc
+}
+
 // editRun is one edit of an edit list that shows media, as ffmpeg's mov_fix_index
 // (libavformat/mov.c) lays it out: the samples it makes the decoder walk, which
 // start at the keyframe at or before the edit's media time so that the pictures

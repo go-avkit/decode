@@ -68,14 +68,26 @@ without `-ignore_editlist 1`; `tools/elstfix` records them in `testdata/elst`, s
 tests need no ffmpeg): the picture MD5s and the times are equal on H.264 and HEVC
 files with a delay (an empty edit), a cut start and end, both, and two edits after an
 empty one, and on the B-frame fixtures. `hevc-main-ipb.mp4` and `hevc-main10-ipb.mp4`
-(an edit of 96000, no `ctts`) give 10 of 12 pictures, the same ones. Two things
-differ in the times only, and are not edit list effects: those two files have a
-B-frame delay and no `ctts`, so ffmpeg labels each picture with the packet it
-leaves with and repeats times, where this package labels it with its own sample;
-and a Matroska track's times carry the track's reordering delay (`bframes.mkv`:
-first picture at 40, ffmpeg 0), as in v0.3.0. A fragmented MP4 gets the same
-treatment as a progressive one, where ffmpeg disables its edit list handling for a
-fragmented file and only shifts by its start.
+(an edit of 96000, no `ctts`) give 10 of 12 pictures, the same ones; their times
+differ, and not because of the edit list: they have a B-frame delay and no `ctts`,
+so ffmpeg labels each picture with the packet it leaves with and repeats times,
+where this package labels it with its own sample. A Matroska track states presentation times in its
+blocks (RFC 9559 section 11.2), and the container reader hands them over delayed by
+the track's reordering delay with no edit list; v0.3.0 returned them so
+(`bframes.mkv`: first picture at 40, ffmpeg 0). The delay is taken out now, as the
+edit list an MP4 muxer would write for it does, and `IgnoreEditList` still returns
+the reader's times.
+
+**Known divergence, fragmented MP4.** ffmpeg switches its edit list support off for
+a fragmented file (mov.c, `advanced_editlist` off when the moov has no `stts`
+entries) and keeps every picture, shifting times by the start only; this package
+applies the edit list there as for a progressive file, because the container
+reader does not say a file is fragmented
+([avkit#115](https://github.com/go-avkit/avkit/issues/115), then
+[#20](https://github.com/go-avkit/decode/issues/20)). Measured on fragmented files
+written by avkit's muxer from the delay and trim fixtures: with a start delay
+(empty edit) both agree, picture for picture and time for time; with a trimmed start
+(media time above 0) ffmpeg returns 21 pictures where this package returns 19.
 
 Streaming: `decode.NewTrack(trackConfig, cfg)` or `decode.NewAVCC(avcC, cfg)`,
 then `DecodeSample(sample.Data, pts)` per sample and `Flush()` at the end.

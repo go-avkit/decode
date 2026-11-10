@@ -109,7 +109,7 @@ func PosterFrame(r *container.Reader, trackID uint32, t float64, cfg PosterConfi
 		return Frame{}, fmt.Errorf("%w: track lists %d samples, want 1 to %d", ErrPosterLimit, len(samples), cfg.maxTrackSamples())
 	}
 	target, targetPTS, shift := 0, int64(0), int64(0)
-	if cfg.IgnoreEditList || tc.EditList == nil {
+	if tc = presented(r, tc, samples); cfg.IgnoreEditList || tc.EditList == nil {
 		target, targetPTS = posterSample(samples, t, tc.Timescale)
 	} else {
 		runs, err := editRuns(tc, samples)

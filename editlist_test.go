@@ -68,17 +68,15 @@ func fixturePath(t *testing.T, name string) string {
 }
 
 // editFixtures are the files whose recordings are compared, picture by picture
-// (MD5) and, where ptsLies is false, time by time. Two kinds of file have times
-// ffmpeg's framemd5 states and this package does not:
-//   - hevc-main-ipb and hevc-main10-ipb have a B-frame delay and no ctts. ffmpeg
-//     labels each picture from the packet it is output with, so its times repeat
-//     (three pictures at the last time) and skip two; this package labels a picture
-//     with the sample that holds it.
-//   - bframes.mkv is Matroska, whose block times are presentation times and
-//     which has no edit list: Reader.Samples hands them over delayed by the
-//     track's reordering delay (as an MP4 muxer would state with an edit list),
-//     which this package leaves in the time as it always did (v0.3.0), and ffmpeg
-//     takes out.
+// (MD5) and, where ptsLies is false, time by time. hevc-main-ipb and
+// hevc-main10-ipb have a B-frame delay and no ctts: ffmpeg labels each picture
+// from the packet it is output with, so its times repeat (three pictures at the
+// last time) and skip two, where this package labels a picture with the sample
+// that holds it. bframes.mkv is Matroska: its blocks state presentation times, the
+// reader delays them by the reordering delay and states no edit list, and
+// presented() implies the one that takes the delay out again, as ffmpeg's times
+// do. The fragmented fixtures with a trimmed start are in
+// TestFragmentedTrimDiverges, for ffmpeg does not apply their edit list.
 var editFixtures = []struct {
 	name    string
 	ptsLies bool
@@ -90,13 +88,74 @@ var editFixtures = []struct {
 	{"hevc-delay.mp4", false, false},
 	{"hevc-trim.mp4", false, false},
 	{"hevc-trim-delay.mp4", false, false},
+	{"h264-delay-frag.mp4", false, false},
+	{"hevc-delay-frag.mp4", false, false},
 	{"h264-edits.mp4", false, false},
 	{"hevc-edits.mp4", false, false},
 	{"hevc-main-ipb.mp4", true, false},
 	{"hevc-main10-ipb.mp4", true, false},
 	{"bframes.mp4", false, false},
 	{"bframes-delayed.mp4", false, false},
-	{"bframes.mkv", true, true},
+	{"bframes.mkv", false, true},
+}
+
+// A Matroska track with no reordering has no delay to take out; one with
+// reordering is presented from 0 and, with IgnoreEditList, from the delay.
+func TestMatroskaPresentation(t *testing.T) {
+	aus := accessUnits(splitNALs(readFile(t, "testdata/streams/base_ip_qp26.264")))
+	sps, pps, samples := parameterSets(aus)
+	var buf bytes.Buffer
+	m := container.NewWebMMuxer(&buf)
+	id, err := m.AddTrack(container.TrackConfig{
+		Kind: container.Video, Codec: "avc1", Timescale: 1000, Width: 176, Height: 144, SPS: sps, PPS: pps,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, s := range samples {
+		if err := m.WriteSample(id, container.Sample{Data: prefixed(s, 4), Duration: 40, Sync: i == 0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r, vid := reader(t, buf.Bytes())
+	fs, err := DecodeTrack(r, vid, Config{})
+	if err != nil || len(fs) == 0 || fs[0].PTS != 0 || fs[1].PTS != 40 {
+		t.Fatalf("%d pictures, %v", len(fs), err)
+	}
+	r, vid = reader(t, readFile(t, fixturePath(t, "bframes.mkv")))
+	if fs, err = DecodeTrack(r, vid, Config{IgnoreEditList: true}); err != nil || fs[0].PTS != 40 {
+		t.Fatalf("the track as the reader hands it over: %v", err)
+	}
+}
+
+// ffmpeg turns its edit list support off for a fragmented MP4 (mov.c L5360-5366):
+// it keeps every picture and only shifts the times. container.Reader does not say
+// that a file is fragmented, so this package applies the edit list there as it does
+// to a progressive file, and a fragmented file that trims its start (media time
+// above 0) gets fewer pictures than ffmpeg returns: the ones the edit list drops.
+// A start delay alone agrees (h264-delay-frag, in editFixtures). This test pins the
+// divergence, so that fixing it (avkit and decode issues) turns it red.
+func TestFragmentedTrimDiverges(t *testing.T) {
+	for _, base := range []string{"h264-trim.mp4", "hevc-trim.mp4"} {
+		name := strings.Replace(base, "-trim", "-trim-frag", 1)
+		t.Run(name, func(t *testing.T) {
+			r, id := reader(t, readFile(t, fixturePath(t, name)))
+			got, err := DecodeTrack(r, id, Config{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Ours is what the progressive file gives, edit list applied.
+			compareWithFFmpeg(t, got, recording(t, base, false), false)
+			// ffmpeg's is every picture, as when it is ignored.
+			ff := recording(t, name, false)
+			if len(ff) != len(recording(t, base, true)) || len(ff) <= len(got) {
+				t.Fatalf("ffmpeg returns %d pictures for the fragmented file, we %d", len(ff), len(got))
+			}
+		})
+	}
 }
 
 func compareWithFFmpeg(t *testing.T, got []Frame, want []ffPicture, ptsLies bool) {

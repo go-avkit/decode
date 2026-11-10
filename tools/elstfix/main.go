@@ -46,6 +46,10 @@ type fixture struct {
 	// writes at most one edit and an optional empty one, so a list of several is
 	// written with avkit's muxer, which writes every edit it is given.
 	Edits []container.Edit
+	// Fragment rewrites the fixture Src (a file of --out, made before) as a
+	// fragmented MP4 with avkit's muxer, keeping its edit list: ffmpeg switches
+	// its edit list support off for such a file.
+	Fragment bool
 }
 
 // sources are encoded once, small: 64x64, 25 pictures per second, a keyframe
@@ -70,6 +74,10 @@ var fixtures = []fixture{
 	// edit has already shown a part of.
 	{Name: "h264-edits.mp4", Src: "h264.mp4", Edits: twoEdits},
 	{Name: "hevc-edits.mp4", Src: "hevc.mp4", Edits: twoEdits},
+	{Name: "h264-trim-frag.mp4", Src: "h264-trim.mp4", Fragment: true},
+	{Name: "h264-delay-frag.mp4", Src: "h264-delay.mp4", Fragment: true},
+	{Name: "hevc-trim-frag.mp4", Src: "hevc-trim.mp4", Fragment: true},
+	{Name: "hevc-delay-frag.mp4", Src: "hevc-delay.mp4", Fragment: true},
 	// Files committed before, whose edit lists are the reason for this program.
 	{Name: "hevc-main-ipb.mp4"},
 	{Name: "hevc-main10-ipb.mp4"},
@@ -85,8 +93,17 @@ var twoEdits = []container.Edit{
 	{SegmentDuration: 360, MediaTime: 2048 + 1024, Rate: container.NormalRate},
 }
 
-// writeEdits copies the first track of src to dst with its edit list replaced.
-func writeEdits(src, dst string, edits []container.Edit) error {
+// trackWriter is what the progressive and the fragmented muxer share.
+type trackWriter interface {
+	AddTrack(container.TrackConfig) (uint32, error)
+	WriteSample(uint32, container.Sample) error
+	Close() error
+}
+
+// writeEdits copies the first track of src to dst with its edit list replaced by
+// edits, or kept when edits is nil, in a progressive MP4 or, when fragment is set,
+// a fragmented one.
+func writeEdits(src, dst string, edits []container.Edit, fragment bool) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
@@ -104,9 +121,14 @@ func writeEdits(src, dst string, edits []container.Edit) error {
 	if err != nil {
 		return err
 	}
-	cfg.EditList = &container.EditList{MovieTimescale: 1000, Edits: edits}
+	if edits != nil {
+		cfg.EditList = &container.EditList{MovieTimescale: 1000, Edits: edits}
+	}
 	var buf bytes.Buffer
-	m := container.NewProgressiveMuxer(&buf)
+	var m trackWriter = container.NewProgressiveMuxer(&buf)
+	if fragment {
+		m = container.NewMuxer(&buf)
+	}
 	tid, err := m.AddTrack(cfg)
 	if err != nil {
 		return err
@@ -191,8 +213,12 @@ func RootCmd() *cobra.Command {
 					path = filepath.Join(out, f.Name)
 					switch {
 					case check:
+					case f.Fragment:
+						if err := writeEdits(filepath.Join(out, f.Src), path, nil, true); err != nil {
+							return err
+						}
 					case f.Edits != nil:
-						if err := writeEdits(filepath.Join(work, f.Src), path, f.Edits); err != nil {
+						if err := writeEdits(filepath.Join(work, f.Src), path, f.Edits, false); err != nil {
 							return err
 						}
 					default:

@@ -207,7 +207,7 @@ func DecodeTrack(r *container.Reader, trackID uint32, cfg Config) ([]Frame, erro
 	if err != nil {
 		return nil, err
 	}
-	if cfg.IgnoreEditList || tc.EditList == nil {
+	if tc = presented(r, tc, samples); cfg.IgnoreEditList || tc.EditList == nil {
 		return decodeSpan(tc, samples, 0, cfg, nil)
 	}
 	runs, err := editRuns(tc, samples)
