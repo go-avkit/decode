@@ -66,6 +66,7 @@ func newAAC(tc container.TrackConfig, cfg AudioConfig) (audioCodec, error) {
 		return nil, err
 	}
 	var elems []aacElemMap
+	named := true  // false: the channels are numbered, in the order of the elements, without names
 	var tags []int // the element_instance_tag of each, or -1 when the order says which is which
 	switch {
 	case ac.config >= 1 && ac.config <= 7:
@@ -74,10 +75,7 @@ func newAAC(tc container.TrackConfig, cfg AudioConfig) (audioCodec, error) {
 			tags = append(tags, -1)
 		}
 	case ac.pce != nil:
-		var err error
-		if elems, tags, err = aacPCEMap(ac.pce); err != nil {
-			return nil, err
-		}
+		elems, tags, named = aacPCEMap(ac.pce)
 	default:
 		return nil, fmt.Errorf("%w: AAC channel configuration %d has no fixed layout", ErrAudioUnsupported, ac.config)
 	}
@@ -89,16 +87,21 @@ func newAAC(tc container.TrackConfig, cfg AudioConfig) (audioCodec, error) {
 		return nil, err
 	}
 	d := &aacDecoder{cfg: ac, parser: p, synth: newAACSynth(ac.rateIndex, ac.channels), elems: elems, tags: tags}
-	for _, e := range d.elems {
-		for c := 0; c < aacChannelsOfID(e.id); c++ {
-			d.layout |= e.pos[c]
+	if named {
+		for _, e := range d.elems {
+			for c := 0; c < aacChannelsOfID(e.id); c++ {
+				d.layout |= e.pos[c]
+			}
 		}
 	}
 	first := 0
 	for _, e := range d.elems {
 		var s [2]int
 		for c := 0; c < aacChannelsOfID(e.id); c++ {
-			s[c] = bits.OnesCount32(uint32(d.layout & (e.pos[c] - 1)))
+			s[c] = first + c
+			if named {
+				s[c] = bits.OnesCount32(uint32(d.layout & (e.pos[c] - 1)))
+			}
 		}
 		d.slot = append(d.slot, s)
 		d.firsts = append(d.firsts, first)
@@ -110,11 +113,11 @@ func newAAC(tc container.TrackConfig, cfg AudioConfig) (audioCodec, error) {
 // aacPCEMap gives the speakers of the elements a program_config_element lists: a
 // front pair is left and right (a second one left and right of centre), a front
 // single is the centre, a side pair is the side speakers, a back pair the back
-// ones and a back single the back centre, and an LFE is the LFE. A layout that
-// puts two elements on the same speaker, or has a side single, is refused.
-func aacPCEMap(p *aacPCE) ([]aacElemMap, []int, error) {
-	var out []aacElemMap
-	var tags []int
+// ones and a back single the back centre, and an LFE is the LFE. A list that puts
+// two elements on the same speaker, or has a side single, names no layout: named is
+// false and the decoder numbers the channels in the order of the elements.
+func aacPCEMap(p *aacPCE) (out []aacElemMap, tags []int, named bool) {
+	named = true
 	var used ChannelLayout
 	front := 0
 	for _, e := range p.elems {
@@ -135,19 +138,19 @@ func aacPCEMap(p *aacPCE) ([]aacElemMap, []int, error) {
 			m.pos[0] = BackCenter
 		case e.pos == 3:
 			m.pos[0] = LowFrequency
-		default:
-			return nil, nil, fmt.Errorf("%w: a single side channel in a program_config_element", ErrAudioUnsupported)
+		default: // a single side channel
+			named = false
 		}
 		for c := 0; c < aacChannelsOfID(m.id); c++ {
 			if used&m.pos[c] != 0 {
-				return nil, nil, fmt.Errorf("%w: two elements of a program_config_element on one speaker", ErrAudioUnsupported)
+				named = false
 			}
 			used |= m.pos[c]
 		}
 		out = append(out, m)
 		tags = append(tags, int(e.tag))
 	}
-	return out, tags, nil
+	return out, tags, named
 }
 
 func aacChannelsOfID(id int) int {

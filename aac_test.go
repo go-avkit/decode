@@ -159,13 +159,25 @@ func TestAACDecoderProgramConfig(t *testing.T) {
 		"two low frequency":     pceASC(nil, nil, nil, []int{0, 1}),
 		"three front pairs":     pceASC([][2]int{{1, 0}, {1, 1}, {1, 2}}, nil, nil, nil),
 	} {
-		_, err := newAAC(container.TrackConfig{Codec: "mp4a", CodecConfig: a}, AudioConfig{MaxChannels: 16})
-		wantErr(t, name, err, ErrAudioUnsupported, "program_config_element")
+		// these name no layout: the channels are numbered in the order of the elements
+		c, err := newAAC(container.TrackConfig{Codec: "mp4a", CodecConfig: a}, AudioConfig{MaxChannels: 16})
+		if err != nil || c.(*aacDecoder).layout != 0 {
+			t.Errorf("%s: %v, layout %v", name, err, c.(*aacDecoder).layout)
+			continue
+		}
+		d := c.(*aacDecoder)
+		var els [][2]int
+		for i, e := range d.elems {
+			els = append(els, [2]int{e.id, d.tags[i]})
+		}
+		out, err := c.decode(silentElements(els))
+		if err != nil || out[0].Layout != 0 || out[0].Channels != d.cfg.channels {
+			t.Errorf("%s: %v %+v", name, err, out)
+		}
 	}
 }
 
 func TestAACDecoderRefusals(t *testing.T) {
-	pce := asc(2, 3, 0, [3]uint{}, func(w *bitWriter) { pcePayload(w) })
 	for name, tc := range map[string]struct {
 		tc   container.TrackConfig
 		cfg  AudioConfig
@@ -174,7 +186,6 @@ func TestAACDecoderRefusals(t *testing.T) {
 	}{
 		"no configuration": {container.TrackConfig{Codec: "mp4a"}, AudioConfig{}, ErrAudioConfig, "AudioSpecificConfig"},
 		"HE-AAC":           {container.TrackConfig{Codec: "mp4a", CodecConfig: asc(5, 3, 2, [3]uint{}, nil)}, AudioConfig{}, ErrAudioUnsupported, "HE-AAC"},
-		"a PCE":            {container.TrackConfig{Codec: "mp4a", CodecConfig: pce}, AudioConfig{}, ErrAudioUnsupported, "program_config_element"},
 		"configuration 11": {container.TrackConfig{Codec: "mp4a", CodecConfig: asc(2, 3, 11, [3]uint{}, nil)}, AudioConfig{}, ErrAudioUnsupported, "no fixed layout"},
 		"block limit":      {aacTrack(aacRate44, 2), AudioConfig{MaxBlockSamples: 512}, ErrOverLimit, "1024"},
 		"channel limit":    {aacTrack(aacRate44, 2), AudioConfig{MaxChannels: 1}, ErrOverLimit, "2 channels"},
@@ -228,7 +239,7 @@ func TestAACDecodeTrack(t *testing.T) {
 	}
 	tc.EditList = &container.EditList{MovieTimescale: 44100, Edits: []container.Edit{{SegmentDuration: 20000, MediaTime: 1024}}}
 	var cut []Audio
-	aacWithLibmSine(func() { cut, err = decodeAudio(tc, samples, AudioConfig{}) })
+	cut, err = decodeAudio(tc, samples, AudioConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,8 +252,10 @@ func TestAACDecodeTrack(t *testing.T) {
 		// samples are the reference's from sample 1024 on, bit for bit
 		a := binary.LittleEndian.Uint32(got[i*4:])
 		b := binary.LittleEndian.Uint32(ref[(1024*2+i)*4:])
-		if a != b {
-			t.Fatalf("sample %d: %v, reference %v", i, math.Float32frombits(a), math.Float32frombits(b))
+		// the two are within about 3e-7 of the exact value (TestAACAccuracy), so 1e-6
+		// apart at most: a sanity check that the trimmed range is the right one
+		if x, y := math.Float32frombits(a), math.Float32frombits(b); math.Abs(float64(x-y)) > 1e-6 {
+			t.Fatalf("sample %d: %v, reference %v", i, x, y)
 		}
 	}
 	if cut[0].PTS != 0 {

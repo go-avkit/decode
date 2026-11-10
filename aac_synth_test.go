@@ -72,7 +72,7 @@ func TestAACFFTParseval(t *testing.T) {
 		z := make([]cpx, n)
 		var ein float64
 		for i := range z {
-			z[i] = cpx{float32(rng.NormFloat64()), float32(rng.NormFloat64())}
+			z[i] = cpx{rng.NormFloat64(), rng.NormFloat64()}
 			ein += float64(z[i].re)*float64(z[i].re) + float64(z[i].im)*float64(z[i].im)
 		}
 		f.run(z)

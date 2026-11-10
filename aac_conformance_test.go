@@ -76,7 +76,6 @@ var aacConformanceOpen = map[string]string{
 	"al03_11": "the same",
 	"al18_48": "perceptual noise substitution: the reference uses the ISO generator, this decoder ffmpeg's (docs/aac-design.md, G5)",
 	"al19_48": "the same, with short windows",
-	"al17_48": "a program_config_element that puts two elements on one speaker is refused",
 }
 
 func TestAACConformance(t *testing.T) {
