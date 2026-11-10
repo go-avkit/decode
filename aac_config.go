@@ -7,8 +7,8 @@ import (
 	"fmt"
 )
 
-// AudioSpecificConfig and the ADTS header, ISO/IEC 14496-3 subpart 1 (1.6.2) and
-// subpart 4 (4.4.1). Only AAC-LC (audio object type 2) is decoded: Main, SSR, LTP,
+// AudioSpecificConfig and the ADTS header, from ISO/IEC 14496-3 as known to the
+// author (clause and table numbers not verified). Only AAC-LC (audio object type 2) is decoded: Main, SSR, LTP,
 // SBR and PS are refused with ErrAudioUnsupported.
 
 // aacRates are the sampling frequencies of sampling_frequency_index 0 to 12.
@@ -115,7 +115,7 @@ type aacConfig struct {
 }
 
 // aacChannelConfig returns the channel count of a channel_configuration
-// (Table 1.19), or 0 when it is reserved or 0 (a PCE follows).
+// or 0 when it is reserved or 0 (a PCE follows).
 func aacChannelConfig(c int) int {
 	switch {
 	case c >= 1 && c <= 7:
@@ -156,7 +156,7 @@ func aacRateIndex(r *aacBits) (int, error) {
 	return i, nil
 }
 
-// parseAudioSpecificConfig reads an AudioSpecificConfig (Table 1.15). It accepts
+// parseAudioSpecificConfig reads an AudioSpecificConfig. It accepts
 // AAC-LC only. An explicit SBR or PS signal, or a backward compatible one after the
 // GASpecificConfig, is HE-AAC: ErrAudioUnsupported.
 func parseAudioSpecificConfig(b []byte) (aacConfig, error) {
@@ -219,8 +219,7 @@ func parseAudioSpecificConfig(b []byte) (aacConfig, error) {
 	return c, nil
 }
 
-// aacADTS is a parsed ADTS fixed and variable header (Tables 4.2.x of 14496-3
-// subpart 4, 1.A.2 of 13818-7).
+// aacADTS is a parsed ADTS fixed and variable header.
 type aacADTS struct {
 	mpeg2         bool // ID: MPEG-2 (1) or MPEG-4 (0)
 	protected     bool // a 16-bit CRC follows the header
