@@ -7,6 +7,7 @@ require (
 	github.com/go-avkit/avkit v0.15.0
 	github.com/mewkiz/flac v1.0.14
 	github.com/oops1/go.264 v1.12.0
+	github.com/pion/opus v0.1.0
 	github.com/tphakala/go-mp3 v0.3.0
 )
 

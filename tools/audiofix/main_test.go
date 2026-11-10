@@ -78,7 +78,7 @@ func TestSeeds(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"FuzzAudioTrack", "FuzzFLACSample", "FuzzFLACConfig", "FuzzMP3Sample"} {
+	for _, target := range []string{"FuzzAudioTrack", "FuzzFLACSample", "FuzzFLACConfig", "FuzzMP3Sample", "FuzzOpusSample", "FuzzOpusConfig"} {
 		if got, _ := filepath.Glob(filepath.Join(out, target, "seed-*")); len(got) < 4 {
 			t.Errorf("%s: %d seeds (%s)", target, len(got), stdout.String())
 		}
