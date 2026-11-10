@@ -232,9 +232,11 @@ suite listing was opened.
 
 ## What is decoded (H.264)
 
-The decoding is [`github.com/oops1/go.264`](https://github.com/oops1/go.264)
-(BSD-2-Clause, pure Go with assembly kernels), pinned and forced onto its
-software path. Where it is wrong it is fixed upstream by pull request.
+The decoding is [`github.com/go-avkit/h264/decoder`](https://github.com/go-avkit/h264)
+(v0.7.0; pure Go with assembly kernels), the decoding layer of
+[`oops1/go.264`](https://github.com/oops1/go.264) v1.12.0 (BSD-2-Clause) imported
+into go-avkit/h264, which runs the same conformance streams in its own CI. It
+has no hardware path. Fixes go into go-avkit/h264, and are offered upstream.
 
 | Profile | State |
 | --- | --- |

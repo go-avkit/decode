@@ -5,7 +5,8 @@
 // demuxes into pictures.
 //
 // The first codec is H.264 (ITU-T H.264 | ISO/IEC 14496-10), through
-// github.com/oops1/go.264, the second HEVC (ITU-T H.265), through
+// github.com/go-avkit/h264/decoder (a decoder imported from oops1/go.264), the
+// second HEVC (ITU-T H.265), through
 // github.com/gen2brain/h265: pure Go decoders that are checked here, picture for
 // picture, against ffmpeg. See the README for the profiles that claim holds
 // for and the conformance bitstreams it was measured on.
@@ -21,10 +22,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/gen2brain/h265/hevc"
-	"github.com/oops1/go.264"
+	h264dec "github.com/go-avkit/h264/decoder"
 )
 
 // Errors a decoder can refuse with. Each is matched with errors.Is.
@@ -141,7 +141,7 @@ type Frame struct {
 // Decoder decodes one H.264 or HEVC elementary stream. It is not safe for
 // concurrent use.
 type Decoder struct {
-	dec        *go264.Decoder
+	dec        *h264dec.Decoder
 	h265       *hevc.Decoder // set for HEVC, in which case dec is nil
 	cfg        Config
 	lengthSize int
@@ -167,15 +167,11 @@ func New(cfg Config, lengthSize int) (*Decoder, error) {
 // newDecoder builds a decoder for a length size already known to be valid.
 func newDecoder(cfg Config, lengthSize int) *Decoder {
 	d := &Decoder{cfg: cfg, lengthSize: lengthSize}
-	d.dec = go264.NewDecoderWithConfig(go264.DecoderConfig{
-		// The pure Go path is the one that is checked bit for bit; a hardware
-		// decoder is free to differ in the last bit and is never chosen.
-		ForceSoftware: true,
-		Limits: go264.DecoderLimits{
-			MaxFrameMBs:  cfg.frameMBs(),
-			MaxNALBytes:  cfg.sampleBytes(),
-			EnforceLevel: cfg.EnforceLevel,
-		},
+	// The decoder is pure Go; there is no hardware path to choose from.
+	d.dec = h264dec.New(h264dec.Limits{
+		MaxFrameMBs:  cfg.frameMBs(),
+		MaxNALBytes:  cfg.sampleBytes(),
+		EnforceLevel: cfg.EnforceLevel,
 	})
 	return d
 }
@@ -250,10 +246,11 @@ func (d *Decoder) Close() error {
 		d.h265.Reset()
 		return nil
 	}
-	return d.dec.Close()
+	d.dec = nil
+	return nil
 }
 
-func (d *Decoder) collect(pics []*go264.Frame, err error) ([]Frame, error) {
+func (d *Decoder) collect(pics []*h264dec.Frame, err error) ([]Frame, error) {
 	var out []Frame
 	for _, p := range pics {
 		out = append(out, d.frame(p))
@@ -263,7 +260,7 @@ func (d *Decoder) collect(pics []*go264.Frame, err error) ([]Frame, error) {
 
 // frame copies a decoder picture out of its reference buffer, packed, so the
 // caller owns it however long it keeps it.
-func (d *Decoder) frame(p *go264.Frame) Frame {
+func (d *Decoder) frame(p *h264dec.Frame) Frame {
 	cw, ch := (p.Width+1)/2, (p.Height+1)/2
 	f := Frame{
 		Y:        make([]byte, p.Width*p.Height),
@@ -303,11 +300,9 @@ func classify(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, go264.ErrOverLimit):
+	case errors.Is(err, h264dec.ErrOverLimit):
 		return fmt.Errorf("%w: %w", ErrOverLimit, err)
-	// go.264 does not export its unsupported-feature sentinel (it lives in an
-	// internal package), so it is recognised by its text until it does.
-	case strings.Contains(err.Error(), "unsupported bitstream feature"):
+	case errors.Is(err, h264dec.ErrUnsupported):
 		return fmt.Errorf("%w: %w", ErrUnsupported, err)
 	}
 	return err
