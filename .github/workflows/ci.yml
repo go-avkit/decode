@@ -75,6 +75,10 @@ jobs:
       - run: go test -run XXX -fuzz FuzzHEVCSample -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzHEVCAnnexB -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzParseHVCC -fuzztime 20s .
+      - run: go test -run XXX -fuzz FuzzFLACSample -fuzztime 60s .
+      - run: go test -run XXX -fuzz FuzzFLACConfig -fuzztime 20s .
+      # A file sizes the PCM DecodeAudioTrack returns, so it runs under limits too.
+      - run: ulimit -v 4194304 && GOMEMLIMIT=1GiB go test -run XXX -fuzz FuzzAudioTrack -fuzztime 60s .
       # An MP4 or Matroska file sizes the work PosterFrame does, so this target
       # runs under a memory limit: GOMEMLIMIT for the Go heap, ulimit -v (4 GiB)
       # for everything else. A bound that fails to refuse is an out of memory
