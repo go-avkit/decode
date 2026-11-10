@@ -82,6 +82,8 @@ func (d *flacDecoder) priming() int { return 0 }
 
 func (d *flacDecoder) sampleRate() int { return d.rate }
 
+func (d *flacDecoder) end(container.TrackConfig, []container.Sample) int64 { return -1 }
+
 func (d *flacDecoder) flush() ([]Audio, error) { return nil, nil }
 
 // decode decodes one FLAC frame. The block size is read from the frame header

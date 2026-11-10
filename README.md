@@ -69,7 +69,7 @@ Streaming: `decode.NewAudioTrack(trackConfig, cfg)`, then `DecodeSample(sample)`
 `Format` (`SampleS16`, `SampleS32`, `SampleF32`: ffmpeg's `s16le`, `s32le`,
 `f32le`); `Layout` is a speaker mask in WAVE order; `PTS` counts samples of
 `SampleRate` from the first presented sample. The start of the track is dropped as
-its container states it (edit list, `StartDelay`, Opus pre-skip) and an edit list's
+its container states it (edit list, Opus pre-skip; a bare `StartDelay` is a timestamp shift in ffmpeg and drops nothing) and an edit list's
 end cuts the last buffer, which is what ffmpeg does.
 
 | Codec | Library | Licence | Output | Oracle |
