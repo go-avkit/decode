@@ -142,6 +142,7 @@ type Frame struct {
 // concurrent use.
 type Decoder struct {
 	dec        *h264dec.Decoder
+	onlyPTS    *int64        // when set, only the H.264 picture presented at it is copied out
 	h265       *hevc.Decoder // set for HEVC, in which case dec is nil
 	cfg        Config
 	lengthSize int
@@ -253,14 +254,35 @@ func (d *Decoder) Close() error {
 func (d *Decoder) collect(pics []*h264dec.Frame, err error) ([]Frame, error) {
 	var out []Frame
 	for _, p := range pics {
-		out = append(out, d.frame(p))
+		pts := d.stamp()
+		if d.onlyPTS != nil && *d.onlyPTS != pts {
+			continue // not the picture asked for: counted, not copied
+		}
+		out = append(out, d.frame(p, pts))
 	}
 	return out, classify(err)
 }
 
+// stamp gives the next picture out its presentation time.
+func (d *Decoder) stamp() (pts int64) {
+	switch {
+	case len(d.pending) > 0:
+		pts, d.pending = d.pending[0], d.pending[1:]
+		d.last = pts
+	case d.sampleMode:
+		// More pictures than samples (a sample holding several): the best
+		// time left is the last one given.
+		pts = d.last
+	default:
+		pts = d.nextIndex
+	}
+	d.nextIndex++
+	return pts
+}
+
 // frame copies a decoder picture out of its reference buffer, packed, so the
 // caller owns it however long it keeps it.
-func (d *Decoder) frame(p *h264dec.Frame) Frame {
+func (d *Decoder) frame(p *h264dec.Frame, pts int64) Frame {
 	cw, ch := (p.Width+1)/2, (p.Height+1)/2
 	f := Frame{
 		Y:        make([]byte, p.Width*p.Height),
@@ -272,6 +294,7 @@ func (d *Decoder) frame(p *h264dec.Frame) Frame {
 		Height:   p.Height,
 		Chroma:   Chroma420,
 		BitDepth: 8,
+		PTS:      pts,
 	}
 	for y := 0; y < p.Height; y++ {
 		copy(f.Y[y*p.Width:], p.Y[y*p.StrideY:y*p.StrideY+p.Width])
@@ -280,18 +303,6 @@ func (d *Decoder) frame(p *h264dec.Frame) Frame {
 		copy(f.Cb[y*cw:], p.Cb[y*p.StrideC:y*p.StrideC+cw])
 		copy(f.Cr[y*cw:], p.Cr[y*p.StrideC:y*p.StrideC+cw])
 	}
-	switch {
-	case len(d.pending) > 0:
-		f.PTS, d.pending = d.pending[0], d.pending[1:]
-		d.last = f.PTS
-	case d.sampleMode:
-		// More pictures than samples (a sample holding several): the best
-		// time left is the last one given.
-		f.PTS = d.last
-	default:
-		f.PTS = d.nextIndex
-	}
-	d.nextIndex++
 	return f
 }
 
