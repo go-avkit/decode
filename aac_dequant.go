@@ -5,7 +5,8 @@ package decode
 
 import "math"
 
-// Inverse quantisation, ISO/IEC 14496-3 4.6.3.3:
+// Inverse quantisation (the formula as ffmpeg's decoder applies it; the clause of
+// the standard is not verified):
 //
 //	x = sign(q) * |q|^(4/3) * 2^((sf-100)/4)
 //
