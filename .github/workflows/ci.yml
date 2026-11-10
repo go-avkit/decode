@@ -88,6 +88,25 @@ jobs:
       # crash here, not a test failure on a large host.
       - run: ulimit -v 4194304 && GOMEMLIMIT=1GiB go test -run XXX -fuzz FuzzPosterFrame -fuzztime 60s .
 
+  # Opus conformance (RFC 6716 section 6, RFC 8251 section 11): opus_compare must
+  # pass on the official vectors. The archive is 74 MB and the IETF Trust's BSD
+  # licence allows redistribution, but it is fetched rather than committed; its
+  # SHA-256 is pinned and every file is checked against the SHA-1 of RFC 8251.
+  opus-vectors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.3'
+      - name: fetch the vectors
+        run: |
+          curl -sSfL --retry 10 --retry-delay 3 -C - -o vectors.tar.gz https://opus-codec.org/static/testvectors/opus_testvectors-rfc8251.tar.gz
+          echo "6b26a22f9ba87b2b836906a9bb7afec5f8e54d49553b1200382520ee6fedfa55  vectors.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/opus" && tar -xzf vectors.tar.gz -C "$RUNNER_TEMP/opus"
+      - name: opus_compare on every vector
+        run: OPUS_VECTORS_DIR="$RUNNER_TEMP/opus/opus_newvectors" go test -run 'TestOpusConformance$' -v -count=1 .
+
   vuln:
     runs-on: ubuntu-latest
     steps:

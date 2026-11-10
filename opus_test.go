@@ -8,38 +8,16 @@ import (
 	"testing"
 )
 
-// Opus is a float decoder, so the PCM is compared with ffmpeg's f32le within a stated
-// tolerance, and the sample count, which pre-skip and the end trimming decide,
-// exactly where the container states the end to the sample. There are two oracles,
-// both ffmpeg: its native decoder and libopus, the reference implementation, which
-// ffmpeg can decode with. The specification leaves the resampling of SILK open and
-// ffmpeg's native decoder does it with a filter of its own, so on SILK and hybrid
-// packets only libopus is a sample-for-sample oracle (the native decoder is 15 to
-// 22 dB from it and from this one); on CELT packets all three agree.
-//
-// The tolerances were chosen before the fixtures were decoded and stated by mode:
-//   - CELT-only streams: 1e-4 absolute, 80 dB. Measured 2.2e-5 and 90 dB at worst.
-//   - streams with SILK or hybrid packets: 2e-2 absolute, 40 dB. libopus decodes
-//     SILK in fixed point, this decoder in float, so this is rounding noise rather
-//     than float precision. Measured 1.4e-2 and 40.9 dB at worst (60 ms stereo
-//     frames), 5.7e-3 and 51 dB on 20 ms speech.
-const (
-	opusCeltMaxErr = 1e-4
-	opusCeltMinSNR = 80
-	opusSilkMaxErr = 2e-2
-	opusSilkMinSNR = 40
-)
-
-// opusHasSilk reports whether any packet is SILK or hybrid (RFC 6716 3.1: the
-// configuration, the five top bits of the TOC byte, is below 16).
-func opusHasSilk(smp [][]byte) bool {
-	for _, p := range smp {
-		if len(p) > 0 && p[0]>>3 < 16 {
-			return true
-		}
-	}
-	return false
-}
+// The conformance gate of Opus is opus_conformance_test.go (the official vectors and
+// opus_compare, RFC 6716 section 6). This test is information and a regression
+// check on the container handling: the PCM of ffmpeg-made fixtures is compared with
+// ffmpeg's native Opus decoder and with libopus (through ffmpeg), and the largest
+// error and SNR are LOGGED, not gated. The sample count, which pre-skip and the end
+// trimming decide, is checked exactly where the container states the end to the
+// sample. Measured: CELT streams agree with libopus to 2.2e-5 (90 dB); SILK and
+// hybrid streams to 1.4e-2 (40.9 dB) at worst, libopus decoding SILK in fixed point;
+// ffmpeg's native decoder resamples SILK with a filter of its own and is 15 to 22 dB
+// from libopus there.
 
 func TestOpusMatchesFFmpeg(t *testing.T) {
 	for _, c := range []struct {
@@ -73,10 +51,6 @@ func TestOpusMatchesFFmpeg(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var packets [][]byte
-			for _, s := range samples {
-				packets = append(packets, s.Data)
-			}
 			as, err := decodeAudio(tc, samples, AudioConfig{})
 			if err != nil {
 				t.Fatal(err)
@@ -109,13 +83,6 @@ func TestOpusMatchesFFmpeg(t *testing.T) {
 			if len(native) >= n {
 				nMax, nSNR := errStats(t, got[:n], native[:n])
 				t.Logf("against ffmpeg's native decoder max error %.3g, SNR %.1f dB", nMax, nSNR)
-			}
-			limitErr, limitSNR := opusCeltMaxErr, float64(opusCeltMinSNR)
-			if opusHasSilk(packets) {
-				limitErr, limitSNR = opusSilkMaxErr, float64(opusSilkMinSNR)
-			}
-			if maxErr > limitErr || snr < limitSNR {
-				t.Fatalf("max error %.3g (limit %g), SNR %.1f dB (limit %g)", maxErr, limitErr, snr, limitSNR)
 			}
 		})
 	}
