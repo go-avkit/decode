@@ -54,7 +54,8 @@ H.264 only.
 
 Audio decoders wrap pure Go libraries and are checked against ffmpeg, like the
 video ones. Wave D3 of [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89),
-one codec per pull request, **FLAC** first.
+one codec per pull request: FLAC, MP3, Opus. **Vorbis is not decoded** (see below),
+**MP2 neither**; AAC is a later, in-house wave.
 
 ```go
 id, _ := decode.FirstAudioTrack(r)
@@ -76,6 +77,28 @@ end cuts the last buffer, which is what ffmpeg does.
 |---|---|---|---|---|
 | FLAC (`fLaC`) | [`mewkiz/flac`](https://github.com/mewkiz/flac) v1.0.14 | Unlicense (public domain) | `s16le` up to 16 bits, `s32le` (left-justified) up to 24 | bit-exact, 13 fixtures |
 | MP3 (`mp3`) | [`tphakala/go-mp3`](https://github.com/tphakala/go-mp3) v0.3.0 | MIT (a port of minimp3, CC0) | `f32le` | max error 1.07e-6, SNR at least 127.9 dB, 10 fixtures, sample counts equal |
+| Opus (`Opus`) | [`pion/opus`](https://github.com/pion/opus) v0.1.0 | MIT | `f32le`, 48 kHz | CELT: max error 2.2e-5, SNR 90 dB; SILK and hybrid: 1.4e-2, 40.9 dB (against libopus) |
+
+Opus (RFC 6716: SILK, CELT and hybrid, mono and stereo, mapping family 0): the
+pre-skip of the header is dropped, the output gain it states applied, and an Ogg
+stream's end cut to its granule position, so the sample counts are ffmpeg's. A
+stream of more channels (mapping family 1 or 255) is `ErrAudioUnsupported`. The
+tolerances are stated by mode in `opus_test.go`, against two oracles that are both
+ffmpeg: libopus (the reference implementation, `-c:a libopus`) and ffmpeg's native
+decoder. They agree on CELT; on SILK and hybrid packets ffmpeg's native decoder
+resamples with a filter of its own and is 15 to 22 dB from libopus, which is why
+libopus is the oracle there. Differences from ffmpeg's output: in MP4, ffmpeg 9.0.2
+delivers every packet less the pre-skip (19848 samples on the fixture) where the edit
+list states 19200, and ffprobe reports 0.4 s; this decoder applies the edit list. In
+Matroska the end is only known to the millisecond (72 samples too long on the
+fixture).
+
+Vorbis: the only pure Go decoder, `jfreymuth/vorbis` (MIT), was wrapped and failed
+the oracle: the second channel of every ffmpeg-encoded stereo fixture decodes to
+something else (SNR against the encoder's source 1.6 dB, against 24 dB for ffmpeg's
+decoder) while the first is exact. It also allocates what its setup header states
+(a codebook of 2^24 entries, or none, is gigabytes), which the wrapper bounded. The
+work is on the branch `audio-vorbis-blocked`; no decoder was written.
 
 MP3 (Layer III, MPEG-1, 2 and 2.5, mono and stereo): the LAME tag's priming and
 padding reach the decoder as the edit list avkit states for it, and the count is
@@ -227,6 +250,11 @@ TestWritePosterSeeds`), and runs in CI under `GOMEMLIMIT` and `ulimit -v`.
 * RFC 9639 (FLAC), opened as text: 9.1.3 channel layouts (5 channels are "back/surround"
   in the RFC, side in ffmpeg, whose layout the output follows), 9.1.4 bit depth
   code 0b111 is 32 bits, 9.1.6 block size 65536 forbidden.
+* RFC 7845 (Ogg Opus), opened as text: 5.1 the identification header (version
+  accepted by its upper four bits, pre-skip at 48 kHz, output gain Q7.8 dB, mapping
+  family 0 for mono and stereo). RFC 6716 was **not opened**: the TOC byte test in
+  `opus_test.go` (configuration below 16 is SILK or hybrid) is the layout avkit's
+  `opusPacketDuration` (`container/ogg.go`, opened) reads.
 * MP3: ISO/IEC 11172-3 and 13818-3 are paywalled, **not opened**. The decoder is
   `tphakala/go-mp3`'s (its README and PROVENANCE.md opened: a port of minimp3,
   validated against it); the frame header fields the MPEG 2.5 test cuts frames by

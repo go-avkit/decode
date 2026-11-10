@@ -26,6 +26,8 @@ github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 h1:h8O1byDZ1uk6RUXMhj1
 github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985/go.mod h1:uiPmbdUbdt1NkGApKl7htQjZ8S7XaGUAVulJUJ9v6q4=
 github.com/oops1/go.264 v1.12.0 h1:72uGb5MAyX83lSrK3aMvxYtxdQHOct7E4bD8YoJxbBU=
 github.com/oops1/go.264 v1.12.0/go.mod h1:9QWDhblzn+OCeWpxJLpIfr/G/N5MSf849wVixp4Hzas=
+github.com/pion/opus v0.1.0 h1:GgK/a3DNDrffKjUFsK39rZKqfv7bQ2S2eqRKt0BnqAE=
+github.com/pion/opus v0.1.0/go.mod h1:t5Xog2n682JnawoykACE6nKVmupFvmJvkpM7x6bTv6g=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/tphakala/go-mp3 v0.3.0 h1:qPW9PN4KLP+aIeDtcwAbCy+nGDeUJGxodFJediCjpdo=

@@ -68,6 +68,19 @@ var fixtures = []fixture{
 	{"mp3_mono_11k.mp3", 11025, 1, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "24k"}, "f32le"},
 	{"mp3_stereo_vbr.mp3", 44100, 2, 0.5, []string{"-c:a", "libmp3lame", "-q:a", "2"}, "f32le"},
 	{"mp3_stereo_noxing.mp3", 44100, 2, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "128k", "-write_xing", "0"}, "f32le"},
+	// Opus, from libopus: CELT, SILK and hybrid modes, several frame durations.
+	{"opus_music_stereo.ogg", 48000, 2, 0.5, []string{"-c:a", "libopus", "-b:a", "96k"}, "f32le"},
+	{"opus_music_mono_24k.ogg", 24000, 1, 0.4, []string{"-c:a", "libopus", "-b:a", "48k"}, "f32le"},
+	{"opus_silk_voip.ogg", 16000, 1, 0.5, []string{"-c:a", "libopus", "-application", "voip", "-b:a", "12k"}, "f32le"},
+	{"opus_hybrid_voip.ogg", 48000, 1, 0.5, []string{"-c:a", "libopus", "-application", "voip", "-b:a", "28k"}, "f32le"},
+	{"opus_silk_stereo_60ms.ogg", 24000, 2, 0.5, []string{"-c:a", "libopus", "-application", "voip", "-b:a", "24k", "-frame_duration", "60"}, "f32le"},
+	{"opus_celt_2_5ms.ogg", 48000, 2, 0.3, []string{"-c:a", "libopus", "-b:a", "128k", "-frame_duration", "2.5"}, "f32le"},
+	{"opus_celt_10ms.ogg", 48000, 2, 0.3, []string{"-c:a", "libopus", "-b:a", "64k", "-frame_duration", "10"}, "f32le"},
+	{"opus_stereo_cbr.ogg", 48000, 2, 0.4, []string{"-c:a", "libopus", "-b:a", "64k", "-vbr", "off"}, "f32le"},
+	{"opus_stereo.mka", 48000, 2, 0.4, []string{"-c:a", "libopus", "-b:a", "96k"}, "f32le"},
+	{"opus_stereo.mp4", 48000, 2, 0.4, []string{"-c:a", "libopus", "-b:a", "96k"}, "f32le"},
+	{"opus_51.ogg", 48000, 6, 0.2, []string{"-c:a", "libopus", "-b:a", "256k", "-mapping_family", "1"}, "f32le"},
+
 	// MP2 is not decoded (no acceptable library): the fixture is how that is tested.
 	{"mp2_stereo.mp2", 44100, 2, 0.3, []string{"-c:a", "mp2"}, "f32le"},
 	{"mp3_stereo.mka", 44100, 2, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "128k"}, "f32le"},
@@ -96,8 +109,27 @@ func (f fixture) encodeArgs(path string) []string {
 	return append(args, "-bitexact", path)
 }
 
-func (f fixture) decodeArgs(path string) []string {
-	return []string{"-hide_banner", "-loglevel", "error", "-i", path, "-f", f.Decode, "-"}
+// decodeArgs is ffmpeg's command line for the reference: with its default decoder
+// for the codec, or with the named one.
+func (f fixture) decodeArgs(path, decoder string) []string {
+	args := []string{"-hide_banner", "-loglevel", "error"}
+	if decoder != "" {
+		args = append(args, "-c:a", decoder)
+	}
+	return append(args, "-i", path, "-f", f.Decode, "-")
+}
+
+// references are the decoders whose output is kept for the fixture, each with the
+// suffix of its file: ffmpeg's default one, and for Opus libopus too. ffmpeg's own
+// Opus decoder resamples SILK with a filter of its own (the specification leaves
+// that open), so only libopus, the reference implementation, is a sample-for-sample
+// oracle for SILK and hybrid packets.
+func (f fixture) references() [][2]string {
+	refs := [][2]string{{"", ".raw"}}
+	if strings.HasPrefix(f.Name, "opus_") {
+		refs = append(refs, [2]string{"libopus", ".libopus.raw"})
+	}
+	return refs
 }
 
 func run(ffmpeg string, args []string) ([]byte, error) {
@@ -135,25 +167,26 @@ func RootCmd() *cobra.Command {
 						return err
 					}
 				}
-				raw, err := run(ffmpeg, f.decodeArgs(path))
-				if err != nil {
-					return err
-				}
-				ref := path + ".raw"
-				if check {
-					want, err := os.ReadFile(ref)
+				for _, ref := range f.references() {
+					raw, err := run(ffmpeg, f.decodeArgs(path, ref[0]))
 					if err != nil {
 						return err
 					}
-					if !bytes.Equal(raw, want) {
-						bad = append(bad, f.Name)
+					if check {
+						want, err := os.ReadFile(path + ref[1])
+						if err != nil {
+							return err
+						}
+						if !bytes.Equal(raw, want) {
+							bad = append(bad, f.Name+ref[1])
+						}
+						continue
 					}
-					continue
+					if err := os.WriteFile(path+ref[1], raw, 0o644); err != nil {
+						return err
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "%s%s: %d bytes of %s\n", f.Name, ref[1], len(raw), f.Decode)
 				}
-				if err := os.WriteFile(ref, raw, 0o644); err != nil {
-					return err
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s: %d bytes of %s\n", f.Name, len(raw), f.Decode)
 			}
 			if len(bad) > 0 {
 				return fmt.Errorf("ffmpeg now decodes %s to other bytes than the references", strings.Join(bad, ", "))

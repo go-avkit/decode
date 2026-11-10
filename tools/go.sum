@@ -29,6 +29,8 @@ github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 h1:h8O1byDZ1uk6RUXMhj1
 github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985/go.mod h1:uiPmbdUbdt1NkGApKl7htQjZ8S7XaGUAVulJUJ9v6q4=
 github.com/oops1/go.264 v1.12.0 h1:72uGb5MAyX83lSrK3aMvxYtxdQHOct7E4bD8YoJxbBU=
 github.com/oops1/go.264 v1.12.0/go.mod h1:9QWDhblzn+OCeWpxJLpIfr/G/N5MSf849wVixp4Hzas=
+github.com/pion/opus v0.1.0 h1:GgK/a3DNDrffKjUFsK39rZKqfv7bQ2S2eqRKt0BnqAE=
+github.com/pion/opus v0.1.0/go.mod h1:t5Xog2n682JnawoykACE6nKVmupFvmJvkpM7x6bTv6g=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
 github.com/spf13/cobra v1.10.2 h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
 github.com/spf13/cobra v1.10.2/go.mod h1:7C1pvHqHw5A4vrJfjNwvOdzYu0Gml16OCs2GRiTUUS4=
