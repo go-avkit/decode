@@ -71,6 +71,99 @@ func TestAACDecoderLayouts(t *testing.T) {
 	}
 }
 
+// pceASC is an AudioSpecificConfig of channel configuration 0 whose
+// program_config_element lists the given elements, each {is_cpe, tag}, front then
+// side then back, then the LFE tags.
+func pceASC(front, side, back [][2]int, lfe []int) []byte {
+	return asc(2, aacRate44, 0, [3]uint{}, func(w *bitWriter) {
+		w.bits(0, 4)
+		w.bits(1, 2)
+		w.bits(aacRate44, 4)
+		w.bits(uint(len(front)), 4)
+		w.bits(uint(len(side)), 4)
+		w.bits(uint(len(back)), 4)
+		w.bits(uint(len(lfe)), 2)
+		w.bits(0, 3+4+3)
+		for _, g := range [][][2]int{front, side, back} {
+			for _, e := range g {
+				w.bits(uint(e[0]), 1)
+				w.bits(uint(e[1]), 4)
+			}
+		}
+		for _, t := range lfe {
+			w.bits(uint(t), 4)
+		}
+		for w.nbit%8 != 0 {
+			w.bits(0, 1)
+		}
+		w.bits(0, 8)
+	})
+}
+
+// silentElements writes a frame of empty elements, each {id, tag}.
+func silentElements(els [][2]int) []byte {
+	w := &bitWriter{}
+	for _, e := range els {
+		w.bits(uint(e[0]), 3)
+		w.bits(uint(e[1]), 4)
+		if e[0] == aacIDCPE {
+			w.bits(0, 1)
+		}
+		for c := 0; c < aacChannelsOfID(e[0]); c++ {
+			ch := tChan{gain: 100}
+			ch.write(w, false)
+		}
+	}
+	return w.finish()
+}
+
+func TestAACDecoderProgramConfig(t *testing.T) {
+	tc := container.TrackConfig{Codec: "mp4a", CodecConfig: pceASC([][2]int{{1, 2}}, nil, nil, nil)}
+	c, err := newAAC(tc, AudioConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := c.decode(silentElements([][2]int{{aacIDCPE, 2}}))
+	if err != nil || out[0].Layout != LayoutStereo || out[0].Channels != 2 {
+		t.Fatalf("%v %+v", err, out)
+	}
+	_, err = c.decode(silentElements([][2]int{{aacIDCPE, 5}}))
+	wantErr(t, "a tag the PCE does not list", err, ErrAudioSample, "not in the program_config_element")
+	_, err = c.decode(silentElements([][2]int{{aacIDCPE, 2}, {aacIDCPE, 2}}))
+	wantErr(t, "too many elements", err, ErrAudioSample, "2 channel elements")
+	two, err := newAAC(container.TrackConfig{Codec: "mp4a", CodecConfig: pceASC([][2]int{{1, 1}, {1, 2}}, nil, nil, nil)}, AudioConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = two.decode(silentElements([][2]int{{aacIDCPE, 1}, {aacIDCPE, 1}}))
+	wantErr(t, "an element twice", err, ErrAudioSample, "not in the program_config_element")
+
+	// everything a PCE can place: two front pairs, a front single, a side pair, a back
+	// pair and single, and an LFE, in an order of its own: the frame's order is free
+	big := pceASC([][2]int{{0, 0}, {1, 1}, {1, 2}}, [][2]int{{1, 3}}, [][2]int{{1, 4}, {0, 5}}, []int{6})
+	c, err = newAAC(container.TrackConfig{Codec: "mp4a", CodecConfig: big}, AudioConfig{MaxChannels: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := FrontCenter | FrontLeft | FrontRight | FrontLeftOfCenter | FrontRightOfCenter | SideLeft | SideRight | BackLeft | BackRight | BackCenter | LowFrequency
+	out, err = c.decode(silentElements([][2]int{{aacIDLFE, 6}, {aacIDCPE, 4}, {aacIDSCE, 0}, {aacIDCPE, 3}, {aacIDSCE, 5}, {aacIDCPE, 2}, {aacIDCPE, 1}}))
+	if err != nil || out[0].Layout != want || out[0].Channels != 11 {
+		t.Fatalf("%v %+v", err, out)
+	}
+	for name, a := range map[string][]byte{
+		"a single side channel": pceASC(nil, [][2]int{{0, 0}}, nil, nil),
+		"two centres":           pceASC([][2]int{{0, 0}, {0, 1}}, nil, nil, nil),
+		"two back centres":      pceASC(nil, nil, [][2]int{{0, 0}, {0, 1}}, nil),
+		"two back pairs":        pceASC(nil, nil, [][2]int{{1, 0}, {1, 1}}, nil),
+		"two side pairs":        pceASC(nil, [][2]int{{1, 0}, {1, 1}}, nil, nil),
+		"two low frequency":     pceASC(nil, nil, nil, []int{0, 1}),
+		"three front pairs":     pceASC([][2]int{{1, 0}, {1, 1}, {1, 2}}, nil, nil, nil),
+	} {
+		_, err := newAAC(container.TrackConfig{Codec: "mp4a", CodecConfig: a}, AudioConfig{MaxChannels: 16})
+		wantErr(t, name, err, ErrAudioUnsupported, "program_config_element")
+	}
+}
+
 func TestAACDecoderRefusals(t *testing.T) {
 	pce := asc(2, 3, 0, [3]uint{}, func(w *bitWriter) { pcePayload(w) })
 	for name, tc := range map[string]struct {
@@ -81,7 +174,7 @@ func TestAACDecoderRefusals(t *testing.T) {
 	}{
 		"no configuration": {container.TrackConfig{Codec: "mp4a"}, AudioConfig{}, ErrAudioConfig, "AudioSpecificConfig"},
 		"HE-AAC":           {container.TrackConfig{Codec: "mp4a", CodecConfig: asc(5, 3, 2, [3]uint{}, nil)}, AudioConfig{}, ErrAudioUnsupported, "HE-AAC"},
-		"a PCE":            {container.TrackConfig{Codec: "mp4a", CodecConfig: pce}, AudioConfig{}, ErrAudioUnsupported, "no fixed layout"},
+		"a PCE":            {container.TrackConfig{Codec: "mp4a", CodecConfig: pce}, AudioConfig{}, ErrAudioUnsupported, "program_config_element"},
 		"configuration 11": {container.TrackConfig{Codec: "mp4a", CodecConfig: asc(2, 3, 11, [3]uint{}, nil)}, AudioConfig{}, ErrAudioUnsupported, "no fixed layout"},
 		"block limit":      {aacTrack(aacRate44, 2), AudioConfig{MaxBlockSamples: 512}, ErrOverLimit, "1024"},
 		"channel limit":    {aacTrack(aacRate44, 2), AudioConfig{MaxChannels: 1}, ErrOverLimit, "2 channels"},

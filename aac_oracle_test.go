@@ -25,7 +25,11 @@ import (
 func aacOracleRun(t *testing.T, name string) (total, differ int, maxAbs float64, notSine int) {
 	t.Helper()
 	cfg, frames := aacADTSFrames(t, filepath.Join("testdata", "aac", name+".aac"))
-	ref, err := os.ReadFile(filepath.Join("testdata", "aac", "ref", name+".f32"))
+	refDir := filepath.Join("testdata", "aac", "ref")
+	if d := os.Getenv("AAC_REF_DIR"); d != "" {
+		refDir = d // another platform's ffmpeg, see TestAACOraclePlatform
+	}
+	ref, err := os.ReadFile(filepath.Join(refDir, name+".f32"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,4 +131,26 @@ func TestAACOracle(t *testing.T) {
 		})
 		aacFuse = true
 	}
+}
+
+// TestAACOraclePlatform counts, against the f32le decodes of another build of
+// ffmpeg (a directory in AAC_REF_DIR, same file names as testdata/aac/ref), the
+// samples that differ from this decoder with the multiply-adds fused and not
+// fused, both with the correctly rounded sine windows. It states nothing: the
+// numbers are the measurement.
+func TestAACOraclePlatform(t *testing.T) {
+	if os.Getenv("AAC_REF_DIR") == "" {
+		t.Skip("AAC_REF_DIR is not set")
+	}
+	for _, fuse := range []bool{true, false} {
+		aacFuse = fuse
+		var all, bad int
+		for _, fx := range aacFixtures {
+			total, differ, maxAbs, _ := aacOracleRun(t, fx.name[:len(fx.name)-4])
+			all, bad = all+total, bad+differ
+			t.Logf("fused=%v %-14s %d of %d differ, max abs error %g", fuse, fx.name, differ, total, maxAbs)
+		}
+		t.Logf("fused=%v total: %d of %d differ", fuse, bad, all)
+	}
+	aacFuse = true
 }
