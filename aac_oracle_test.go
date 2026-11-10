@@ -5,9 +5,11 @@ package decode
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-avkit/avkit/container"
@@ -151,6 +153,38 @@ func TestAACOraclePlatform(t *testing.T) {
 			t.Logf("fused=%v %-14s %d of %d differ, max abs error %g", fuse, fx.name, differ, total, maxAbs)
 		}
 		t.Logf("fused=%v total: %d of %d differ", fuse, bad, all)
+	}
+	// with that platform's own sinf in the windows (lines "n i 0xbits" of a file
+	// written by a C program that calls sinf with the arguments ffmpeg uses)
+	if f := os.Getenv("AAC_SINF_FILE"); f != "" {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		aacSynthOnce.Do(aacSynthInit)
+		long, short := aacSineLong, aacSineShort
+		defer func() { aacSineLong, aacSineShort = long, short }()
+		for _, line := range strings.Split(string(b), "\n") {
+			var n, i int
+			var bits uint32
+			if _, err := fmt.Sscanf(line, "%d %d 0x%x", &n, &i, &bits); err != nil {
+				continue
+			}
+			if n == 1024 {
+				aacSineLong[i] = math.Float32frombits(bits)
+			} else {
+				aacSineShort[i] = math.Float32frombits(bits)
+			}
+		}
+		for _, fuse := range []bool{true, false} {
+			aacFuse = fuse
+			var all, bad int
+			for _, fx := range aacFixtures {
+				total, differ, _, _ := aacOracleRun(t, fx.name[:len(fx.name)-4])
+				all, bad = all+total, bad+differ
+			}
+			t.Logf("fused=%v with that platform's sinf in the windows: %d of %d differ", fuse, bad, all)
+		}
 	}
 	aacFuse = true
 }
