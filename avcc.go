@@ -190,6 +190,14 @@ func (d *Decoder) toAnnexB(data []byte) ([]byte, error) {
 // DecodeTrack decodes every sample of one video track of a demuxed file and
 // returns the pictures in display order with their presentation times in the
 // track's timescale. It is the whole-file form of NewTrack and DecodeSample.
+//
+// The track's edit list is applied, as ffmpeg applies it by default (mov.c,
+// mov_fix_index): a picture presented before the media time of the edit or at
+// its end or after is decoded, for it may be a reference, and not returned, and
+// the presentation times are shifted so that the pictures of the edit start at
+// the delay the leading empty edits state, or at 0. Several edits are laid end
+// to end. An edit list this package does not apply is refused with ErrEditList.
+// Config.IgnoreEditList returns every picture at its track time instead.
 func DecodeTrack(r *container.Reader, trackID uint32, cfg Config) ([]Frame, error) {
 	tc, err := r.TrackConfig(trackID)
 	var samples []container.Sample
@@ -199,21 +207,53 @@ func DecodeTrack(r *container.Reader, trackID uint32, cfg Config) ([]Frame, erro
 	if err != nil {
 		return nil, err
 	}
+	if tc = presented(r, tc, samples); cfg.IgnoreEditList || tc.EditList == nil {
+		return decodeSpan(tc, samples, 0, cfg, nil)
+	}
+	runs, err := editRuns(tc, samples)
+	if err != nil {
+		return nil, err
+	}
+	var out []Frame
+	for _, run := range runs {
+		fs, err := decodeSpan(tc, samples[run.first:run.end], run.dts, cfg, &run)
+		out = append(out, fs...)
+		if err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+// decodeSpan decodes samples, the first of which decodes at dts, with a decoder
+// of its own, and returns the pictures it outputs. With a run only the pictures
+// the run presents are returned, at their presentation time.
+func decodeSpan(tc container.TrackConfig, samples []container.Sample, dts int64, cfg Config, run *editRun) ([]Frame, error) {
 	d, err := NewTrack(tc, cfg)
 	if err != nil {
 		return nil, err
 	}
 	defer d.Close()
 	var out []Frame
-	var dts int64
+	keep := func(fs []Frame) {
+		for _, f := range fs {
+			if run == nil {
+				out = append(out, f)
+			} else if f.PTS >= run.lo && f.PTS < run.hi {
+				f.PTS += run.shift
+				out = append(out, f)
+			}
+		}
+	}
 	for _, s := range samples {
 		fs, err := d.DecodeSample(s.Data, dts+int64(s.CompositionOffset))
-		out = append(out, fs...)
+		keep(fs)
 		if err != nil {
 			return out, err
 		}
 		dts += int64(s.Duration)
 	}
 	fs, err := d.Flush()
-	return append(out, fs...), err
+	keep(fs)
+	return out, err
 }

@@ -71,9 +71,12 @@ func FirstVideoTrack(r *container.Reader) (uint32, error) {
 }
 
 // PosterFrame decodes the one picture a track displays at t seconds: the one
-// with the greatest presentation time at or before t, where a sample's
-// presentation time is its decode time plus its composition offset, as for
-// DecodeTrack, whose picture and PTS it returns byte for byte.
+// with the greatest presentation time at or before t, where the presentation time
+// is the one DecodeTrack gives: the sample's decode time plus its composition
+// offset, as the track's edit list presents it (Config.IgnoreEditList leaves the
+// edit list out, and gives the time before it). It returns DecodeTrack's picture
+// and PTS byte for byte. A track whose edit list presents no picture, or states
+// what ErrEditList describes, is refused with ErrEditList.
 //
 // A t past the end of the track gives the last picture, and a t before the first
 // presentation time gives the first. A negative or NaN t is ErrTime. Decoding
@@ -105,7 +108,18 @@ func PosterFrame(r *container.Reader, trackID uint32, t float64, cfg PosterConfi
 	if len(samples) == 0 || len(samples) > cfg.maxTrackSamples() {
 		return Frame{}, fmt.Errorf("%w: track lists %d samples, want 1 to %d", ErrPosterLimit, len(samples), cfg.maxTrackSamples())
 	}
-	target, targetPTS := posterSample(samples, t, tc.Timescale)
+	target, targetPTS, shift := 0, int64(0), int64(0)
+	if tc = presented(r, tc, samples); cfg.IgnoreEditList || tc.EditList == nil {
+		target, targetPTS = posterSample(samples, t, tc.Timescale)
+	} else {
+		runs, err := editRuns(tc, samples)
+		if err != nil {
+			return Frame{}, err
+		}
+		if target, targetPTS, shift = editedSample(samples, runs, t, tc.Timescale); target < 0 {
+			return Frame{}, fmt.Errorf("%w: the edit list presents no picture", ErrEditList)
+		}
+	}
 	start := target
 	for start > 0 && !samples[start].Sync {
 		start--
@@ -130,6 +144,7 @@ func PosterFrame(r *container.Reader, trackID uint32, t float64, cfg PosterConfi
 		fed++
 		fs, err := d.DecodeSample(s.Data, dts+int64(s.CompositionOffset))
 		if f, ok := pick(fs, targetPTS); ok {
+			f.PTS += shift
 			return f, nil
 		}
 		if err != nil {
@@ -139,6 +154,7 @@ func PosterFrame(r *container.Reader, trackID uint32, t float64, cfg PosterConfi
 	}
 	fs, err := d.Flush()
 	if f, ok := pick(fs, targetPTS); ok {
+		f.PTS += shift
 		return f, nil
 	}
 	return Frame{}, fmt.Errorf("%w: no picture at presentation time %d (flush: %v)", ErrSample, targetPTS, err)
@@ -147,10 +163,7 @@ func PosterFrame(r *container.Reader, trackID uint32, t float64, cfg PosterConfi
 // posterSample returns the index and presentation time of the sample whose
 // picture is displayed at t seconds. It allocates nothing.
 func posterSample(samples []container.Sample, t float64, timescale uint32) (int, int64) {
-	want := int64(math.MaxInt64)
-	if x := math.Floor(t * float64(timescale)); x < 9e18 {
-		want = int64(x)
-	}
+	want := ticks(t, timescale)
 	var dts int64
 	best, bestPTS := -1, int64(0)  // greatest PTS <= want
 	first, firstPTS := 0, int64(0) // smallest PTS, for a t before them all
@@ -168,6 +181,48 @@ func posterSample(samples []container.Sample, t float64, timescale uint32) (int,
 		return first, firstPTS
 	}
 	return best, bestPTS
+}
+
+// ticks is t seconds in units of 1/timescale, rounded down; a time beyond what an
+// int64 holds is the largest one.
+func ticks(t float64, timescale uint32) int64 {
+	if x := math.Floor(t * float64(timescale)); x < 9e18 {
+		return int64(x)
+	}
+	return math.MaxInt64
+}
+
+// editedSample is posterSample for a track whose edit list is applied: among the
+// pictures the runs present, the one with the greatest presentation time at or
+// before t, or the first when t is before them all. It returns the sample, its
+// track time (what the decoder labels the picture with), and what to add to that
+// for its presentation time; the sample is -1 when no picture is presented.
+func editedSample(samples []container.Sample, runs []editRun, t float64, timescale uint32) (sample int, key, shift int64) {
+	want := ticks(t, timescale)
+	best, first := -1, -1
+	var bestPTS, firstPTS int64
+	var bestKey, firstKey, bestShift, firstShift int64
+	for _, run := range runs {
+		dts := run.dts
+		for k := run.first; k < run.end; k++ {
+			c := dts + int64(samples[k].CompositionOffset)
+			dts += int64(samples[k].Duration)
+			if c < run.lo || c >= run.hi {
+				continue
+			}
+			pts := c + run.shift
+			if first < 0 || pts < firstPTS {
+				first, firstPTS, firstKey, firstShift = k, pts, c, run.shift
+			}
+			if pts <= want && (best < 0 || pts > bestPTS) {
+				best, bestPTS, bestKey, bestShift = k, pts, c, run.shift
+			}
+		}
+	}
+	if best < 0 {
+		return first, firstKey, firstShift
+	}
+	return best, bestKey, bestShift
 }
 
 // pick returns the first picture of fs presented at pts.

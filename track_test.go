@@ -44,16 +44,24 @@ func TestDecodeTrack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frames, err := DecodeTrack(r, r.TrackIDs()[0], Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(sums(frames), reference(t, path)) {
-		t.Fatal("pictures differ from ffmpeg")
-	}
-	for i, f := range frames {
-		if want := int64(i)*40 + 80; f.PTS != want {
-			t.Fatalf("picture %d: PTS %d, want %d", i, f.PTS, want)
+	// The muxer states the 80 ms of composition offset as an edit list that starts
+	// the presentation there, so the pictures are presented from 0 as ffmpeg does,
+	// and from 80 when the edit list is ignored.
+	for _, c := range []struct {
+		cfg   Config
+		first int64
+	}{{Config{}, 0}, {Config{IgnoreEditList: true}, 80}} {
+		frames, err := DecodeTrack(r, r.TrackIDs()[0], c.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(sums(frames), reference(t, path)) {
+			t.Fatal("pictures differ from ffmpeg")
+		}
+		for i, f := range frames {
+			if want := int64(i)*40 + c.first; f.PTS != want {
+				t.Fatalf("%+v, picture %d: PTS %d, want %d", c.cfg, i, f.PTS, want)
+			}
 		}
 	}
 }

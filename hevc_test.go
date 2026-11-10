@@ -174,23 +174,30 @@ func TestHEVCDecodeTrack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frames, err := DecodeTrack(r, r.TrackIDs()[0], Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(sums(frames), hevcReference(t, path)) {
-		t.Fatal("pictures differ from ffmpeg")
-	}
-	for i, f := range frames {
-		if want := int64(i)*40 + 80; f.PTS != want {
-			t.Fatalf("picture %d: PTS %d, want %d", i, f.PTS, want)
+	// The 80 ms of composition offset is stated by the edit list the muxer writes:
+	// the presentation starts at 0, or at 80 when the edit list is ignored.
+	for _, c := range []struct {
+		cfg   Config
+		first int64
+	}{{Config{}, 0}, {Config{IgnoreEditList: true}, 80}} {
+		frames, err := DecodeTrack(r, r.TrackIDs()[0], c.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(sums(frames), hevcReference(t, path)) {
+			t.Fatal("pictures differ from ffmpeg")
+		}
+		for i, f := range frames {
+			if want := int64(i)*40 + c.first; f.PTS != want {
+				t.Fatalf("%+v, picture %d: PTS %d, want %d", c.cfg, i, f.PTS, want)
+			}
 		}
 	}
 	path = "testdata/hevc/streams/main10_ipb.265"
 	if r, err = container.NewReader(hevcMP4(t, path, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if frames, err = DecodeTrack(r, r.TrackIDs()[0], Config{}); err != nil || !slices.Equal(sums(frames), hevcReference(t, path)) {
+	if frames, err := DecodeTrack(r, r.TrackIDs()[0], Config{}); err != nil || !slices.Equal(sums(frames), hevcReference(t, path)) {
 		t.Fatalf("Main 10 track: %v", err)
 	}
 	// The picture size limit is refused when the first slice names its picture.

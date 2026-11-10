@@ -23,13 +23,71 @@ f, err := decode.PosterFrame(r, id, 12.5, decode.PosterConfig{}) // the picture 
 ```
 
 `PosterFrame` returns the picture with the greatest presentation time at or
-before `t` (decode time plus composition offset, as `DecodeTrack` labels them), and
-the very bytes `DecodeTrack` returns for it. A `t` past the end gives the last
-picture, one before the first presentation time gives the first, a negative or NaN
-`t` is `ErrTime`. Decoding starts at the last sync sample at or before the
-picture's sample (the first sample if none is flagged) and stops as soon as the
-picture is out. H.264 (`avc1`, `avc3`) and HEVC (`hvc1`, `hev1`); another codec is
-`ErrUnsupported`.
+before `t` (in presentation time, as `DecodeTrack` labels the pictures: see
+[Edit lists](#edit-lists)), and the very bytes `DecodeTrack` returns for it. A `t`
+past the end gives the last picture, one before the first presentation time gives
+the first, a negative or NaN `t` is `ErrTime`. Decoding starts at the last sync
+sample at or before the picture's sample (the first sample if none is flagged) and
+stops as soon as the picture is out. H.264 (`avc1`, `avc3`) and HEVC (`hvc1`,
+`hev1`); another codec is `ErrUnsupported`.
+
+## Edit lists
+
+An MP4 track's edit list (`elst`) says which stretch of the track is presented, and
+when. `DecodeTrack` and `PosterFrame` **apply it by default, as ffmpeg does**
+(libavformat/mov.c, `mov_fix_index`): a picture presented before the media time of
+an edit, or at its end or after, is decoded (it may be a reference) but not
+returned; presentation times are shifted so that the pictures of the edit start at
+0, or at the length of the empty edit that delays the track; an edit list of
+several edits lays them end to end, decoding again what an edit repeats; and
+`PosterFrame`'s `t` is a presentation time. Matroska and WebM have no per-track
+video edit list (RFC 9559 has `TrackOffset`, deprecated, and Ordered Chapters, a
+timeline of the whole file; the container reader reads neither), so nothing changes
+there.
+
+```go
+decode.DecodeTrack(r, id, decode.Config{IgnoreEditList: true}) // the track as it is
+```
+
+`Config.IgnoreEditList` (ffmpeg's `-ignore_editlist 1`) returns every picture,
+labelled with track time: the decode time of its sample plus its composition offset,
+which is what v0.3.0 returned. **The default is a change from v0.3.0** for a file
+whose edit list trims or delays the track (every MP4 whose first B-frame is
+delayed has one), so it ships as a minor release.
+
+What the edit list says that this package does not apply is refused with
+`ErrEditList`, naming the edit, and never guessed at: a media rate other than 1
+(ffmpeg ignores it), an edit that lasts to the end of the media (duration 0, which
+a fragmented file may say; ffmpeg presents nothing for it), an empty edit after the
+first edit that shows media, a media time before the track, and times that do not
+fit. `Config.IgnoreEditList` decodes such a file anyway. An edit list that would make
+the decoder walk more than 16 times the track's samples is `ErrOverLimit`.
+
+Measured against ffmpeg 9.0.2 (`-f framemd5 -fps_mode passthrough`, with and
+without `-ignore_editlist 1`; `tools/elstfix` records them in `testdata/elst`, so the
+tests need no ffmpeg): the picture MD5s and the times are equal on H.264 and HEVC
+files with a delay (an empty edit), a cut start and end, both, and two edits after an
+empty one, and on the B-frame fixtures. `hevc-main-ipb.mp4` and `hevc-main10-ipb.mp4`
+(an edit of 96000, no `ctts`) give 10 of 12 pictures, the same ones; their times
+differ, and not because of the edit list: they have a B-frame delay and no `ctts`,
+so ffmpeg labels each picture with the packet it leaves with and repeats times,
+where this package labels it with its own sample. A Matroska track states presentation times in its
+blocks (RFC 9559 section 11.2), and the container reader hands them over delayed by
+the track's reordering delay with no edit list; v0.3.0 returned them so
+(`bframes.mkv`: first picture at 40, ffmpeg 0). The delay is taken out now, as the
+edit list an MP4 muxer would write for it does, and `IgnoreEditList` still returns
+the reader's times.
+
+**Known divergence, fragmented MP4.** ffmpeg switches its edit list support off for
+a fragmented file (mov.c, `advanced_editlist` off when the moov has no `stts`
+entries) and keeps every picture, shifting times by the start only; this package
+applies the edit list there as for a progressive file, because the container
+reader does not say a file is fragmented
+([avkit#115](https://github.com/go-avkit/avkit/issues/115), then
+[#20](https://github.com/go-avkit/decode/issues/20)). Measured on fragmented files
+written by avkit's muxer from the delay and trim fixtures: with a start delay
+(empty edit) both agree, picture for picture and time for time; with a trimmed start
+(media time above 0) ffmpeg returns 21 pictures where this package returns 19.
 
 Streaming: `decode.NewTrack(trackConfig, cfg)` or `decode.NewAVCC(avcC, cfg)`,
 then `DecodeSample(sample.Data, pts)` per sample and `Flush()` at the end.
