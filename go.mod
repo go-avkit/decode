@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/gen2brain/h265 v0.2.4
 	github.com/go-avkit/avkit v0.15.0
-	github.com/go-avkit/h264 v0.7.0
+	github.com/go-avkit/h264 v0.8.0
 	github.com/mewkiz/flac v1.0.14
 	github.com/pion/opus v0.1.0
 	github.com/tphakala/go-mp3 v0.3.0
