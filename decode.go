@@ -72,6 +72,13 @@ type Config struct {
 	// EnforceLevel also refuses a stream that exceeds its own declared
 	// level's limits (Annex A), where MaxFrameMBs alone would admit it.
 	EnforceLevel bool
+	// IgnoreEditList makes DecodeTrack and PosterFrame label pictures with track
+	// time, the decoding time of a sample plus its composition offset, and return
+	// every picture, as ffmpeg's -ignore_editlist 1 does. The default applies the
+	// track's edit list: pictures it leaves out are decoded but not returned, and
+	// presentation times are those of the presentation, as ffmpeg does by default.
+	// The streaming Decoder does not read it.
+	IgnoreEditList bool
 }
 
 func (c Config) frameMBs() int {
@@ -118,8 +125,10 @@ type Frame struct {
 	Chroma Chroma
 	// BitDepth is the luma bit depth.
 	BitDepth int
-	// PTS is the presentation time in the track timescale: the decode time
-	// of the sample plus its composition offset. For a raw Annex B stream it
+	// PTS is the presentation time in the track timescale: the decode time of
+	// the sample plus its composition offset, as DecodeSample and, with
+	// Config.IgnoreEditList, DecodeTrack and PosterFrame give it; DecodeTrack and
+	// PosterFrame by default give that time as the track's edit list presents it. For a raw Annex B stream it
 	// is the picture's index in display order.
 	PTS int64
 	// Corrupt reports that the HEVC decoder lost a slice of the picture, failed
