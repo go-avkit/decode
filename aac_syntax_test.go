@@ -316,7 +316,7 @@ func TestAACRoundTripLong(t *testing.T) {
 		// Dequantisation against the formula in float64: the product of two float32
 		// roundings is within two ulp of it.
 		var out [aacFrameLen]float32
-		ch.dequantise(&out)
+		ch.dequantise(&out, nil)
 		swb := ch.ics.swb
 		for sfb := 0; sfb < 48; sfb++ {
 			for i := int(swb[sfb]); i < int(swb[sfb+1]); i++ {
@@ -399,7 +399,7 @@ func TestAACRoundTripShort(t *testing.T) {
 		}
 	}
 	var out [aacFrameLen]float32
-	ch.dequantise(&out)
+	ch.dequantise(&out, nil)
 	for i := range out {
 		if (q[i] == 0) != (out[i] == 0) {
 			t.Fatalf("coefficient %d: q %d, out %v", i, q[i], out[i])

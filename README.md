@@ -112,8 +112,8 @@ H.264 only.
 
 Audio decoders wrap pure Go libraries and are checked against ffmpeg, like the
 video ones. Wave D3 of [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89),
-one codec per pull request: FLAC, MP3, Opus. **Vorbis is not decoded** (see below),
-**MP2 neither**; AAC is a later, in-house wave.
+one codec per pull request: FLAC, MP3, Opus, and AAC-LC (in house, below).
+**Vorbis is not decoded** (see below), **MP2 neither**.
 
 ```go
 id, _ := decode.FirstAudioTrack(r)
@@ -136,6 +136,28 @@ end cuts the last buffer, which is what ffmpeg does.
 | FLAC (`fLaC`) | [`mewkiz/flac`](https://github.com/mewkiz/flac) v1.0.14 | Unlicense (public domain) | `s16le` up to 16 bits, `s32le` (left-justified) up to 24 | bit-exact, 13 fixtures |
 | MP3 (`mp3`) | [`tphakala/go-mp3`](https://github.com/tphakala/go-mp3) v0.3.0 | MIT (a port of minimp3, CC0) | `f32le` | max error 1.07e-6, SNR at least 127.9 dB, 10 fixtures, sample counts equal |
 | Opus (`Opus`) | [`pion/opus`](https://github.com/pion/opus) v0.1.0 | MIT | `f32le`, 48 kHz | opus_compare passes on all 12 RFC 8251 vectors, stereo and mono, quality 66.3 to 99.8 % |
+| AAC-LC (`mp4a`) | in this package, from ISO/IEC 14496-3 | BSD-3-Clause | `f32le` | **bit-equal to ffmpeg `-cpuflags 0`** on 5 fixtures (290 816 samples, 0 differ) given ffmpeg's platform sine, see below |
+
+AAC-LC (mono to 7.1 by channel configuration 1 to 7, 8 kHz to 96 kHz; M/S and
+intensity stereo, perceptual noise substitution, TNS, pulses, short windows): written
+in Go from the standard and from the order of float32 operations of ffmpeg's decoder
+(`docs/aac-design.md` lists what was read, `.provenance.yml` what each table is, and
+`copycheck` in CI fails the build if code or tables resemble ffmpeg's, FAAD2's or
+PacketVideo's beyond the declared normative values). **Refused with
+`ErrAudioUnsupported`: HE-AAC (SBR, PS), Main, LTP, SSR, 960-sample frames, coupling
+channels, and a channel configuration that is a program_config_element, 11, 12 or
+14.** The target is exact float32 equality with ffmpeg's C code
+(`-cpuflags 0`, measured on ffmpeg 9.0.2 built with Apple clang, which fuses
+multiply-adds: so does this decoder, with `math.FMA`, the same bits on every
+architecture). `TestAACOracle` states it as three measurements per fixture: with the
+oracle platform's libm sine in the windows, **0 of 290 816 samples differ**; with the
+correctly rounded sine windows the decoder ships (ffmpeg takes `sinf` of the C
+library, which Apple's rounds differently from the exact value in 14 of 1024 and 3 of
+128 entries), 508 differ, every one in a frame and channel overlapped under a sine
+window, by at most 2^-25; unfused, over half differ. Five of the 36 TNS
+coefficients differ by one ulp from ffmpeg's printed table: a stream using them is not
+bit-equal there. Conformance streams (ISO/IEC 14496-26) and speed against ffmpeg are
+not measured yet.
 
 Opus (RFC 6716: SILK, CELT and hybrid, mono and stereo, mapping family 0): the
 pre-skip of the header is dropped, the output gain it states applied, and an Ogg

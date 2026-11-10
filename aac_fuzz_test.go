@@ -33,7 +33,8 @@ func checkAACElements(t *testing.T, els []aacElement, maxCh int) {
 			if total != int(ch.ics.numWindows) {
 				t.Fatalf("groups hold %d windows of %d", total, ch.ics.numWindows)
 			}
-			ch.dequantise(&out)
+			noise := uint32(aacNoiseSeed)
+			ch.dequantise(&out, &noise)
 			for _, v := range out {
 				if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
 					t.Fatalf("non finite coefficient %v", v)
@@ -71,6 +72,31 @@ func FuzzAACFrame(f *testing.F) {
 		els2, err := p.parseFrame(data[2:])
 		if err != nil || p.used != used || len(els2) != len(els) {
 			t.Fatalf("second parse: %v, used %d then %d", err, used, p.used)
+		}
+	})
+}
+
+// FuzzAACDecode feeds raw_data_block bytes to the whole decoder, parser and
+// synthesis, twice in a row so that the state a frame leaves behind is read: the
+// first byte picks the sampling frequency, the second the channel configuration.
+func FuzzAACDecode(f *testing.F) {
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) < 2 {
+			return
+		}
+		tc := aacTrack(int(data[0])%len(aacRates), int(data[1])%7+1)
+		c, err := newAAC(tc, AudioConfig{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			out, err := c.decode(data[2:])
+			if err != nil {
+				return
+			}
+			if len(out) != 1 || out[0].Samples() != aacSamplesPerFrame || out[0].Channels != tc.Channels || out[0].Layout.Channels() != tc.Channels {
+				t.Fatalf("output %+v", out)
+			}
 		}
 	})
 }
@@ -114,7 +140,7 @@ func FuzzAACADTS(f *testing.F) {
 }
 
 func TestAACFuzzCorpusIsCommitted(t *testing.T) {
-	for _, target := range []string{"FuzzAACFrame", "FuzzAACConfig", "FuzzAACADTS"} {
+	for _, target := range []string{"FuzzAACFrame", "FuzzAACDecode", "FuzzAACConfig", "FuzzAACADTS"} {
 		entries, err := os.ReadDir(filepath.Join("testdata", "fuzz", target))
 		if err != nil || len(entries) < 4 {
 			t.Errorf("%s: corpus of %d entries (%v), want the seeds of testdata/aac/README", target, len(entries), err)

@@ -15,3 +15,10 @@ appear as the encoder finds them useful (aac_fixture_test.go logs the counts).
 
 The fuzz seeds in ../fuzz/FuzzAAC* are frames and headers cut from these files,
 and a few AudioSpecificConfig byte strings.
+
+ref/ holds what ffmpeg 9.0.2 (Homebrew, arm64, Apple clang 21) decodes them to with
+its C code paths, as float32 little-endian, interleaved (the oracle of TestAACOracle):
+
+  ffmpeg -cpuflags 0 -i st44.aac -f f32le ref/st44.f32           (likewise st44-tools,
+  mono22, mono8)
+  ffmpeg -cpuflags 0 -i surround51.aac -frames:a 12 -f f32le ref/surround51.f32
