@@ -221,8 +221,7 @@ thread, native pixel format):
 * **7 real files** (MP4 and Matroska, 540x960 to 3840x1606, Main and Main 10), 200
   pictures each: `testdata/hevc-real-files.txt`, hashes only.
 
-Speed against ffmpeg is not measured: the machine's 1-minute load was 27 to 38
-during this work. Tracked for decode#2.
+Speed: slower than ffmpeg, see [Performance](#performance).
 
 Bibliography: ITU-T H.265 (V11, 01/2026), opened as the PDF; read and checked:
 Annex B (B.2, B.3: byte stream and its NAL unit extraction) and C.5.2.2 to C.5.2.4
@@ -337,8 +336,23 @@ TestWritePosterSeeds`), and runs in CI under `GOMEMLIMIT` and `ulimit -v`.
 
 ## Performance
 
-Not yet measured against ffmpeg: the machine's 1-minute load was 36 to 50 during
-this work, above the limit for a measurement (8). Tracked in the issues.
+**Slower than ffmpeg on every video input measured, an open defect
+([#2](https://github.com/go-avkit/decode/issues/2)).** Measured on tag v0.3.0, single
+core: Apple M4 Max, darwin/arm64, ffmpeg 9.0.2 with `-threads 1`, 5 interleaved
+rounds, median, the harness refusing to start at a 1-minute load of 8 or more.
+
+| Input | ours fps | ffmpeg fps | ours / ffmpeg |
+| --- | --- | --- | --- |
+| H.264 High 1080p (real clip, 1920x808, 600 frames) | 36.5 | 173.1 | 0.21 |
+| HEVC Main 10 2160p (real clip, 3840x1606, 60 frames) | 10.3 | 27.9 | 0.37 |
+| the committed H.264 and HEVC streams (each repeated 100 times) | | | 0.21 to 0.41 |
+
+The profiles put the hot spots in the wrapped libraries, not in this package: in
+go.264 the interpolation and CABAC residual decoding on a pure-Go build (no arm64
+assembly kernels), in gen2brain/h265 the 10-bit motion compensation (its assembly is
+taken at 8 bits only). The measurement is on arm64; an amd64 one is still needed.
+Audio decoders are not measured yet. The numbers and the profiles are in the
+comment on #2.
 
 ## Development
 
