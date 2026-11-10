@@ -69,12 +69,23 @@ Streaming: `decode.NewAudioTrack(trackConfig, cfg)`, then `DecodeSample(sample)`
 `Format` (`SampleS16`, `SampleS32`, `SampleF32`: ffmpeg's `s16le`, `s32le`,
 `f32le`); `Layout` is a speaker mask in WAVE order; `PTS` counts samples of
 `SampleRate` from the first presented sample. The start of the track is dropped as
-its container states it (edit list, `StartDelay`, Opus pre-skip) and an edit list's
+its container states it (edit list, Opus pre-skip; a bare `StartDelay` is a timestamp shift in ffmpeg and drops nothing) and an edit list's
 end cuts the last buffer, which is what ffmpeg does.
 
 | Codec | Library | Licence | Output | Oracle |
 |---|---|---|---|---|
 | FLAC (`fLaC`) | [`mewkiz/flac`](https://github.com/mewkiz/flac) v1.0.14 | Unlicense (public domain) | `s16le` up to 16 bits, `s32le` (left-justified) up to 24 | bit-exact, 13 fixtures |
+| MP3 (`mp3`) | [`tphakala/go-mp3`](https://github.com/tphakala/go-mp3) v0.3.0 | MIT (a port of minimp3, CC0) | `f32le` | max error 1.07e-6, SNR at least 127.9 dB, 10 fixtures, sample counts equal |
+
+MP3 (Layer III, MPEG-1, 2 and 2.5, mono and stereo): the LAME tag's priming and
+padding reach the decoder as the edit list avkit states for it, and the count is
+ffmpeg's. **MP2 (Layer II) is not decoded**: no pure Go decoder under a licence
+compatible with this package exists (`hajimehoshi/go-mp3` derives from PDMP3, LGPL,
+and decodes Layer III only; `tphakala/go-mp3` likewise), so `NewAudioTrack` refuses an
+`mp2` track with `ErrAudioUnsupported`. In Matroska the encoder delay is the
+CodecDelay and the end only the samples' millisecond durations: the start is exact,
+the end within a millisecond of ffmpeg's (2 samples on the fixture). avkit's reader
+does not read MPEG 2.5 files; the decoder does, tested from frames cut by hand.
 
 FLAC: 4 to 24 bits per sample, 1 to 8 channels, every channel mode, native `.flac`,
 Matroska and MP4. A 32-bit stream is `ErrAudioUnsupported` (the library reads the
@@ -216,6 +227,12 @@ TestWritePosterSeeds`), and runs in CI under `GOMEMLIMIT` and `ulimit -v`.
 * RFC 9639 (FLAC), opened as text: 9.1.3 channel layouts (5 channels are "back/surround"
   in the RFC, side in ffmpeg, whose layout the output follows), 9.1.4 bit depth
   code 0b111 is 32 bits, 9.1.6 block size 65536 forbidden.
+* MP3: ISO/IEC 11172-3 and 13818-3 are paywalled, **not opened**. The decoder is
+  `tphakala/go-mp3`'s (its README and PROVENANCE.md opened: a port of minimp3,
+  validated against it); the frame header fields the MPEG 2.5 test cuts frames by
+  are checked by the decoding matching ffmpeg's. Priming is avkit's edit list
+  (`container/audiocodecs.go`, `ogg.go`, `read.go` of v0.15.0, opened) and what
+  ffmpeg 9.0.2 delivered on each fixture.
 * ISO/IEC 14496-15 (avcC): paywalled, **not opened**. The record layout is that
   of mp4ff v0.62.0 `avc/avcdecoderconfigurationrecord.go` (opened), which
   cites 14496-15 itself; it is fuzzed here.

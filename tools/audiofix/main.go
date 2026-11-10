@@ -58,6 +58,20 @@ var fixtures = []fixture{
 	{"flac_s32_stereo.flac", 48000, 2, 0.2, []string{"-c:a", "flac", "-sample_fmt", "s32", "-bits_per_raw_sample", "32", "-strict", "experimental"}, "s32le"},
 	{"flac_s16_8ch.flac", 48000, 8, 0.1, []string{"-c:a", "flac"}, "s16le"},
 	{"flac_s16_voice8k.flac", 8000, 1, 0.5, []string{"-c:a", "flac", "-frame_size", "1000"}, "s16le"},
+
+	// MP3, from libmp3lame; LAME writes the tag that states the priming.
+	{"mp3_stereo_44k.mp3", 44100, 2, 0.5, []string{"-c:a", "libmp3lame", "-b:a", "128k"}, "f32le"},
+	{"mp3_stereo_48k_192k.mp3", 48000, 2, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "192k"}, "f32le"},
+	{"mp3_stereo_32k_joint.mp3", 32000, 2, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "96k", "-joint_stereo", "1"}, "f32le"},
+	{"mp3_stereo_indep.mp3", 44100, 2, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "160k", "-joint_stereo", "0"}, "f32le"},
+	{"mp3_mono_22k.mp3", 22050, 1, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "48k"}, "f32le"},
+	{"mp3_mono_11k.mp3", 11025, 1, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "24k"}, "f32le"},
+	{"mp3_stereo_vbr.mp3", 44100, 2, 0.5, []string{"-c:a", "libmp3lame", "-q:a", "2"}, "f32le"},
+	{"mp3_stereo_noxing.mp3", 44100, 2, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "128k", "-write_xing", "0"}, "f32le"},
+	// MP2 is not decoded (no acceptable library): the fixture is how that is tested.
+	{"mp2_stereo.mp2", 44100, 2, 0.3, []string{"-c:a", "mp2"}, "f32le"},
+	{"mp3_stereo.mka", 44100, 2, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "128k"}, "f32le"},
+	{"mp3_stereo.mp4", 44100, 2, 0.4, []string{"-c:a", "libmp3lame", "-b:a", "128k"}, "f32le"},
 }
 
 // signal is the ffmpeg lavfi source of a fixture: a tone, a chirp and a little

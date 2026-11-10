@@ -7,6 +7,7 @@ require (
 	github.com/go-avkit/avkit v0.15.0
 	github.com/mewkiz/flac v1.0.14
 	github.com/oops1/go.264 v1.12.0
+	github.com/tphakala/go-mp3 v0.3.0
 )
 
 require (
@@ -18,4 +19,6 @@ require (
 	github.com/icza/bitio v1.1.0 // indirect
 	github.com/mewkiz/pkg v0.0.0-20250417130911-3f050ff8c56d // indirect
 	github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 // indirect
+	github.com/tphakala/simd v1.16.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )

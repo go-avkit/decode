@@ -22,6 +22,7 @@ const maxSeedFile = 40000
 var seedTargets = []struct{ target, codec string }{
 	{"FuzzFLACSample", "fLaC"},
 	{"FuzzFLACConfig", "fLaC"},
+	{"FuzzMP3Sample", "mp3"},
 }
 
 // corpusEntry is the file format of go test fuzz v1 for one []byte argument.

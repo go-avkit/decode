@@ -22,6 +22,9 @@ require (
 	github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 // indirect
 	github.com/oops1/go.264 v1.12.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/tphakala/go-mp3 v0.3.0 // indirect
+	github.com/tphakala/simd v1.16.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )
 
 replace github.com/go-avkit/decode => ..

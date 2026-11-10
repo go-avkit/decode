@@ -102,6 +102,9 @@ const (
 	Layout51     = Layout5 | LowFrequency
 	Layout61     = Layout3 | LowFrequency | BackCenter | SideLeft | SideRight
 	Layout71     = Layout51 | BackLeft | BackRight
+	// The back variants are what Vorbis names for five and six channels.
+	Layout5Back  = Layout3 | BackLeft | BackRight
+	Layout51Back = Layout5Back | LowFrequency
 )
 
 // Channels returns how many speaker positions the layout names.
@@ -215,6 +218,9 @@ type audioCodec interface {
 	priming() int
 	// sampleRate is the sample rate the codec outputs, in Hz.
 	sampleRate() int
+	// end is how many samples the track presents when its edit list states no
+	// end, from what the samples' durations say, or -1 for no limit.
+	end(tc container.TrackConfig, samples []container.Sample) int64
 }
 
 // AudioDecoder decodes one audio track, sample by sample. It is not safe for
@@ -234,8 +240,9 @@ var audioDecoders = map[string]func(container.TrackConfig, AudioConfig) (audioCo
 // NewAudioTrack returns a decoder for an audio track of a demuxed file. The codec
 // is named by tc.Codec ("fLaC" for FLAC); its configuration comes from
 // tc.CodecConfig. The start of the track is trimmed as the track states it: its
-// edit list, its StartDelay or the pre-skip of Opus, whichever the container
-// used, which is what ffmpeg does.
+// edit list (MP4, or the one avkit states for an MP3's LAME tag) or the pre-skip
+// of Opus, which is what ffmpeg does. StartDelay alone drops nothing: ffmpeg
+// treats a Matroska CodecDelay as a timestamp shift.
 func NewAudioTrack(tc container.TrackConfig, cfg AudioConfig) (*AudioDecoder, error) {
 	mk, ok := audioDecoders[tc.Codec]
 	if !ok {
@@ -245,21 +252,14 @@ func NewAudioTrack(tc container.TrackConfig, cfg AudioConfig) (*AudioDecoder, er
 	if err != nil {
 		return nil, err
 	}
+	// A start delay with no edit list is a Matroska CodecDelay (or an encoder's
+	// first-packet allowance): ffmpeg shifts the timestamps by it and drops
+	// nothing, except for Opus, whose pre-skip is the codec's own (priming).
 	skip := int64(c.priming())
-	if skip == 0 {
-		skip = startSkip(tc, c.sampleRate())
+	if skip == 0 && tc.EditList != nil {
+		skip = editSkip(tc.EditList, tc, c.sampleRate())
 	}
 	return &AudioDecoder{codec: c, cfg: cfg, skip: skip}, nil
-}
-
-// startSkip is how many samples of the track's output rate the container drops
-// from its start: the media time of the first edit of an edit list, or the
-// StartDelay.
-func startSkip(tc container.TrackConfig, rate int) int64 {
-	if el := tc.EditList; el != nil {
-		return editSkip(el, tc, rate)
-	}
-	return rescale(int64(tc.StartDelay), int64(rate), int64(time.Second))
 }
 
 // editSkip reads the media time of the first non-empty edit, which is where the
@@ -355,7 +355,7 @@ func FirstAudioTrack(r *container.Reader) (uint32, error) {
 
 // DecodeAudioTrack decodes every sample of one audio track of a demuxed file and
 // returns the PCM in presentation order, with the track's start and end trimmed as
-// its container states them (edit list, StartDelay, Opus pre-skip, DiscardPadding):
+// its container states them (edit list, Opus pre-skip, DiscardPadding):
 // the sample count is what ffmpeg delivers.
 func DecodeAudioTrack(r *container.Reader, trackID uint32, cfg AudioConfig) ([]Audio, error) {
 	tc, err := r.TrackConfig(trackID)
@@ -377,6 +377,9 @@ func decodeAudio(tc container.TrackConfig, samples []container.Sample, cfg Audio
 	}
 	defer d.Close()
 	limit := presentedSamples(tc, d.codec.sampleRate())
+	if limit < 0 {
+		limit = d.codec.end(tc, samples)
+	}
 	var out []Audio
 	var total int64
 	emit := func(fs []Audio) error {
