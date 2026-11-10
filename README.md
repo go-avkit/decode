@@ -130,6 +130,13 @@ thread, and against the reference yuv shipped in the suite where there is one.
 * **5 real files** (MP4 and Matroska, 720x300 to 1920x1080, x264), 900 pictures
   each: `testdata/real-files.txt`, hashes only.
 
+Speed is measured against `ffmpeg -threads 1` with `go run ./tools/jvt bench`
+(one core each, interleaved rounds, it refuses to run at a 1-minute load of 8 or
+more; `--repeat` lengthens the few-picture streams, `--cpuprofile` profiles our
+side). On Apple M4 Max v0.3.0 decodes at 0.21 to 0.41 of ffmpeg's frames per
+second; the table and the profile are in
+[#2](https://github.com/go-avkit/decode/issues/2).
+
 ## Bounds
 
 A stream is untrusted. `Config.MaxFrameMBs` (default 36864, a 4096x2304 picture)

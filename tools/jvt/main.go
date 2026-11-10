@@ -8,6 +8,8 @@
 //	                                   decode each stream, compare every picture's MD5 with ffmpeg's
 //	                                   framemd5, write M/NAME.md5 and print the table
 //	jvt file    PATH                   the same for a real MP4/MKV file; prints hashes only
+//	jvt bench   PATH...                decode speed against ffmpeg -threads 1, one core each,
+//	                                   interleaved rounds, refusing to run at a 1-minute load >= 8
 //
 // Nothing here is part of the library: it is the oracle harness, kept apart
 // (its own module) so the library's dependencies and coverage gate stay small.
@@ -204,7 +206,7 @@ func RootCmd() *cobra.Command {
 			return nil
 		},
 	}
-	root.AddCommand(fetch, compare, file, bits, diffCmd(), clipCmd(), seedsCmd(), censusCmd())
+	root.AddCommand(fetch, compare, file, bits, diffCmd(), clipCmd(), seedsCmd(), censusCmd(), benchCmd())
 	return root
 }
 
