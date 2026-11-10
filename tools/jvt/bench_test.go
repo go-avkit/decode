@@ -111,8 +111,10 @@ func TestBenchContainers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// ffmpeg returns 10 of the 12 pictures of hevc-main-ipb.mp4 (an edit list is
-	// the likely reason, not checked), so only the H.264 file must agree on count.
+	// ffmpeg returns 10 of the 12 pictures of hevc-main-ipb.mp4: its edit list
+	// starts 2 frames into the media and the file has no ctts, so ffmpeg drops the
+	// pictures of the first two samples (go-avkit/decode#2); with -ignore_editlist
+	// it returns all 12, as we do. Only the H.264 file must agree on the count.
 	for _, r := range rows {
 		if r.frames == 0 || r.refFrames == 0 {
 			t.Errorf("%s: %d frames, ffmpeg %d", r.Name, r.frames, r.refFrames)
