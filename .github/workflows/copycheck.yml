@@ -1,0 +1,23 @@
+name: copycheck
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ⛔ THE DOOR FOR THE AAC PULL REQUESTS. Copyleft reference code (ffmpeg,
+  # FAAD2) may be read to understand and never copied or translated; this job
+  # fails a pull request whose Go source resembles a declared reference in its
+  # numeric tables or in the shape of its code, or whose references cannot be
+  # read. It is a required check, not a report.
+  copycheck:
+    uses: go-fleettools/fleettools/.github/workflows/copycheck.yml@main
+    with:
+      # Pinned to a tag once fleettools releases one that contains copycheck;
+      # `main` until then, so this line is the first thing to revisit.
+      version: main
+      go-version: '1.27.3'

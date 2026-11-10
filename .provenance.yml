@@ -1,0 +1,82 @@
+# What this repository's authors READ while writing it, and what each reading
+# allows. Checked in CI by copycheck (go-fleettools/fleettools, cmd/copycheck):
+# it fetches each reference at the pinned revision, refuses a hash that differs,
+# refuses a role the licence does not allow, and fails when our Go source
+# resembles a reference in its numeric tables or in the shape of its code.
+#
+# ⛔ THE RULE, in the words it is enforced in (docs/aac-design.md): copyleft
+# reference code (ffmpeg, FAAD2) may be READ to understand, never copied or
+# translated, and its tables never copied verbatim.
+#
+# Roles: studied (read; nothing may be copied), oracle (run to compare output;
+# nothing may be copied), tables-from / ported-from (permissive licences only;
+# the reference must then be named in NOTICE).
+#
+# Not listed because there is no source to compare: the ISO/IEC 14496-26
+# conformance bitstreams (oracle, hashes only, fetched at test time and never
+# committed) and the 3GPP TS 26.401/26.410 documents (studied; the C code is
+# distributed as a nested zip copycheck does not unpack, and its notice gives no
+# permission to reproduce).
+#
+# To add or re-pin an entry: `copycheck pin --name N --url U --pin P --license L
+# --role R --path DIR`, and read what was fetched before committing the hash.
+version: 1
+
+# ⛔ NUMBERS AND CODE. Bare values of a standard's normative tables may be held
+# (decision 2026-11-10: values dictated by technical constraints are not
+# original works; FFmpeg and FAAD2 reproduce them too) when DECLARED below —
+# never the standard's text, never a reference's code, and the gate fails a
+# code-shape match whatever is declared. Every AAC table of 32 numbers or more
+# must have an entry (`kind: normative-values` with the standard and table
+# number, or `kind: derived` with the paper and equation) or be generated.
+# AAC lives in aac*.go (no AAC yet: the rule is armed and has nothing to say).
+values: []
+require_declared:
+  min_numbers: 32
+  paths: [aac]
+
+references:
+  # PacketVideo's AAC decoder, Apache-2.0 as a whole. ⛔ 114 of its files (all of
+  # sbr_*, ps_*, and the Huffman, TNS, PNS, LTP and bitstream readers) ALSO carry
+  # the MPEG reference-software notice, which releases copyright only for
+  # MPEG-2 NBC / MPEG-4 Audio CONFORMING products, with patent warnings. So the
+  # role is `studied` and not `tables-from`, and the restriction below makes
+  # any file that carries the notice read-only even if the role is ever changed
+  # (docs/aac-design.md, "The two notices on PacketVideo", gap G4).
+  - name: packetvideo-aacdec
+    url: https://android.googlesource.com/platform/frameworks/av/+archive/2df63ad6bbf0ad0fd066592b44f2e15123513112.tar.gz
+    pin: 2df63ad6bbf0ad0fd066592b44f2e15123513112 # tag android-4.1.1_r1
+    tree_sha256: 91783255da18b129189d0fc6cbe2b92bfc1c9d935920df5d16c0e56c20e6d1db
+    license: Apache-2.0
+    role: studied
+    strip_components: 0
+    paths:
+      - media/libstagefright/codecs/aacdec
+    restrictions:
+      - name: MPEG reference-software notice
+        contains:
+          # wrapped and double-spaced in the files; copycheck collapses whitespace
+          - gives users of the MPEG-2 NBC/MPEG-4 Audio standards free license
+
+  # FFmpeg: LGPL-2.1-or-later. Read for what is computed and in what order.
+  # Never tables-from or ported-from: the gate refuses both for LGPL.
+  - name: ffmpeg
+    url: https://github.com/FFmpeg/FFmpeg/archive/946fcce07b6dcd0331c8cc609192aeff5e1924f8.tar.gz
+    pin: 946fcce07b6dcd0331c8cc609192aeff5e1924f8 # tag n9.0.2
+    tree_sha256: 1fd6206391eb947cb656b313987142dad2b4f4781f7906ed076a40e2da9db615
+    license: LGPL-2.1-or-later
+    role: studied
+    paths:
+      - libavcodec
+      - libavutil
+
+  # FAAD2: GPL-2.0-or-later. Run as an oracle; compared so that nothing of it
+  # can have been copied by accident.
+  - name: faad2
+    url: https://github.com/knik0/faad2/archive/e8e76f0a44db45aed773a3f62fe35a63c867a738.tar.gz
+    pin: e8e76f0a44db45aed773a3f62fe35a63c867a738 # tag 2.11.4
+    tree_sha256: 1a2ce613965d4b8be9be3d8abbba192c6186d6feef7c9e83424a6e15ae135b34
+    license: GPL-2.0-or-later
+    role: oracle
+    paths:
+      - libfaad
