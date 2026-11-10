@@ -5,11 +5,14 @@ package decode
 
 import (
 	"errors"
+	"fmt"
 	"runtime"
 	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
+
+	h264dec "github.com/go-avkit/h264/decoder"
 )
 
 func TestConformanceAnnexB(t *testing.T) {
@@ -375,7 +378,7 @@ func TestClassify(t *testing.T) {
 	if got := classify(plain); got != plain {
 		t.Errorf("plain: %v", got)
 	}
-	if got := classify(errors.New("x: unsupported bitstream feature: y")); !errors.Is(got, ErrUnsupported) || !strings.Contains(got.Error(), "y") {
+	if got := classify(fmt.Errorf("x: %w: y", h264dec.ErrUnsupported)); !errors.Is(got, ErrUnsupported) || !strings.Contains(got.Error(), "y") {
 		t.Errorf("unsupported: %v", got)
 	}
 }
