@@ -5,7 +5,7 @@ package decode
 
 import "math"
 
-// The inverse MDCT of AAC-LC, ISO/IEC 14496-3 subpart 4, 4.6.11:
+// The inverse MDCT of AAC-LC (clause of the standard not verified):
 //
 //	x[n] = (2/N) * sum over k < N/2 of X[k] cos(2*pi/N * (n + n0) * (k + 1/2))
 //

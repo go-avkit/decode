@@ -35,7 +35,7 @@ var aacGain = func() (t [256]float32) {
 // Bands of the zero codebook and of the intensity codebooks come out as zeros:
 // intensity stereo fills them from the other channel afterwards. A band of the
 // noise codebook is filled with noise when noise is not nil, as zeros otherwise:
-// 4.6.13, random values from the generator at *noise, one per coefficient,
+// random values from the generator at *noise, one per coefficient,
 // window by window in band order, scaled so that the band's energy is the
 // energy the scalefactor states.
 func (ch *aacChannel) dequantise(out *[aacFrameLen]float32, noise *uint32) {

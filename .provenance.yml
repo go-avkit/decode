@@ -83,17 +83,17 @@ values:
   - kind: derived
     file: aac_synth.go
     symbol: aacTNSMap
-    source: ISO/IEC 14496-3 subpart 4, 4.6.9.3 (TNS coefficient decoding, sin of the quantised index); computed in code with math.Sin
+    source: TNS coefficient decoding, sin of the quantised index, as ffmpeg aacdec_dsp_template.c:158-189 and aactab.c:115-147 give it (standard clause not verified); computed in code with math.Sin
     rationale: no table is held; the reflection coefficients are computed from the formula and rounded to float32.
   - kind: derived
     file: aac_synth.go
     symbol: aacKBDLong
-    source: ISO/IEC 14496-3 subpart 4, 4.6.11.3 (Kaiser-Bessel-derived window, alpha 4 for 2048 points, 6 for 256); computed in code
+    source: Kaiser-Bessel-derived window, alpha 4 long and 6 short, as ffmpeg kbdwin.c:33-60 and aactab.c:97-98 compute it (standard clause not verified); computed in code
     rationale: no table is held; the windows are computed from the formula, with the Bessel function in code, and rounded to float32.
   - kind: derived
     file: aac_synth.go
     symbol: aacSineLong
-    source: ISO/IEC 14496-3 subpart 4, 4.6.11.3 (sine window); computed in code with math.Sin
+    source: sine window, as ffmpeg sinewin_tablegen.h:58-65 computes it (standard clause not verified); computed in code with math.Sin
     rationale: no table is held; the windows are computed from the formula and rounded to float32.
 require_declared:
   min_numbers: 32

@@ -9,7 +9,8 @@ import (
 )
 
 // Synthesis of AAC-LC: noise substitution, M/S and intensity stereo, TNS, the
-// inverse MDCT, windowing and overlap-add (ISO/IEC 14496-3 subpart 4, 4.6).
+// inverse MDCT, windowing and overlap-add (ISO/IEC 14496-3 subpart 4; clause
+// numbers not verified).
 //
 // Every float32 expression whose rounding matters is written with an explicit
 // float32 conversion on each product, which the Go specification says prevents a
@@ -104,7 +105,9 @@ var aacTNSMap = func() (m [4][16]float32) {
 	return m
 }()
 
-// aacTNSMaxBands is the number of scalefactor bands TNS may cover, by sampling
+// aacTNSMaxBands is the number of scalefactor bands TNS may cover (values read in
+// ffmpeg aactab.c:1974-1992, ff_tns_max_bands_1024 and _128; the standard's table
+// number is not verified), by sampling
 // frequency index: row 0 for long windows, row 1 for short ones.
 var aacTNSMaxBands = [2][13]uint8{
 	{31, 31, 34, 40, 42, 51, 46, 46, 42, 42, 42, 39, 39},
@@ -277,7 +280,7 @@ func (s *aacSynth) intensity(el *aacElement) {
 	}
 }
 
-// tns runs the TNS all-pole filters over the spectrum of a channel (4.6.9).
+// tns runs the TNS all-pole filters over the spectrum of a channel.
 func (s *aacSynth) tns(coef *[aacFrameLen]float32, ch *aacChannel) {
 	ics := &ch.ics
 	row := 0
