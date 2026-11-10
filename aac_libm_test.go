@@ -15,6 +15,14 @@ package decode
 // The decoder uses the correctly rounded value, which does not depend on the
 // platform. TestAACOracle puts these entries in the tables to show that they, and
 // nothing else, are what the decoder's output differs by from ffmpeg's.
+// aacOracleTNS are the five entries of aacTNSMap ({table, index}) where ffmpeg's
+// printed table (libavcodec/aactab.c tns_tmp2_map_0_3[6], 0_4[1], 0_4[9], 1_3[2],
+// 1_4[1]) is one float32 ulp from the correctly rounded value the decoder computes.
+// Real streams use them: TestAACRealFiles puts them in the table.
+var aacOracleTNS = map[[2]int]float32{
+	{0, 6}: 0.64278758, {1, 1}: -0.20791170, {1, 9}: 0.96182561, {2, 2}: 0.64278758, {3, 1}: -0.20791170,
+}
+
 var (
 	aacLibmSineLong = map[int]uint32{
 		57: 0x3db4684e, 223: 0x3eac1e29, 289: 0x3edbf8fd, 309: 0x3eea0d1c,

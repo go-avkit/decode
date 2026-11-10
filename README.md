@@ -156,8 +156,15 @@ library, which Apple's rounds differently from the exact value in 14 of 1024 and
 128 entries), 508 differ, every one in a frame and channel overlapped under a sine
 window, by at most 2^-25; unfused, over half differ. Five of the 36 TNS
 coefficients differ by one ulp from ffmpeg's printed table: a stream using them is not
-bit-equal there. Conformance streams (ISO/IEC 14496-26) and speed against ffmpeg are
-not measured yet.
+bit-equal there (the five real clips of `testdata/aac-real-files.txt` use them, and
+are byte-identical to ffmpeg's output once the test puts ffmpeg's values in). ffmpeg
+itself is not the same on every build: gcc builds on linux/amd64 and arm64 do not
+fuse multiply-adds, and glibc's `sinf` is another table; the PR for this decoder
+carries the per-platform counts. ISO/IEC 14496-26 conformance
+(`TestAACConformance`, 15 pinned vectors, a provisional 1 LSB bound): 11 pass at
+0.003 to 0.008 LSB; `al03` (window sequences out of order), `al18` and `al19` (noise
+substitution, ISO's generator) and `al17` (a PCE with two elements on a speaker) do
+not yet. Speed against ffmpeg is not measured yet.
 
 Opus (RFC 6716: SILK, CELT and hybrid, mono and stereo, mapping family 0): the
 pre-skip of the header is dropped, the output gain it states applied, and an Ogg

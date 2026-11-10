@@ -356,7 +356,7 @@ func (s *aacSynth) imdctWindow(st *aacChanSynth, ch *aacChannel, coef *[aacFrame
 	// The spectrum of the transform has the sign of the reference's inverse
 	// quantiser: scalefactor gains are applied with a negative sign there.
 	for i := range coef {
-		coef[i] = -coef[i]
+		coef[i] = 0 - coef[i] // not -coef[i]: that makes -0 of +0, and silence would come out as -0
 	}
 	lwPrev, swPrev, sw := aacSineLong[:], aacSineShort[:], aacSineShort[:]
 	if st.prevShape != 0 {
