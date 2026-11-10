@@ -23,6 +23,26 @@ var pendingUpstream = map[string]bool{
 	"MR5_TANDBERG_C": true,
 }
 
+// bitstreamIn returns the largest file of dir with a bitstream extension, which
+// is the stream: some archives name it otherwise than the archive
+// (cabac_mot_frm0_full.zip holds camp_mot_frm0_full.26l). "" when there is none.
+func bitstreamIn(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	best, size := "", int64(-1)
+	for _, e := range entries {
+		switch strings.ToLower(filepath.Ext(e.Name())) {
+		case ".264", ".jsv", ".jvt", ".avc", ".26l", ".h264", ".bit", ".bits":
+			if info, err := e.Info(); err == nil && info.Size() > size {
+				best, size = filepath.Join(dir, e.Name()), info.Size()
+			}
+		}
+	}
+	return best
+}
+
 // TestJVTConformance decodes ITU-T H.264.1 conformance bitstreams and compares
 // every picture's MD5 with what ffmpeg -f framemd5 produced for it (the
 // testdata/jvt/NAME.md5 files). The bitstreams are not in this repository: set
@@ -41,13 +61,7 @@ func TestJVTConformance(t *testing.T) {
 	for _, m := range manifests {
 		name := strings.TrimSuffix(filepath.Base(m), ".md5")
 		t.Run(name, func(t *testing.T) {
-			var stream string
-			for _, ext := range []string{".264", ".jsv", ".jvt", ".avc", ".26l", ".h264", ".bit", ".bits"} {
-				if _, err := os.Stat(filepath.Join(dir, name, name+ext)); err == nil {
-					stream = filepath.Join(dir, name, name+ext)
-					break
-				}
-			}
+			stream := bitstreamIn(filepath.Join(dir, name))
 			if stream == "" {
 				t.Skipf("%s is not in %s", name, dir)
 			}
