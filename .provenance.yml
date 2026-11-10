@@ -29,7 +29,7 @@ version: 1
 # code-shape match whatever is declared. Every AAC table of 32 numbers or more
 # must have an entry (`kind: normative-values` with the standard and table
 # number, or `kind: derived` with the paper and equation) or be generated.
-# AAC lives in aac*.go (no AAC yet: the rule is armed and has nothing to say).
+# AAC lives in aac*.go.
 values:
   # The Huffman codebooks. Codewords and lengths are the bare normative values;
   # the symbol-to-tuple mapping is code (aacTuple), and the codebooks are checked

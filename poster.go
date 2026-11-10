@@ -136,6 +136,9 @@ func PosterFrame(r *container.Reader, trackID uint32, t float64, cfg PosterConfi
 		return Frame{}, err
 	}
 	defer d.Close()
+	// Only the picture at targetPTS is wanted; the ones decoded on the way to
+	// it are not copied out of the decoder's buffers (a 720p picture is 1.4 MB).
+	d.onlyPTS = &targetPTS
 	fed := 0
 	for _, s := range samples[start:] {
 		if fed == cfg.maxSamples() {
