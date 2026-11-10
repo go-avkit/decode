@@ -58,6 +58,13 @@ var fixtures = []fixture{
 	{"flac_s32_stereo.flac", 48000, 2, 0.2, []string{"-c:a", "flac", "-sample_fmt", "s32", "-bits_per_raw_sample", "32", "-strict", "experimental"}, "s32le"},
 	{"flac_s16_8ch.flac", 48000, 8, 0.1, []string{"-c:a", "flac"}, "s16le"},
 	{"flac_s16_voice8k.flac", 8000, 1, 0.5, []string{"-c:a", "flac", "-frame_size", "1000"}, "s16le"},
+
+	// Vorbis, from ffmpeg's native encoder (experimental, hence -strict).
+	{"vorbis_stereo.ogg", 44100, 2, 0.4, []string{"-c:a", "vorbis", "-strict", "experimental"}, "f32le"},
+	{"vorbis_stereo_22k.ogg", 22050, 2, 0.4, []string{"-c:a", "vorbis", "-strict", "experimental"}, "f32le"},
+	{"vorbis_stereo_192k.ogg", 48000, 2, 0.3, []string{"-c:a", "vorbis", "-strict", "experimental", "-b:a", "192k"}, "f32le"},
+	{"vorbis_stereo_32k.ogg", 32000, 2, 0.3, []string{"-c:a", "vorbis", "-strict", "experimental", "-b:a", "32k"}, "f32le"},
+	{"vorbis_stereo.mka", 44100, 2, 0.3, []string{"-c:a", "vorbis", "-strict", "experimental"}, "f32le"},
 }
 
 // signal is the ffmpeg lavfi source of a fixture: a tone, a chirp and a little
