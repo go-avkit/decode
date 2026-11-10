@@ -116,7 +116,7 @@ func TestAudioDecoderLifecycle(t *testing.T) {
 }
 
 // TestAudioStartTrim: the start of a track is dropped as its container states it,
-// by StartDelay or by the media time of an edit list, and the rest is numbered
+// by the media time of its edit list, and the rest is numbered
 // from zero. 1000 samples of a 44.1 kHz stereo track are 4000 bytes.
 func TestAudioStartTrim(t *testing.T) {
 	tc, samples, want := flacTrack(t, "flac_s16_stereo.mka")
@@ -124,10 +124,6 @@ func TestAudioStartTrim(t *testing.T) {
 	// frame, which is then dropped whole.
 	for _, skip := range []int64{882, 4410} {
 		for name, mod := range map[string]func(*container.TrackConfig){
-			"start delay": func(c *container.TrackConfig) {
-				c.StartDelay = time.Duration(skip) * time.Second / 44100
-				c.EditList = nil
-			},
 			"edit list": func(c *container.TrackConfig) {
 				c.EditList = &container.EditList{MovieTimescale: 1000, Edits: []container.Edit{
 					{SegmentDuration: 50, MediaTime: container.EmptyEdit, Rate: 1 << 16},
@@ -150,6 +146,20 @@ func TestAudioStartTrim(t *testing.T) {
 	}
 }
 
+// TestStartDelayAloneDropsNothing: a Matroska CodecDelay is a timestamp shift in
+// ffmpeg, and a track that states one without an edit list is decoded whole.
+func TestStartDelayAloneDropsNothing(t *testing.T) {
+	tc, samples, want := flacTrack(t, "flac_s16_stereo.mka")
+	tc.StartDelay, tc.EditList = 20*time.Millisecond, nil
+	as, err := decodeAudio(tc, samples, AudioConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pcmBytes(t, as); !bytes.Equal(got, want) {
+		t.Fatalf("%d bytes, want all %d", len(got), len(want))
+	}
+}
+
 func TestEditSkip(t *testing.T) {
 	tc := container.TrackConfig{SampleRate: 48000, Timescale: 48000}
 	for name, c := range map[string]struct {
@@ -165,7 +175,7 @@ func TestEditSkip(t *testing.T) {
 	} {
 		c2 := tc
 		c2.Timescale, c2.EditList = c.ts, c.el
-		if got := startSkip(c2, 48000); got != c.want {
+		if got := editSkip(c.el, c2, 48000); got != c.want {
 			t.Errorf("%s: %d, want %d", name, got, c.want)
 		}
 	}

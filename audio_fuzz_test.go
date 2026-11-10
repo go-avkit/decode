@@ -100,8 +100,45 @@ func FuzzFLACConfig(f *testing.F) {
 	})
 }
 
+func FuzzMP3Sample(f *testing.F) {
+	f.Fuzz(func(t *testing.T, data []byte) {
+		d, err := NewAudioTrack(container.TrackConfig{Codec: "mp3", SampleRate: 44100, Channels: 2, Timescale: 44100}, audioFuzzConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Close()
+		first, _ := d.DecodeSample(container.Sample{Data: data})
+		second, _ := d.DecodeSample(container.Sample{Data: data})
+		last, _ := d.Flush()
+		checkAudio(t, audioFuzzConfig, first, second, last)
+	})
+}
+
+func FuzzOpusSample(f *testing.F) {
+	f.Fuzz(func(t *testing.T, data []byte) {
+		d, err := NewAudioTrack(opusTrack(opusHead(2, 312, 0, 0)), audioFuzzConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Close()
+		first, _ := d.DecodeSample(container.Sample{Data: data})
+		second, _ := d.DecodeSample(container.Sample{Data: data})
+		last, _ := d.Flush()
+		checkAudio(t, audioFuzzConfig, first, second, last)
+	})
+}
+
+func FuzzOpusConfig(f *testing.F) {
+	f.Fuzz(func(t *testing.T, conf []byte) {
+		d, err := NewAudioTrack(opusTrack(conf), audioFuzzConfig)
+		if err == nil {
+			d.Close()
+		}
+	})
+}
+
 func TestAudioFuzzCorpusIsCommitted(t *testing.T) {
-	for _, target := range []string{"FuzzAudioTrack", "FuzzFLACSample", "FuzzFLACConfig"} {
+	for _, target := range []string{"FuzzAudioTrack", "FuzzFLACSample", "FuzzFLACConfig", "FuzzMP3Sample", "FuzzOpusSample", "FuzzOpusConfig"} {
 		entries, err := os.ReadDir(filepath.Join("testdata", "fuzz", target))
 		if err != nil || len(entries) < 4 {
 			t.Errorf("%s: corpus of %d entries (%v), want the seeds from `audiofix seeds`", target, len(entries), err)

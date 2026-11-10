@@ -22,6 +22,9 @@ const maxSeedFile = 40000
 var seedTargets = []struct{ target, codec string }{
 	{"FuzzFLACSample", "fLaC"},
 	{"FuzzFLACConfig", "fLaC"},
+	{"FuzzMP3Sample", "mp3"},
+	{"FuzzOpusSample", "Opus"},
+	{"FuzzOpusConfig", "Opus"},
 }
 
 // corpusEntry is the file format of go test fuzz v1 for one []byte argument.
@@ -109,7 +112,7 @@ func writeTrackSeeds(out, base string, data []byte) (int, error) {
 				continue
 			}
 			dir := filepath.Join(out, st.target)
-			if st.target == "FuzzFLACConfig" {
+			if strings.HasSuffix(st.target, "Config") {
 				if err := writeSeed(dir, "seed-"+base, tc.CodecConfig); err != nil {
 					return n, err
 				}
