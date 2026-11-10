@@ -73,7 +73,7 @@ values:
   - kind: derived
     file: aac_dequant.go
     symbol: aacPow43
-    source: inverse quantisation |q|^(4/3), formula as in ffmpeg aacdec_proc_template.c:46-47 (comment "reference: 4.6.3.3", clause not verified against the standard); computed in code with math.Pow
+    source: inverse quantisation |q|^(4/3), formula as in ffmpeg aacdec_proc_template.c:46-47 (its comment cites 4.6.3.3, clause not verified against the standard); computed in code with math.Pow
     rationale: no table is held; the values are computed from the formula and rounded to float32.
   - kind: derived
     file: aac_dequant.go
