@@ -232,9 +232,11 @@ suite listing was opened.
 
 ## What is decoded (H.264)
 
-The decoding is [`github.com/oops1/go.264`](https://github.com/oops1/go.264)
-(BSD-2-Clause, pure Go with assembly kernels), pinned and forced onto its
-software path. Where it is wrong it is fixed upstream by pull request.
+The decoding is [`github.com/go-avkit/h264/decoder`](https://github.com/go-avkit/h264)
+(v0.8.0; pure Go with assembly kernels), the decoding layer of
+[`oops1/go.264`](https://github.com/oops1/go.264) v1.12.0 (BSD-2-Clause) imported
+into go-avkit/h264, which runs the same conformance streams in its own CI. It
+has no hardware path. Fixes go into go-avkit/h264, and are offered upstream.
 
 | Profile | State |
 | --- | --- |
@@ -350,7 +352,11 @@ rounds, median, the harness refusing to start at a 1-minute load of 8 or more.
 The profiles put the hot spots in the wrapped libraries, not in this package: in
 go.264 the interpolation and CABAC residual decoding on a pure-Go build (no arm64
 assembly kernels), in gen2brain/h265 the 10-bit motion compensation (its assembly is
-taken at 8 bits only). The measurement is on arm64; an amd64 one is still needed.
+taken at 8 bits only). The H.264 decoder is go-avkit/h264, whose README keeps the
+mid-GOP table ([decode#10](https://github.com/go-avkit/decode/issues/10)): the
+IDR and 45 pictures after it at 720p took 257 ms as imported from go.264 and take
+179 ms in h264 v0.8.0, against about 58 ms for `ffmpeg -threads 1` once its
+process start is taken off. The measurement is on arm64; an amd64 one is still needed.
 Audio decoders are not measured yet. The numbers and the profiles are in the
 comment on #2.
 

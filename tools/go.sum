@@ -7,12 +7,12 @@ github.com/asticode/go-astits v1.17.0/go.mod h1:psImoC1BhcAWIsyM/RnbO1OgUW+XSf8f
 github.com/at-wat/ebml-go v0.19.4 h1:6F767ThzH/JqNUsF79PwRFP0pwUF5ALXWJ6pXuiolI8=
 github.com/at-wat/ebml-go v0.19.4/go.mod h1:wu3fQj+DWo6SOOl9c4yDi+gFs9Oa96Z2B5qxo1OxFYY=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
-github.com/ebitengine/purego v0.9.0 h1:mh0zpKBIXDceC63hpvPuGLiJ8ZAa3DfrFTudmfi8A4k=
-github.com/ebitengine/purego v0.9.0/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/gen2brain/h265 v0.2.4 h1:JUSbGkRAYZpd7ucCL192yx4ViEo75ZO6OEdm1TQt9qM=
 github.com/gen2brain/h265 v0.2.4/go.mod h1:kefpLxLhGpNCUG/q/aabJcD6GqB9Nhet3fNi9xX9Wzw=
 github.com/go-avkit/avkit v0.15.0 h1:8lZ3JfcyMRqoqyp17n0+ouXEghEECP8PCpo5Qczi4Ms=
 github.com/go-avkit/avkit v0.15.0/go.mod h1:e6vXhNYj/ccY7454oZNTeSuKA7C4cBPA3usz3d6jxjA=
+github.com/go-avkit/h264 v0.8.0 h1:KvnXQsuG18g34i8eRqmGQF7hjHkdki8NYMFNzT10qzE=
+github.com/go-avkit/h264 v0.8.0/go.mod h1:LcFlgGaV0CHWk4oEpO3GWv+93vylXsuJeepcDW9Md3I=
 github.com/go-test/deep v1.1.0 h1:WOcxcdHcvdgThNXjw0t76K42FXTU7HpNQWHpA2HHNlg=
 github.com/go-test/deep v1.1.0/go.mod h1:5C2ZWiW0ErCdrYzpqxLbTX7MG14M9iiw8DgHncVwcsE=
 github.com/icza/bitio v1.1.0 h1:ysX4vtldjdi3Ygai5m1cWy4oLkhWTAi+SyO6HC8L9T0=
@@ -27,8 +27,6 @@ github.com/mewkiz/pkg v0.0.0-20250417130911-3f050ff8c56d h1:IL2tii4jXLdhCeQN69HN
 github.com/mewkiz/pkg v0.0.0-20250417130911-3f050ff8c56d/go.mod h1:SIpumAnUWSy0q9RzKD3pyH3g1t5vdawUAPcW5tQrUtI=
 github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 h1:h8O1byDZ1uk6RUXMhj1QJU3VXFKXHDZxr4TXRPGeBa8=
 github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985/go.mod h1:uiPmbdUbdt1NkGApKl7htQjZ8S7XaGUAVulJUJ9v6q4=
-github.com/oops1/go.264 v1.12.0 h1:72uGb5MAyX83lSrK3aMvxYtxdQHOct7E4bD8YoJxbBU=
-github.com/oops1/go.264 v1.12.0/go.mod h1:9QWDhblzn+OCeWpxJLpIfr/G/N5MSf849wVixp4Hzas=
 github.com/pion/opus v0.1.0 h1:GgK/a3DNDrffKjUFsK39rZKqfv7bQ2S2eqRKt0BnqAE=
 github.com/pion/opus v0.1.0/go.mod h1:t5Xog2n682JnawoykACE6nKVmupFvmJvkpM7x6bTv6g=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
