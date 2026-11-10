@@ -30,7 +30,56 @@ version: 1
 # must have an entry (`kind: normative-values` with the standard and table
 # number, or `kind: derived` with the paper and equation) or be generated.
 # AAC lives in aac*.go (no AAC yet: the rule is armed and has nothing to say).
-values: []
+values:
+  # The Huffman codebooks. Codewords and lengths are the bare normative values;
+  # the symbol-to-tuple mapping is code (aacTuple), and the codebooks are checked
+  # to be complete prefix codes by TestAACCodebooksAreCompletePrefixCodes.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacSpectralCodes
+    standard: ISO/IEC 14496-3
+    clause: subpart 4, Annex 4.A, spectrum codebooks 1 to 11 (codewords)
+    rationale: a prefix code is dictated by the standard, the only values a decoder can hold are the standard's.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacSpectralBits
+    standard: ISO/IEC 14496-3
+    clause: subpart 4, Annex 4.A, spectrum codebooks 1 to 11 (codeword lengths)
+    rationale: the lengths that go with the codewords above.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacScalefactorCodes
+    standard: ISO/IEC 14496-3
+    clause: subpart 4, Annex 4.A, scalefactor codebook (codewords)
+    rationale: a prefix code dictated by the standard, 121 codewords for the deltas -60 to 60.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacScalefactorBits
+    standard: ISO/IEC 14496-3
+    clause: subpart 4, Annex 4.A, scalefactor codebook (codeword lengths)
+    rationale: the lengths that go with the scalefactor codewords.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacSwbLongTables
+    standard: ISO/IEC 14496-3
+    clause: subpart 4, Tables 4.110 to 4.128, scalefactor band offsets for 1024-sample windows
+    rationale: band edges per sampling frequency are fixed by the standard so that every encoder and decoder agree.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacSwbShortTables
+    standard: ISO/IEC 14496-3
+    clause: subpart 4, Tables 4.110 to 4.128, scalefactor band offsets for 128-sample windows
+    rationale: the same, for the eight short windows.
+  - kind: derived
+    file: aac_dequant.go
+    symbol: aacPow43
+    source: ISO/IEC 14496-3 subpart 4, 4.6.3.3 (inverse quantisation, |q|^(4/3)); computed in code with math.Pow
+    rationale: no table is held; the values are computed from the formula and rounded to float32.
+  - kind: derived
+    file: aac_dequant.go
+    symbol: aacGain
+    source: ISO/IEC 14496-3 subpart 4, 4.6.3.3 (scalefactor gain 2^((sf-100)/4)); computed in code with math.Exp2
+    rationale: no table is held; the values are computed from the formula and rounded to float32.
 require_declared:
   min_numbers: 32
   paths: [aac]
