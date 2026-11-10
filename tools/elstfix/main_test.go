@@ -18,7 +18,11 @@ func TestFixtureTable(t *testing.T) {
 			t.Errorf("%s twice", f.Name)
 		}
 		seen[f.Name] = true
-		if f.Src != "" {
+		if f.Fragment {
+			if !seen[f.Src] {
+				t.Errorf("%s: %s is not made before it", f.Name, f.Src)
+			}
+		} else if f.Src != "" {
 			if _, ok := sources[f.Src]; !ok {
 				t.Errorf("%s: no source %s", f.Name, f.Src)
 			}
