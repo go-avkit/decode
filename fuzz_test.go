@@ -19,14 +19,20 @@ type posterSeed struct {
 }
 
 // posterSeeds are the files FuzzPosterFrame starts from: the real files in
-// testdata/files, and a muxed run of a conformance stream with a keyframe in
-// the middle, each asked for a time inside, at and past the picture.
+// testdata/files, the ones with edit lists in testdata/elst, and a muxed run of a
+// conformance stream with a keyframe in the middle, each asked for a time inside,
+// at and past the picture.
 func posterSeeds(t testing.TB) []posterSeed {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join("testdata", "files", "*"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no seed files: %v", err)
 	}
+	edited, err := filepath.Glob(filepath.Join("testdata", "elst", "*.mp4"))
+	if err != nil || len(edited) == 0 {
+		t.Fatalf("no seed files with edit lists: %v", err)
+	}
+	files = append(files, edited...)
 	stream := filepath.Join("testdata", "streams", "base_ip_qp26.264")
 	byName := map[string][]byte{"muxed-two-gops": gopMP4(t, 0, stream, stream)}
 	for _, p := range files {

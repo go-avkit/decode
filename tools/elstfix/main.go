@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/go-avkit/avkit/container"
 	"github.com/spf13/cobra"
 )
 
@@ -41,6 +42,10 @@ type fixture struct {
 	Seek, To string
 	// NoIgnore leaves out the recording with the edit list ignored.
 	NoIgnore bool
+	// Edits, in a movie timescale of 1000, replace the edit list of Src: ffmpeg
+	// writes at most one edit and an optional empty one, so a list of several is
+	// written with avkit's muxer, which writes every edit it is given.
+	Edits []container.Edit
 }
 
 // sources are encoded once, small: 64x64, 25 pictures per second, a keyframe
@@ -59,6 +64,12 @@ var fixtures = []fixture{
 	{Name: "hevc-delay.mp4", Src: "hevc.mp4", Delay: "0.2"},
 	{Name: "hevc-trim.mp4", Src: "hevc.mp4", Seek: "0.45", To: "1.15"},
 	{Name: "hevc-trim-delay.mp4", Src: "hevc.mp4", Delay: "0.12", Seek: "0.45", To: "1.15"},
+	// Source ticks are 1/12800 s and a picture lasts 512 of them: an empty edit of
+	// 200 ms, then picture 11 of the track to 480 ms later (a cut in the middle of a
+	// group of pictures), then the pictures from 160 ms for 360 ms, which the first
+	// edit has already shown a part of.
+	{Name: "h264-edits.mp4", Src: "h264.mp4", Edits: twoEdits},
+	{Name: "hevc-edits.mp4", Src: "hevc.mp4", Edits: twoEdits},
 	// Files committed before, whose edit lists are the reason for this program.
 	{Name: "hevc-main-ipb.mp4"},
 	{Name: "hevc-main10-ipb.mp4"},
@@ -66,6 +77,49 @@ var fixtures = []fixture{
 	{Name: "bframes-delayed.mp4"},
 	// Matroska has no edit list to ignore, and ffmpeg refuses the option there.
 	{Name: "bframes.mkv", NoIgnore: true},
+}
+
+var twoEdits = []container.Edit{
+	{SegmentDuration: 200, MediaTime: container.EmptyEdit, Rate: container.NormalRate},
+	{SegmentDuration: 480, MediaTime: 11*512 + 1024, Rate: container.NormalRate},
+	{SegmentDuration: 360, MediaTime: 2048 + 1024, Rate: container.NormalRate},
+}
+
+// writeEdits copies the first track of src to dst with its edit list replaced.
+func writeEdits(src, dst string, edits []container.Edit) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	r, err := container.NewReader(data)
+	if err != nil {
+		return err
+	}
+	id := r.TrackIDs()[0]
+	cfg, err := r.TrackConfig(id)
+	if err != nil {
+		return err
+	}
+	samples, err := r.Samples(id)
+	if err != nil {
+		return err
+	}
+	cfg.EditList = &container.EditList{MovieTimescale: 1000, Edits: edits}
+	var buf bytes.Buffer
+	m := container.NewProgressiveMuxer(&buf)
+	tid, err := m.AddTrack(cfg)
+	if err != nil {
+		return err
+	}
+	for _, s := range samples {
+		if err := m.WriteSample(tid, s); err != nil {
+			return err
+		}
+	}
+	if err := m.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, buf.Bytes(), 0o644)
 }
 
 func run(ffmpeg string, args []string) ([]byte, error) {
@@ -121,6 +175,9 @@ func RootCmd() *cobra.Command {
 				}
 			}
 			for name, enc := range sources {
+				if check {
+					break
+				}
 				args := append([]string{"-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
 					"testsrc2=size=64x64:rate=25:duration=1.6"}, enc...)
 				if _, err := run(ffmpeg, append(args, "-bitexact", filepath.Join(work, name))); err != nil {
@@ -132,7 +189,13 @@ func RootCmd() *cobra.Command {
 				path := filepath.Join(files, f.Name)
 				if f.Src != "" {
 					path = filepath.Join(out, f.Name)
-					if !check {
+					switch {
+					case check:
+					case f.Edits != nil:
+						if err := writeEdits(filepath.Join(work, f.Src), path, f.Edits); err != nil {
+							return err
+						}
+					default:
 						if _, err := run(ffmpeg, f.makeArgs(filepath.Join(work, f.Src), path)); err != nil {
 							return err
 						}

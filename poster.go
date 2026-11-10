@@ -71,9 +71,12 @@ func FirstVideoTrack(r *container.Reader) (uint32, error) {
 }
 
 // PosterFrame decodes the one picture a track displays at t seconds: the one
-// with the greatest presentation time at or before t, where a sample's
-// presentation time is its decode time plus its composition offset, as for
-// DecodeTrack, whose picture and PTS it returns byte for byte.
+// with the greatest presentation time at or before t, where the presentation time
+// is the one DecodeTrack gives: the sample's decode time plus its composition
+// offset, as the track's edit list presents it (Config.IgnoreEditList leaves the
+// edit list out, and gives the time before it). It returns DecodeTrack's picture
+// and PTS byte for byte. A track whose edit list presents no picture, or states
+// what ErrEditList describes, is refused with ErrEditList.
 //
 // A t past the end of the track gives the last picture, and a t before the first
 // presentation time gives the first. A negative or NaN t is ErrTime. Decoding

@@ -148,27 +148,34 @@ func TestPosterFrameStartsAtTheLastKeyframe(t *testing.T) {
 func TestPosterFrameClamps(t *testing.T) {
 	path := filepath.Join("testdata", "streams", "base_ip_qp26.264")
 	r, id := reader(t, gopMP4(t, 80, path))
-	all, err := DecodeTrack(r, id, Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The muxer states the 80 ms offset as an edit list: the first picture is
+	// presented at 0, or, with the edit list ignored, at 80.
 	for _, c := range []struct {
-		name string
-		t    float64
-		want Frame
-	}{
-		{"zero, before the first presentation time", 0, all[0]},
-		{"the first presentation time", 0.080, all[0]},
-		{"beyond the end", 1e6, all[len(all)-1]},
-		{"infinity", math.Inf(1), all[len(all)-1]},
-		{"overflowing the timescale", math.MaxFloat64, all[len(all)-1]},
-	} {
-		got, err := PosterFrame(r, id, c.t, PosterConfig{})
+		cfg   Config
+		first float64
+	}{{Config{}, 0}, {Config{IgnoreEditList: true}, 0.080}} {
+		all, err := DecodeTrack(r, id, c.cfg)
 		if err != nil {
-			t.Fatalf("%s: %v", c.name, err)
+			t.Fatal(err)
 		}
-		if got.PTS != c.want.PTS || sum(got) != sum(c.want) {
-			t.Errorf("%s: PTS %d, want %d", c.name, got.PTS, c.want.PTS)
+		for _, k := range []struct {
+			name string
+			t    float64
+			want Frame
+		}{
+			{"zero, before the first presentation time", 0, all[0]},
+			{"the first presentation time", c.first, all[0]},
+			{"beyond the end", 1e6, all[len(all)-1]},
+			{"infinity", math.Inf(1), all[len(all)-1]},
+			{"overflowing the timescale", math.MaxFloat64, all[len(all)-1]},
+		} {
+			got, err := PosterFrame(r, id, k.t, PosterConfig{Config: c.cfg})
+			if err != nil {
+				t.Fatalf("%+v, %s: %v", c.cfg, k.name, err)
+			}
+			if got.PTS != k.want.PTS || sum(got) != sum(k.want) {
+				t.Errorf("%+v, %s: PTS %d, want %d", c.cfg, k.name, got.PTS, k.want.PTS)
+			}
 		}
 	}
 }
