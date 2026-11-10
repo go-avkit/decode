@@ -17,7 +17,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/go-avkit/avkit/container"
@@ -107,12 +106,6 @@ func ffmpegRun(path string) (benchRun, error) {
 		return benchRun{}, fmt.Errorf("ffmpeg: %w: %.200s", err, stderr.String())
 	}
 	return parseFFmpegBench(stderr.String())
-}
-
-func cpuTime() time.Duration {
-	var ru syscall.Rusage
-	_ = syscall.Getrusage(syscall.RUSAGE_SELF, &ru) // RUSAGE_SELF cannot fail
-	return time.Duration(ru.Utime.Nano() + ru.Stime.Nano())
 }
 
 // repeatFile writes the bitstream at path, n times over, to dir and returns the
