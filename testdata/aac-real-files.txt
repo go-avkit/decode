@@ -1,0 +1,24 @@
+# Real AAC-LC audio tracks decoded through avkit's container.Reader and compared,
+# byte for byte, with what ffmpeg 9.0.2 (Homebrew, arm64, Apple clang) decodes them
+# to with -cpuflags 0 (f32le, interleaved). The files are not in this repository
+# and are not named: only what describes them and the hash of ffmpeg's output. Each
+# is the first 60 seconds of the first audio track of a file under ~/Movies, cut by
+# stream copy (`ffmpeg -vn -map 0:a:0 -c:a copy -t 60 cN.mp4`), taken 2026-11-10.
+#
+# The decoder runs, in the test, with two things of ffmpeg's platform that it does not
+# ship: its libm sine in the windows (aac_libm_test.go) and ffmpeg's printed values for
+# five TNS coefficients (aacOracleTNS). Measured: with them the output equals ffmpeg's
+# in every sample of all five clips; without the TNS values four of five differ in
+# 10 000 to 170 000 samples by at most 1.2e-7; without the sine, in the sine-window
+# frames.
+#
+# Where the edit list ends inside the last packet, ffmpeg delivers the whole packet and
+# this decoder cuts at the edit list: the first two clips are compared up to the
+# shorter length (the byte count below), which is less than one frame short.
+#
+# channels rate bytes-compared sha256-of-those-bytes-of-ffmpeg's-f32le
+6 48000 69131328 ad2739bba6ee5814f47f6361ae824d9af4afc7b7e40609d89d84fcbc08497610
+2 48000 23044096 79769d49ea889d6d3ffe8f6ddbdd244d9cf42cf58684d7c2b933b0ecf09fafe9
+2 44100 21175808 73bc1cf5d2ad9a4d58f71c575ed6707b8c3a0ac815683ecf811b9a0189852b3c
+1 48000 11523264 3c62f75c0bdbbc9d4a18afa2972f77a8fa19f4f9dae14d3d6452b75824528ce0
+1 24000 5763072 f503db8c64768af4415c64c7a86b2ed3ad94e8ff397b61ff358f35f77f626035

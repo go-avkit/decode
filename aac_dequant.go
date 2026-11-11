@@ -32,20 +32,43 @@ var aacGain = func() (t [256]float32) {
 }()
 
 // dequantise writes the scaled spectrum of ch to out, in the layout of ch.q.
-// Bands of the zero, noise and intensity codebooks come out as zeros: the stages
-// that give them values (noise substitution, intensity stereo) run after this one
-// and need the scalefactors, not the quantised values.
-func (ch *aacChannel) dequantise(out *[aacFrameLen]float32) {
+// Bands of the zero codebook and of the intensity codebooks come out as zeros:
+// intensity stereo fills them from the other channel afterwards. A band of the
+// noise codebook is filled with noise when noise is not nil, as zeros otherwise:
+// random values from the generator at *noise, one per coefficient,
+// window by window in band order, scaled so that the band's energy is the
+// energy the scalefactor states.
+func (ch *aacChannel) dequantise(out *[aacFrameLen]float32, noise *uint32) {
 	ics := &ch.ics
 	*out = [aacFrameLen]float32{}
 	w0 := 0
 	for g := 0; g < int(ics.numGroups); g++ {
 		for sfb := 0; sfb < int(ics.maxSfb); sfb++ {
-			if cb := ch.cb[g][sfb]; cb == aacBandZero || cb >= aacBandNoise {
+			cb := ch.cb[g][sfb]
+			if cb == aacBandZero || cb > aacBandNoise {
+				continue
+			}
+			lo, hi := int(ics.swb[sfb]), int(ics.swb[sfb+1])
+			if cb == aacBandNoise {
+				if noise == nil {
+					continue
+				}
+				gain := aacGain[min(max(int(ch.sf[g][sfb]), -100), 155)+100]
+				for k := 0; k < int(ics.groupLen[g]); k++ {
+					base := (w0 + k) * aacShortLen
+					var energy float32
+					for i := base + lo; i < base+hi; i++ {
+						out[i] = aacNoise(noise)
+						energy = addmul(energy, out[i], out[i])
+					}
+					scale := gain / float32(math.Sqrt(float64(energy)))
+					for i := base + lo; i < base+hi; i++ {
+						out[i] = mul(out[i], scale)
+					}
+				}
 				continue
 			}
 			gain := aacGain[ch.sf[g][sfb]]
-			lo, hi := int(ics.swb[sfb]), int(ics.swb[sfb+1])
 			for k := 0; k < int(ics.groupLen[g]); k++ {
 				base := (w0 + k) * aacShortLen
 				for i := base + lo; i < base+hi; i++ {

@@ -81,6 +81,7 @@ jobs:
       - run: go test -run XXX -fuzz FuzzOpusSample -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzOpusConfig -fuzztime 20s .
       - run: go test -run XXX -fuzz FuzzAACFrame -fuzztime 60s .
+      - run: go test -run XXX -fuzz FuzzAACDecode -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzAACConfig -fuzztime 20s .
       - run: go test -run XXX -fuzz FuzzAACADTS -fuzztime 20s .
       # A file sizes the PCM DecodeAudioTrack returns, so it runs under limits too.
@@ -122,6 +123,22 @@ jobs:
           mkdir "$RUNNER_TEMP/opus" && tar -xzf vectors.tar.gz -C "$RUNNER_TEMP/opus"
       - name: opus_compare on every vector
         run: OPUS_VECTORS_DIR="$RUNNER_TEMP/opus/opus_newvectors" go test -run 'TestOpusConformance$' -v -count=1 .
+
+  # ISO/IEC 14496-26 AAC-LC streams and reference waveforms: read out of ISO's
+  # archives by range request, each member checked against the SHA-256 pinned in
+  # testdata/aac-conformance.txt (a mismatch fails the step). Never committed.
+  aac-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.3'
+      - name: fetch the streams
+        working-directory: tools
+        run: go run ./aacconf fetch "$RUNNER_TEMP/aacconf" ../testdata/aac-conformance.txt
+      - name: decode them
+        run: AAC_CONFORMANCE_DIR="$RUNNER_TEMP/aacconf" go test -run 'TestAACConformance$' -v -count=1 .
 
   vuln:
     runs-on: ubuntu-latest

@@ -118,6 +118,15 @@ Read for the AAC-LC bitstream PR (plan item 4), also read only:
 | `libavcodec/aac/aacdec_dsp_template.c:36-84` | the gain of a band comes from the scalefactor less 100; noise and intensity bands carry no spectrum | `dequantise` |
 | `libavcodec/aac/aacdec.c` (comment lines only: 816, 968, 1359, 1416, 1538, 1583, 1649, 1674, 1730, 1778, 1875) and FAAD2 `libfaad/syntax.c` (comment lines only) | which table of ISO/IEC 14496-3 describes each syntax element | the table numbers cited in the Go comments |
 
+Read for the AAC-LC synthesis PR (plan item 5), also read only:
+
+| File:lines | What it tells us | Used for |
+|------------|------------------|----------|
+| `libavutil/tx_template.c:540-586, 599-722, 1223-1342` and `libavutil/tx.c:125-154, 198-262`, `libavutil/tx_priv.h:87-110`, `tx_template.c:2107-2134` | the order of the float operations of the split-radix FFT (the base cases of 2 and 4 points, the combine step with its six temporaries), the input permutation, the twiddle tables and their rounding, the MDCT's pre- and post-rotation | `aac_mdct.go`: the arithmetic is the same, the code is ours (a recursion with one combine function instead of unrolled codelets) |
+| `libavutil/float_dsp.c:27-125` | `vector_fmul_window`, `butterflies_float`, `vector_fmul_scalar`, the product sum | the order of the window overlap, M/S and noise energy in `aac_synth.go` |
+| `libavcodec/aac/aacdec_dsp_template.c:81-219, 325-384` | M/S, intensity, TNS, the window overlap and buffer update cases | the stage order and the cases of `aac_synth.go` |
+| `libavcodec/aac/aacdec_proc_template.c:57-139, 292-326`, `aacdec.c:1263-1296, 1592-1646, 1678-1727, 1785-1918, 2123-2170`, `aacdec_float.c:56-73, 91-113`, `lpc_functions.h:50-106`, `kbdwin.c:33-60`, `sinewin_tablegen.h:58-65`, `aactab.c:110-147, 1968-1997` | the noise generator and its energy rule, the scalefactor offsets and clips, TNS parsing and filtering, the stage order after the spectrum, the transform scale 1/N/32768, the KBD and sine windows, the TNS maximum bands | the same, and the constants of `aacTNSMaxBands` |
+
 The syntax itself (`aac_syntax.go`) is written from the syntax tables of
 ISO/IEC 14496-3 subpart 4 as known to the author; the reference decoders'
 syntax functions were not opened for it.

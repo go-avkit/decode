@@ -316,7 +316,7 @@ func TestAACRoundTripLong(t *testing.T) {
 		// Dequantisation against the formula in float64: the product of two float32
 		// roundings is within two ulp of it.
 		var out [aacFrameLen]float32
-		ch.dequantise(&out)
+		ch.dequantise(&out, nil)
 		swb := ch.ics.swb
 		for sfb := 0; sfb < 48; sfb++ {
 			for i := int(swb[sfb]); i < int(swb[sfb+1]); i++ {
@@ -399,7 +399,7 @@ func TestAACRoundTripShort(t *testing.T) {
 		}
 	}
 	var out [aacFrameLen]float32
-	ch.dequantise(&out)
+	ch.dequantise(&out, nil)
 	for i := range out {
 		if (q[i] == 0) != (out[i] == 0) {
 			t.Fatalf("coefficient %d: q %d, out %v", i, q[i], out[i])
@@ -923,6 +923,12 @@ func TestAACBitsEdges(t *testing.T) {
 	}
 	if r.bit() != 0 || !r.overrun {
 		t.Fatal("bit past the end")
+	}
+	// peek reads ahead without moving, and zeros past the end
+	r = newAACBits([]byte{0xa5, 0xc3})
+	r.skip(3)
+	if r.peek(9) != 0b001011100 || r.left() != 13 || r.peek(25) != 0b0010111000011000000000000 || r.overrun {
+		t.Fatalf("peek: %b", r.peek(9))
 	}
 	r = newAACBits([]byte{0xff})
 	if r.read(9) != 0 || !r.overrun || r.left() != 0 {
