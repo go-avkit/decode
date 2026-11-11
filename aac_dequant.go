@@ -71,12 +71,14 @@ func (ch *aacChannel) dequantise(out *[aacFrameLen]float32, noise *uint32) {
 			gain := aacGain[ch.sf[g][sfb]]
 			for k := 0; k < int(ics.groupLen[g]); k++ {
 				base := (w0 + k) * aacShortLen
-				for i := base + lo; i < base+hi; i++ {
-					q := ch.q[i]
+				qs := ch.q[base+lo : base+hi]
+				os := out[base+lo : base+hi]
+				os = os[:len(qs)]
+				for i, q := range qs {
 					if q < 0 {
-						out[i] = -(aacPow43[-q] * gain)
+						os[i] = -(aacPow43[-q] * gain)
 					} else {
-						out[i] = aacPow43[q] * gain
+						os[i] = aacPow43[q] * gain
 					}
 				}
 			}
