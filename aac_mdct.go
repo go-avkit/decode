@@ -3,7 +3,10 @@
 
 package decode
 
-import "math"
+import (
+	"math"
+	"math/bits"
+)
 
 // The inverse MDCT of AAC-LC (clause of the standard not verified):
 //
@@ -41,19 +44,23 @@ func aacSplitRadixPerm(i, n int) int {
 // permuted input.
 type aacFFT struct {
 	n    int
-	tabs map[int][]float64 // cos(2*pi*i/m) for i < m/4, then 0, for every m from 8 to n
-	perm []int32           // perm[i] is the input that goes to position i
+	tabs [][]cpx // tabs[bits.Len(m)] holds, for k < m/4, cos(2*pi*k/m) and cos(2*pi*(m/4-k)/m), for every m from 8 to n
+	perm []int32 // perm[i] is the input that goes to position i
 }
 
 func newAACFFT(n int) *aacFFT {
-	f := &aacFFT{n: n, tabs: map[int][]float64{}, perm: make([]int32, n)}
+	f := &aacFFT{n: n, tabs: make([][]cpx, bits.Len(uint(n))+1), perm: make([]int32, n)}
 	for m := 8; m <= n; m <<= 1 {
 		t := make([]float64, m/4+1)
 		freq := 2 * math.Pi / float64(m)
 		for i := 0; i < m/4; i++ {
 			t[i] = math.Cos(float64(i) * freq)
 		}
-		f.tabs[m] = t
+		w := make([]cpx, m/4)
+		for k := range w {
+			w[k] = cpx{t[k], t[m/4-k]}
+		}
+		f.tabs[bits.Len(uint(m))] = w
 	}
 	for i := range f.perm {
 		f.perm[i] = int32(-aacSplitRadixPerm(i, n) & (n - 1))
@@ -67,18 +74,30 @@ func (f *aacFFT) run(z []cpx) { f.transform(z, f.n) }
 func (f *aacFFT) transform(z []cpx, n int) {
 	switch n {
 	case 2:
-		a, b := z[0], z[1]
-		z[0] = cpx{a.re + b.re, a.im + b.im}
-		z[1] = cpx{a.re - b.re, a.im - b.im}
+		fft2(z)
 		return
 	case 4:
 		fft4(z)
+		return
+	}
+	if n == 8 {
+		fft4(z[:4])
+		fft2(z[4:6])
+		fft2(z[6:8])
+		f.combine(z, n)
 		return
 	}
 	f.transform(z[:n/2], n/2)
 	f.transform(z[n/2:3*n/4], n/4)
 	f.transform(z[3*n/4:n], n/4)
 	f.combine(z, n)
+}
+
+// fft2 is the two-point transform.
+func fft2(z []cpx) {
+	a, b := z[0], z[1]
+	z[0] = cpx{a.re + b.re, a.im + b.im}
+	z[1] = cpx{a.re - b.re, a.im - b.im}
 }
 
 // fft4 is the four-point transform of a permuted input.
@@ -101,11 +120,13 @@ func fft4(z []cpx) {
 // combine merges the three sub-transforms of z (n/2 points, then two of n/4) into
 // one of n points.
 func (f *aacFFT) combine(z []cpx, n int) {
-	tab := f.tabs[n]
 	q := n / 4
-	for k := 0; k < q; k++ {
-		wr, wi := tab[k], tab[q-k]
-		a0, a1, a2, a3 := &z[k], &z[k+q], &z[k+2*q], &z[k+3*q]
+	tab := f.tabs[bits.Len(uint(n))][:q]
+	z0, z1, z2, z3 := z[:q], z[q:2*q], z[2*q:3*q], z[3*q:4*q]
+	z1, z2, z3 = z1[:len(z0)], z2[:len(z0)], z3[:len(z0)]
+	for k := range z0 {
+		wr, wi := tab[k].re, tab[k].im
+		a0, a1, a2, a3 := &z0[k], &z1[k], &z2[k], &z3[k]
 		// a2 times conj(w) and a3 times w
 		t1 := a2.re*wr + a2.im*wi
 		t2 := a2.im*wr - a2.re*wi
