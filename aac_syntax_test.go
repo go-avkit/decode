@@ -924,6 +924,12 @@ func TestAACBitsEdges(t *testing.T) {
 	if r.bit() != 0 || !r.overrun {
 		t.Fatal("bit past the end")
 	}
+	// peek reads ahead without moving, and zeros past the end
+	r = newAACBits([]byte{0xa5, 0xc3})
+	r.skip(3)
+	if r.peek(9) != 0b001011100 || r.left() != 13 || r.peek(25) != 0b0010111000011000000000000 || r.overrun {
+		t.Fatalf("peek: %b", r.peek(9))
+	}
 	r = newAACBits([]byte{0xff})
 	if r.read(9) != 0 || !r.overrun || r.left() != 0 {
 		t.Fatal("read past the end")

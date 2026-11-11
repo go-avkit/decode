@@ -15,7 +15,13 @@ import (
 // root is never a child), so an unused branch is detected by the tree check.
 type aacHuff struct {
 	node [][2]int32
+	// lut answers the codes of at most aacLUTBits bits in one lookup, indexed by the
+	// next aacLUTBits bits of the stream: symbol<<8 | length, or 0 for a longer code,
+	// which is then walked down the tree.
+	lut [1 << aacLUTBits]uint32
 }
+
+const aacLUTBits = 9
 
 // buildAACHuff builds the tree of a code given by codewords and lengths and
 // checks it is a complete prefix code: no codeword is the start of another and no
@@ -29,6 +35,12 @@ func buildAACHuff(codes []uint32, lens []uint8) (*aacHuff, error) {
 		n := int(lens[sym])
 		if n < 1 || n > 32 || (n < 32 && c>>uint(n) != 0) {
 			return nil, fmt.Errorf("aac huffman: symbol %d has a codeword of %d bits that is %#x", sym, n, c)
+		}
+		if n <= aacLUTBits {
+			base := int(c) << uint(aacLUTBits-n)
+			for j := 0; j < 1<<uint(aacLUTBits-n); j++ {
+				h.lut[base+j] = uint32(sym)<<8 | uint32(n)
+			}
 		}
 		cur := 0
 		for i := n - 1; i >= 0; i-- {
@@ -63,6 +75,10 @@ func buildAACHuff(codes []uint32, lens []uint8) (*aacHuff, error) {
 // decode reads one symbol. The tree is complete, so every bit string leads to a
 // symbol; a reader that runs out returns false.
 func (h *aacHuff) decode(r *aacBits) (int, bool) {
+	if e := h.lut[r.peek(aacLUTBits)]; e != 0 {
+		r.skip(int(e & 0xff))
+		return int(e >> 8), !r.overrun
+	}
 	cur := 0
 	for {
 		c := h.node[cur][r.bit()]

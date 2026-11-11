@@ -44,6 +44,20 @@ func (r *aacBits) read(n int) uint32 {
 	return v
 }
 
+// peek returns the next n bits, 1 <= n <= 25, without moving; bits past the end
+// read as zeros and do not mark an overrun.
+func (r *aacBits) peek(n int) uint32 {
+	i := r.pos >> 3
+	var w uint32
+	for k := 0; k < 4; k++ {
+		w <<= 8
+		if i+k < len(r.b) {
+			w |= uint32(r.b[i+k])
+		}
+	}
+	return w << uint(r.pos&7) >> uint(32-n)
+}
+
 // skip moves n bits forward.
 func (r *aacBits) skip(n int) {
 	if n > r.left() {
