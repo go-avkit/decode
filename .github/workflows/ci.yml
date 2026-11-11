@@ -103,9 +103,22 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.27.3'
+      # The archive is cached under its own SHA-256, so a run that has seen it
+      # does not touch opus-codec.org, and the download retries every error:
+      # curl's --retry alone skips a TLS handshake failure (exit 35), which
+      # turned main red on 2026-11-10 (go-avkit/decode#29).
+      - name: cache the vectors
+        id: vectors
+        uses: actions/cache@v6.1.0
+        with:
+          path: vectors.tar.gz
+          key: opus-vectors-6b26a22f9ba87b2b836906a9bb7afec5f8e54d49553b1200382520ee6fedfa55
       - name: fetch the vectors
+        if: steps.vectors.outputs.cache-hit != 'true'
         run: |
-          curl -sSfL --retry 10 --retry-delay 3 -C - -o vectors.tar.gz https://opus-codec.org/static/testvectors/opus_testvectors-rfc8251.tar.gz
+          curl -sSfL --retry 10 --retry-all-errors --retry-delay 3 --connect-timeout 30 -C - -o vectors.tar.gz https://opus-codec.org/static/testvectors/opus_testvectors-rfc8251.tar.gz
+      - name: unpack the vectors
+        run: |
           echo "6b26a22f9ba87b2b836906a9bb7afec5f8e54d49553b1200382520ee6fedfa55  vectors.tar.gz" | sha256sum -c -
           mkdir "$RUNNER_TEMP/opus" && tar -xzf vectors.tar.gz -C "$RUNNER_TEMP/opus"
       - name: opus_compare on every vector
