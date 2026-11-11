@@ -171,15 +171,25 @@ func (d *aacDecoder) end(tc container.TrackConfig, samples []container.Sample) i
 
 // decode decodes one raw_data_block: 1024 samples of every channel.
 func (d *aacDecoder) decode(data []byte) ([]Audio, error) {
-	els, err := d.parser.parseFrame(data)
-	if err != nil {
+	a := Audio{Format: SampleF32, SampleRate: d.cfg.rate, Channels: d.cfg.channels, Layout: d.layout, Data: make([]byte, aacSamplesPerFrame*d.cfg.channels*4)}
+	if err := d.decodeInto(data, a.Data); err != nil {
 		return nil, err
 	}
+	return []Audio{a}, nil
+}
+
+// decodeInto decodes one raw_data_block into dst, which must hold 1024 samples of
+// every channel as float32 (4096 bytes per channel): the same work as decode with
+// no allocation, for a caller that reuses its buffer.
+func (d *aacDecoder) decodeInto(data, dst []byte) error {
+	els, err := d.parser.parseFrame(data)
+	if err != nil {
+		return err
+	}
 	if len(els) != len(d.elems) {
-		return nil, fmt.Errorf("%w: %d channel elements, the configuration has %d", ErrAudioSample, len(els), len(d.elems))
+		return fmt.Errorf("%w: %d channel elements, the configuration has %d", ErrAudioSample, len(els), len(d.elems))
 	}
 	nch := d.cfg.channels
-	a := Audio{Format: SampleF32, SampleRate: d.cfg.rate, Channels: nch, Layout: d.layout, Data: make([]byte, aacSamplesPerFrame*nch*4)}
 	var seen uint32
 	for e := range els {
 		// the element's place: by position for a channel configuration, by type and
@@ -194,19 +204,19 @@ func (d *aacDecoder) decode(data []byte) ([]Audio, error) {
 				}
 			}
 			if idx < 0 {
-				return nil, fmt.Errorf("%w: element %d (type %d, tag %d) is not in the program_config_element", ErrAudioSample, e, els[e].id, els[e].tag)
+				return fmt.Errorf("%w: element %d (type %d, tag %d) is not in the program_config_element", ErrAudioSample, e, els[e].id, els[e].tag)
 			}
 		} else if int(els[e].id) != d.elems[e].id {
-			return nil, fmt.Errorf("%w: element %d is of type %d, the configuration has %d", ErrAudioSample, e, els[e].id, d.elems[e].id)
+			return fmt.Errorf("%w: element %d is of type %d, the configuration has %d", ErrAudioSample, e, els[e].id, d.elems[e].id)
 		}
 		seen |= 1 << uint(idx)
 		d.synth.element(&els[e], d.firsts[idx], [2][]float32{d.pcm[0][:], d.pcm[1][:]})
 		for c := 0; c < int(els[e].nch); c++ {
 			slot := d.slot[idx][c]
 			for i, v := range d.pcm[c] {
-				binary.LittleEndian.PutUint32(a.Data[(i*nch+slot)*4:], math.Float32bits(v))
+				binary.LittleEndian.PutUint32(dst[(i*nch+slot)*4:], math.Float32bits(v))
 			}
 		}
 	}
-	return []Audio{a}, nil
+	return nil
 }

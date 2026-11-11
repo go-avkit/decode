@@ -71,9 +71,6 @@ func aacWAV(b []byte) (pcm []float64, channels, rate int, err error) {
 // why. They are measured, not excused: the test fails if a vector listed here
 // starts to pass (remove it) and if any other fails.
 var aacConformanceOpen = map[string]string{
-	"al03_48": "window sequences that break the start/short/stop rule (a start followed by a long window, a stop with no short before it): the decoder overlaps as ffmpeg does, treating those transitions as short to short, and the reference windows each block on its own",
-	"al03_96": "the same",
-	"al03_11": "the same",
 	"al18_48": "perceptual noise substitution: the reference uses the ISO generator, this decoder ffmpeg's (docs/aac-design.md, G5)",
 	"al19_48": "the same, with short windows",
 }

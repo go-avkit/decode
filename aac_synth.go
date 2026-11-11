@@ -178,6 +178,7 @@ func aacSynthInit() {
 // frame.
 type aacChanSynth struct {
 	saved     [aacFrameLen]float32
+	prevBuf   [aacFrameLen]float32 // the half transform of the previous block
 	prevSeq   uint8
 	prevShape uint8
 }
@@ -375,8 +376,18 @@ func (s *aacSynth) imdctWindow(st *aacChanSynth, ch *aacChannel, coef *[aacFrame
 	}
 	prevLong := st.prevSeq == aacOnlyLong || st.prevSeq == aacLongStop
 	curLong := ics.windowSeq == aacOnlyLong || ics.windowSeq == aacLongStart
+	// Legal orders: a long or stop block is followed by a long or start block, a
+	// start or short block by a short or stop block. Anything else is overlapped
+	// block by block, each under its own windows.
+	curShortish := ics.windowSeq == aacEightShort || ics.windowSeq == aacLongStop
+	legal := prevLong && curLong || !prevLong && curShortish
 	saved := st.saved[:]
 	switch {
+	case !legal:
+		s.overlapEach(out, st, ics, buf)
+		if ics.short() {
+			fmulWindow(s.temp[:], buf[3*128+64:], buf[4*128:], sw, 64)
+		}
 	case prevLong && curLong:
 		fmulWindow(out, saved, buf, lwPrev, 512)
 	default:
@@ -406,5 +417,109 @@ func (s *aacSynth) imdctWindow(st *aacChanSynth, ch *aacChannel, coef *[aacFrame
 	default:
 		copy(saved[:512], buf[512:1024])
 	}
+	copy(st.prevBuf[:], buf)
 	st.prevSeq, st.prevShape = ics.windowSeq, ics.windowShape
+}
+
+// overlapEach writes the 1024 output samples of a block that does not follow the
+// order the sequences are meant to: the second half of the previous block under
+// the window of its sequence, plus the first half of this one under the window of
+// its own. The time signal of a block is rebuilt from its half transform by the
+// symmetries of the MDCT (aacBlockSample).
+func (s *aacSynth) overlapEach(out []float32, st *aacChanSynth, ics *aacICS, buf []float32) {
+	var prev, cur [aacFrameLen]float64
+	aacBlockHalf(prev[:], st.prevBuf[:], st.prevSeq, st.prevShape, st.prevShape, true)
+	aacBlockHalf(cur[:], buf, ics.windowSeq, st.prevShape, ics.windowShape, false)
+	for i := range out[:aacFrameLen] {
+		out[i] = float32(prev[i] + cur[i])
+	}
+}
+
+// aacBlockSample is sample m of the 2M samples of the inverse MDCT of M
+// coefficients, from its M-value half transform h (the arrangement the transform
+// returns): odd symmetry in the first half of the window, even in the second.
+func aacBlockSample(h []float32, m int) float64 {
+	M := len(h)
+	q := M / 2
+	switch {
+	case m < q:
+		return float64(h[q-1-m])
+	case m < M+q:
+		return -float64(h[m-q])
+	}
+	return -float64(h[5*q-1-m])
+}
+
+func aacWindowTables(shape uint8) (long, short []float32) {
+	if shape != 0 {
+		return aacKBDLong[:], aacKBDShort[:]
+	}
+	return aacSineLong[:], aacSineShort[:]
+}
+
+// The transform is fed the spectrum with its sign changed (imdctWindow), so the
+// samples below are negated to give the signal.
+//
+// aacBlockHalf computes 1024 samples of the windowed time signal of a block: the
+// first half or, when second is set, the second. ls is the shape of the window's
+// left half and rs of its right half; an eight short block is eight windows of 256
+// samples at offsets 448 + 128*j.
+func aacBlockHalf(dst []float64, h []float32, seq, ls, rs uint8, second bool) {
+	lo := 0
+	if second {
+		lo = aacFrameLen
+	}
+	clear(dst[:aacFrameLen])
+	lLong, lShort := aacWindowTables(ls)
+	rLong, rShort := aacWindowTables(rs)
+	if seq == aacEightShort {
+		for j := 0; j < 8; j++ {
+			hj := h[j*aacShortLen : (j+1)*aacShortLen]
+			left := lShort
+			if j > 0 {
+				left = rShort
+			}
+			for mm := 0; mm < 2*aacShortLen; mm++ {
+				m := 448 + aacShortLen*j + mm
+				if m < lo || m >= lo+aacFrameLen {
+					continue
+				}
+				w := left
+				var wv float32
+				if mm < aacShortLen {
+					wv = w[mm]
+				} else {
+					wv = rShort[2*aacShortLen-1-mm]
+				}
+				dst[m-lo] -= aacBlockSample(hj, mm) * float64(wv)
+			}
+		}
+		return
+	}
+	for i := 0; i < aacFrameLen; i++ {
+		m := lo + i
+		var w float32
+		if m < aacFrameLen { // left half
+			switch {
+			case seq != aacLongStop:
+				w = lLong[m]
+			case m < 448:
+			case m < 576:
+				w = lShort[m-448]
+			default:
+				w = 1
+			}
+		} else { // right half
+			u := m - aacFrameLen
+			switch {
+			case seq != aacLongStart:
+				w = rLong[aacFrameLen-1-u]
+			case u < 448:
+				w = 1
+			case u < 576:
+				w = rShort[aacShortLen-1-(u-448)]
+			}
+		}
+		dst[i] = -aacBlockSample(h, m) * float64(w)
+	}
 }
