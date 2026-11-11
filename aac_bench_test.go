@@ -18,7 +18,11 @@ func BenchmarkAACDecode(b *testing.B) {
 	if dir == "" {
 		b.Skip("AAC_CONFORMANCE_DIR is not set")
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "compressedMp4", "al05_48.mp4"))
+	name := "al05_48"
+	if n := os.Getenv("AAC_BENCH_STREAM"); n != "" {
+		name = n // another pinned stream, for a longer run
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "compressedMp4", name+".mp4"))
 	if err != nil {
 		b.Fatal(err)
 	}
