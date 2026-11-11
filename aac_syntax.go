@@ -5,6 +5,7 @@ package decode
 
 import (
 	"fmt"
+	"math/bits"
 )
 
 // The raw_data_block syntax of AAC-LC, ISO/IEC 14496-3 subpart 4 (4.4.2). The
@@ -557,36 +558,64 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 			return errTruncated()
 		}
 		v := dst[i : i+dim]
-		aacTuple(cb, sym, v)
+		t := &aacTuples[cb-1][sym]
+		for j := range v {
+			v[j] = int32(t[j])
+		}
 		if unsigned {
-			for j := range v {
-				if v[j] != 0 && r.bit() != 0 {
-					v[j] = -v[j]
+			// the sign bits of the nonzero values, in one read, first value first
+			if nz := aacTupleNZ[cb-1][sym]; nz != 0 {
+				n := bits.OnesCount8(nz)
+				s := r.read(n)
+				for j := range v {
+					if nz>>uint(j)&1 != 0 {
+						n--
+						if s>>uint(n)&1 != 0 {
+							v[j] = -v[j]
+						}
+					}
 				}
 			}
 		}
 		if cb == 11 {
-			for j := range v {
-				a := v[j]
-				if a < 0 {
-					a = -a
+			// escapes only where a value is the escape marker 16, known from the symbol
+			if esc := aacTupleEsc[sym]; esc != 0 {
+				for j := range v {
+					if esc>>uint(j)&1 == 0 {
+						continue
+					}
+					m, err := escape(r)
+					if err != nil {
+						return err
+					}
+					if v[j] < 0 {
+						m = -m
+					}
+					v[j] = m
 				}
-				if a != 16 {
-					continue
-				}
-				m, err := escape(r)
-				if err != nil {
-					return err
-				}
-				if v[j] < 0 {
-					m = -m
-				}
-				v[j] = m
 			}
 		}
 	}
 	return nil
 }
+
+// aacTupleNZ has bit j set when value j of the symbol is not zero (so a sign bit
+// follows it), and aacTupleEsc, for codebook 11, when it is the escape marker 16.
+var aacTupleNZ, aacTupleEsc = func() (nz [11][289]uint8, esc [289]uint8) {
+	for cb := range nz {
+		for sym := range aacSpectralCodes[cb] {
+			for j, x := range aacTuples[cb][sym] {
+				if x != 0 {
+					nz[cb][sym] |= 1 << uint(j)
+				}
+				if cb == 10 && x == 16 {
+					esc[sym] |= 1 << uint(j)
+				}
+			}
+		}
+	}
+	return nz, esc
+}()
 
 // escape reads an escape sequence: a run of ones and a zero, then that many plus
 // four bits, which add to 2 to the power of the same number.
