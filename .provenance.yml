@@ -29,8 +29,57 @@ version: 1
 # code-shape match whatever is declared. Every AAC table of 32 numbers or more
 # must have an entry (`kind: normative-values` with the standard and table
 # number, or `kind: derived` with the paper and equation) or be generated.
-# AAC lives in aac*.go (no AAC yet: the rule is armed and has nothing to say).
-values: []
+# AAC lives in aac*.go.
+values:
+  # The Huffman codebooks. Codewords and lengths are the bare normative values;
+  # the symbol-to-tuple mapping is code (aacTuple), and the codebooks are checked
+  # to be complete prefix codes by TestAACCodebooksAreCompletePrefixCodes.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacSpectralCodes
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; spectrum codebooks 1 to 11 codewords, values read in ffmpeg n9.0.2 libavcodec/aactab.c codes1..codes11
+    rationale: a prefix code is dictated by the standard, the only values a decoder can hold are the standard's.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacSpectralBits
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; spectrum codebooks 1 to 11 lengths, values read in ffmpeg n9.0.2 libavcodec/aactab.c bits1..bits11
+    rationale: the lengths that go with the codewords above.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacScalefactorCodes
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; scalefactor codebook codewords, values read in ffmpeg n9.0.2 libavcodec/aactab.c ff_aac_scalefactor_code
+    rationale: a prefix code dictated by the standard, 121 codewords for the deltas -60 to 60.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacScalefactorBits
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; scalefactor codebook lengths, values read in ffmpeg n9.0.2 libavcodec/aactab.c ff_aac_scalefactor_bits
+    rationale: the lengths that go with the scalefactor codewords.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacSwbLongTables
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified (a comment at ffmpeg aactab.c:1581 says "Table 4.110 to Table 4.128", which I did not check); band offsets for 1024-sample windows, values read in aactab.c swb_offset_1024_*
+    rationale: band edges per sampling frequency are fixed by the standard so that every encoder and decoder agree.
+  - kind: normative-values
+    file: aac_tables.go
+    symbol: aacSwbShortTables
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified (see above); band offsets for 128-sample windows, values read in ffmpeg aactab.c swb_offset_128_*
+    rationale: the same, for the eight short windows.
+  - kind: derived
+    file: aac_dequant.go
+    symbol: aacPow43
+    source: inverse quantisation |q|^(4/3), formula as in ffmpeg aacdec_proc_template.c:46-47 (its comment cites 4.6.3.3, clause not verified against the standard); computed in code with math.Pow
+    rationale: no table is held; the values are computed from the formula and rounded to float32.
+  - kind: derived
+    file: aac_dequant.go
+    symbol: aacGain
+    source: scalefactor gain 2^((sf-100)/4), as ffmpeg aactab.c:38-91 and aacdec.c:1592-1646 compute it (clause not verified against the standard); computed in code with math.Exp2
+    rationale: no table is held; the values are computed from the formula and rounded to float32.
 require_declared:
   min_numbers: 32
   paths: [aac]

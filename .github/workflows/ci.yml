@@ -80,6 +80,9 @@ jobs:
       - run: go test -run XXX -fuzz FuzzMP3Sample -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzOpusSample -fuzztime 60s .
       - run: go test -run XXX -fuzz FuzzOpusConfig -fuzztime 20s .
+      - run: go test -run XXX -fuzz FuzzAACFrame -fuzztime 60s .
+      - run: go test -run XXX -fuzz FuzzAACConfig -fuzztime 20s .
+      - run: go test -run XXX -fuzz FuzzAACADTS -fuzztime 20s .
       # A file sizes the PCM DecodeAudioTrack returns, so it runs under limits too.
       - run: ulimit -v 4194304 && GOMEMLIMIT=1GiB go test -run XXX -fuzz FuzzAudioTrack -fuzztime 60s .
       # An MP4 or Matroska file sizes the work PosterFrame does, so this target
