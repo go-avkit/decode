@@ -133,7 +133,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
       - name: fetch the streams
         working-directory: tools
         run: go run ./aacconf fetch "$RUNNER_TEMP/aacconf" ../testdata/aac-conformance.txt
@@ -181,7 +181,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.4'
       - run: GOARCH=386 go vet ./...
       - run: GOARCH=386 go test ./...
 
