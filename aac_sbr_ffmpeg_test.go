@@ -49,7 +49,8 @@ func sbrLowpass(x []float64, cut float64, n int) []float64 {
 	return out
 }
 
-// TestSBRLowBandAgainstFFmpeg: through the analysis and synthesis banks, the low
+// TestSBRLowBandAgainstFFmpeg (one stream, he44-st.aac, the only one with ffmpeg
+// output committed): through the analysis and synthesis banks, the low
 // band of he44-st.aac is, in largest and in RMS error against the exact path, at
 // least as accurate as the most accurate of ffmpeg 9.0.2's builds (macOS clang with
 // its C code paths, linux gcc 14 C code paths), which are 1e-6 of the signal.
@@ -106,6 +107,12 @@ func TestSBRLowBandAgainstFFmpeg(t *testing.T) {
 		best.max, best.rms = math.Min(best.max, s.max), math.Min(best.rms, s.rms)
 	}
 	t.Logf("%-20s low band against the exact path: max %.3e  rms %.3e (kx %d, signal rms %.3f)", "this decoder", us.max, us.rms, kx, 0.25)
+	// The exact path shares sbrQMFWindow with the decoder, so a wrong table is
+	// rewarded by the comparison above; ffmpeg's own error is the independent
+	// witness: with a wrong centre tap it rises from 6.3e-5 to 6e-4.
+	if best.max > 1e-4 || best.rms > 1e-5 {
+		t.Errorf("ffmpeg's best build is off the exact path by max %.3e, rms %.3e: the shared window table may be wrong", best.max, best.rms)
+	}
 	if us.max > best.max || us.rms > best.rms {
 		t.Errorf("this decoder (max %.3e, rms %.3e) is less accurate than the best ffmpeg build (max %.3e, rms %.3e)", us.max, us.rms, best.max, best.rms)
 	}

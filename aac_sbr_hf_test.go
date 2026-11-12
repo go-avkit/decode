@@ -408,7 +408,8 @@ func TestSBRQMFWindow(t *testing.T) {
 			t.Errorf("tap %d is %v, its mirror %v", i, sbrQMFWindow[i], sbrQMFWindow[640-i])
 		}
 	}
-	if sbrQMFWindow[0] != 0 || sbrQMFWindow[320] < 0.85 || sbrQMFWindow[320] > 0.86 {
+	// the two taps with no distinct mirror, pinned exactly
+	if sbrQMFWindow[0] != 0 || sbrQMFWindow[320] != 0.85373856 {
 		t.Errorf("taps 0 and 320: %v %v", sbrQMFWindow[0], sbrQMFWindow[320])
 	}
 	for i, w := range sbrAnaWindow {

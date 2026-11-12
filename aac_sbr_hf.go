@@ -118,28 +118,42 @@ func sbrAbs2(z complex128) float64 { return real(z)*real(z) + imag(z)*imag(z) }
 // division with its overflow scaling.
 func sbrDiv(z complex128, f float64) complex128 { return complex(real(z)/f, imag(z)/f) }
 
-// sbrChirpTarget is the chirp factor an inverse filtering mode asks for.
-var sbrChirpTarget = [4]float64{0, 0.75, 0.9, 0.98}
+// Inverse filtering modes: off, low, mid, high.
+//
+// sbrChirpWanted is the chirp factor the stream asks for, by the mode of the previous
+// frame and the mode of this one: the mode's own strength (0, 0.75, 0.9, 0.98), except
+// that going from off to low or from low to off asks for the softer 0.6.
+var sbrChirpWanted = [4][4]float64{
+	//  this: off  low   mid  high
+	{0, 0.6, 0.9, 0.98},    // previous off
+	{0.6, 0.75, 0.9, 0.98}, // previous low
+	{0, 0.75, 0.9, 0.98},   // previous mid
+	{0, 0.75, 0.9, 0.98},   // previous high
+}
+
+// The factor moves toward what is wanted as a weighted mean with its old value: the
+// weight of the wanted value is 3/4 when the factor falls (a quick release) and
+// 29/32 when it rises; below 1/64 it is zero.
+const (
+	sbrChirpFallWeight = 0.75
+	sbrChirpRiseWeight = 0.90625
+	sbrChirpFloor      = 1.0 / 64
+)
 
 // chirp updates the chirp factors of the nQ noise floor bands from the inverse
-// filtering modes of this frame and the previous one: a change between none and
-// low asks for 0.6, and the factor follows its target faster when it rises than
-// when it falls; a factor under 1/64 is zero.
+// filtering modes of the previous frame (invf[1]) and of this one (invf[0]).
 func (d *sbrChanDSP) chirp(c *sbrChannel, nQ int) {
 	for i := 0; i < nQ; i++ {
-		target := sbrChirpTarget[c.invf[0][i]]
-		if c.invf[0][i]+c.invf[1][i] == 1 {
-			target = 0.6
+		want := sbrChirpWanted[c.invf[1][i]][c.invf[0][i]]
+		w := sbrChirpRiseWeight
+		if want < d.bw[i] {
+			w = sbrChirpFallWeight
 		}
-		if target < d.bw[i] {
-			target = 0.75*target + 0.25*d.bw[i]
-		} else {
-			target = 0.90625*target + 0.09375*d.bw[i]
+		bw := w*want + (1-w)*d.bw[i]
+		if bw < sbrChirpFloor {
+			bw = 0
 		}
-		if target < 0.015625 {
-			target = 0
-		}
-		d.bw[i] = target
+		d.bw[i] = bw
 	}
 }
 
