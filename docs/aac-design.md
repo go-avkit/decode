@@ -169,7 +169,13 @@ Where the algorithm leaves a choice, the fixtures decided it by trying the
 alternatives against ffmpeg's decoded output: the default `bs_smoothing_mode` 1 is no
 smoothing, the noise index starts at 1 and steps once per subband and slot, the
 sinusoid phase starts at 0 and steps once per slot, the limiter caps the noise level
-with the gain and does not cap the sinusoid. What the fixtures cannot decide (no
+with the gain and does not cap the sinusoid. An attack envelope (l_A or l_A_prev)
+adds no noise and counts none in its boost (a first version misread this in the decoder
+and the reference alike, which is why the reference's 1.8e-7 hid it; ffmpeg's output
+showed it, and the committed streams are now asserted to 3e-6 of ffmpeg's). A
+limiter band's gain cap is at most 1e5, and a header reset refills the smoothing
+history with the first slot's gains: both from the rule, no fixture reaches them, and
+crafted streams do. What the fixtures cannot decide (no
 fixture has smoothing on, a coupled sinusoid or a second noise floor with ffmpeg
 output of its own) is held by the written streams of `TestSBRAdjustWritten` against
 the reference only, and is therefore the part to check first against the ISO
@@ -241,7 +247,7 @@ once ffmpeg's order is known.
 | SBR frequency tables, limiter, patches | S6 `sbr_update_freq_scale`, `sbr_create_limiter_bands`, … | complete | derivation rules | integers (+ `log2` in limiter) | exact |
 | SBR QMF analysis/synthesis | S6 `calc_sbr_*filterbank`, `qmf_filterbank_coeff.cpp:148` (Q15, "10/9*table"); S9 order | **done (part 2): 64-band synthesis; the 32-band mode of a downsampled output is not**; prototype declared in `.provenance.yml` | modulation | float64 in every stage, one float32 rounding at the output, go-fft DCT-IV and DST-IV | within one float32 rounding of the float64 definition and of the 256-bit evaluation; low band of `he44-st.aac` against the exact path: 2.3e-8 largest error, ffmpeg's two builds 6.3e-5 (a stated bound, not equality) |
 | HF generation | S6 `calc_auto_corr`, `sbr_generate_high_freq` | **done (part 2)** | covariance, chirp, patches | float64 | 4e-10 relative against the exact rational solution of the normal equations (float32 evaluation: 0.24 on tonal bands) |
-| HF adjustment | S6 `calc_sbr_envelope`, `sbr_envelope_calc_tbl` | **done (part 3, piece 1)**; noise table declared `normative-values`, smoothing filter `derived` | operation order, limiter, smoothing | float64, noise table in float64 | within 1e-6 of the peak (3e-7 measured) of a by-definition float64 path; ffmpeg's builds 2e-3 to 1.5e-2 of the peak off it (their float32 estimate), this decoder within float32 rounding of ffmpeg's output on `he44-st` for a right channel (-131 dB) |
+| HF adjustment | S6 `calc_sbr_envelope`, `sbr_envelope_calc_tbl` | **done (part 3, piece 1)**; noise table declared `normative-values`, smoothing filter `derived` | operation order, limiter, smoothing | float64, noise table in float64 | within 1e-6 of the peak (1.8e-7 measured) of a by-definition float64 path; ffmpeg's builds 4.5e-7 off it at most, and this decoder within 2.5e-6 of ffmpeg's output sample by sample on every committed stream and channel (asserted at 3e-6) |
 | SBR LP | S6 `sbr_aliasing_reduction` | partial | aliasing reduction | only if needed | — |
 | PS bitstream | S6 `ps_read_data`, `ps_decode_bs_utils` | complete | syntax, dequantisation | integers | exact |
 | PS hybrid filterbank | S6 `ps_hybrid_*` | partial (G1) | band split, filter lengths | float32; prototype coefficients needed in float | tolerance until G1 |

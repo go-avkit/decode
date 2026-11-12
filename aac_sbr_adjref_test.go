@@ -19,6 +19,7 @@ type refAdjChan struct {
 	slots         int         // processed slots
 	bands         int         // subbands visited by the noise generator
 	prevOn        map[int]bool
+	refill        bool
 	prevY         [][sbrSynBands]complex128 // slots 32.. of the previous frame's Y
 	prevKx, prevM int
 	prevEnd       int
@@ -159,7 +160,15 @@ func (r *refAdjChan) frame(s *sbrState, ch int, eo [sbrMaxEnv][]float64, qo [2][
 		}
 		return math.Sqrt(E / (1 + M) / (1 + Q))
 	}
-	noiseLevel := func(e, k int) float64 { return math.Sqrt(target(e, k) / (1 + noiseOf(e, k)) * noiseOf(e, k)) }
+	// the noise level asked of subband k; an attack envelope has none, and so adds
+	// none and counts none
+	noiseLevel := func(e, k int) float64 {
+		allowed := 1.0
+		if isAttack(e) {
+			allowed = 0
+		}
+		return allowed * math.Sqrt(target(e, k)/(1+noiseOf(e, k))*noiseOf(e, k))
+	}
 	sineLevel := func(e, k int) float64 {
 		if !on(e, k) {
 			return 0
@@ -184,6 +193,9 @@ func (r *refAdjChan) frame(s *sbrState, ch int, eo [sbrMaxEnv][]float64, qo [2][
 			sumM += measured(e, q)
 		}
 		gmax := limits[s.limGains] * math.Sqrt((1e-12+sumT)/(1e-12+sumM))
+		if gmax > 1e5 {
+			gmax = 1e5
+		}
 		g, q = rawGain(e, k), noiseLevel(e, k)
 		if g > gmax {
 			q *= gmax / g
@@ -216,6 +228,11 @@ func (r *refAdjChan) frame(s *sbrState, ch int, eo [sbrMaxEnv][]float64, qo [2][
 			sines := make([]float64, sbrSynBands)
 			for k := kx; k < kEnd; k++ {
 				gs[k], qs[k], sines[k] = boosted(e, k)
+			}
+			if r.refill { // after a header reset the history is four copies of this first slot
+				r.gains = [][]float64{gs, gs, gs, gs}
+				r.noises = [][]float64{qs, qs, qs, qs}
+				r.refill = false
 			}
 			for k := kx; k < kEnd; k++ {
 				g, q := gs[k], qs[k]

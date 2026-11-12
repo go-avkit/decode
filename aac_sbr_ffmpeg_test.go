@@ -55,6 +55,9 @@ func sbrLowpass(x []float64, cut float64, n int) []float64 {
 // least as accurate as the most accurate of ffmpeg 9.0.2's builds (macOS clang with
 // its C code paths, linux gcc 14 C code paths), which are 1e-6 of the signal.
 func TestSBRLowBandAgainstFFmpeg(t *testing.T) {
+	if sbrEmulated() {
+		t.Skip("a direct-sum reference and three 1025-tap filters: the native lanes run it, an emulated one would pass the test binary's ten minutes")
+	}
 	const name, frames = "he44-st.aac", 24
 	out, st := sbrChain(t, name, frames, true)
 	cfg, fr := aacADTSFrames(t, filepath.Join("testdata", "aac", name))

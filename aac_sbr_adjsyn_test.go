@@ -5,6 +5,7 @@ package decode
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -42,6 +43,8 @@ func sbrSynCases() []sbrSynCase {
 		{"uncoupled pair", h, aacIDCPE, false, [2]sbrGrid{fix2, fixVar}, -1, [2]int{15, 6}},
 		{"coupled pair, balance", withLim(h, 2, 2, 1, 0), aacIDCPE, true, [2]sbrGrid{fix2}, 1, [2]int{20, 6}},
 		{"coupled pair, 3 dB steps", withLim(sbrHdr{start: 7, stop: 9, amp: 1}, 2, 2, 1, 0), aacIDCPE, true, [2]sbrGrid{fix2}, -1, [2]int{10, 3}},
+		{"a header reset with smoothing on", withLim(h, 2, 2, 1, 0), aacIDSCE, false, [2]sbrGrid{fix2}, 1, [2]int{20, 4}},
+		{"gains the limiter would let past 1e5", withLim(h, 2, 3, 1, 0), aacIDSCE, false, [2]sbrGrid{fix2}, -1, [2]int{120, 5}},
 		{"another table shape", withLim(sbrHdr{start: 5, stop: 8, xover: 2, extra1: true, freqScale: 3, alter: 1, nb: 3}, 3, 2, 0, 0), aacIDSCE, false, [2]sbrGrid{fixVar}, 3, [2]int{18, 5}},
 		{"two noise floors, low resolution first", withLim(sbrHdr{start: 8, stop: 14, extra1: true, freqScale: 1, nb: 0}, 2, 2, 1, 0), aacIDSCE, false, [2]sbrGrid{varVar}, -1, [2]int{18, 5}},
 	}
@@ -54,21 +57,30 @@ func sbrSynCases() []sbrSynCase {
 // float32 rounding plus 1e-6 of the output peak, over five frames each, the
 // parameters of the frames varying so that state carried between frames is read.
 func TestSBRAdjustWritten(t *testing.T) {
-	for _, tc := range sbrSynCases() {
+	for i, tc := range sbrSynCases() {
+		if sbrRefFrames(1, 0) == 0 && i%3 != 0 {
+			continue // emulated architectures run a third of the cases
+		}
 		tb := sbrPayload{}.tables(t, sbrTestCore, tc.hdr)
 		s := newSBRState(sbrTestCore)
 		n := 1 + tc.elem - aacIDSCE
 		h := newSBRAdjHarness(n)
-		frames := sbrRefFrames(5, 2)
+		frames := sbrRefFrames(6, 2)
 		pcm := sbrTestPCM(frames, 11)
 		var peak, worst float64
+		cur := tc.hdr
 		for f := 0; f < frames; f++ {
 			p := sbrBasic()
 			p.elem, p.grids, p.first = tc.elem, tc.grids, tc.first
 			p.coupling = tc.coupling
-			if f == 0 {
-				p.hdr = &tc.hdr
-			} else {
+			switch {
+			case f == 0:
+				p.hdr = &cur
+			case f == 3 && strings.HasPrefix(tc.name, "a header reset"):
+				cur.stop++ // new spectrum parameters: the tables are rebuilt, a reset
+				tb = sbrPayload{}.tables(t, sbrTestCore, cur)
+				p.hdr = &cur
+			default:
 				p.hdr, p.ampKept = nil, tc.hdr.amp
 			}
 			if tc.harm >= 0 {

@@ -31,6 +31,7 @@ import "math"
 const (
 	sbrEpsilon      = 1e-12       // keeps a ratio of sums finite
 	sbrMaxGainBoost = 1.584893192 // 10^0.2: the boost never exceeds +2 dB
+	sbrMaxGain      = 1e5         // no limiter band's cap on a gain is above this
 	sbrNoiseOffset  = 6           // noise floor scalefactor zero is 2^6
 	sbrSmoothTaps   = 5           // taps of the smoothing filter
 	sbrSmoothOrder  = sbrSmoothTaps - 1
@@ -214,6 +215,9 @@ func (s *sbrState) adjust(ch int) {
 			default:
 				gain[j] = math.Sqrt(eo[j] / (1 + eCurr[j]))
 			}
+			if !noAttack {
+				qm[j] = 0 // no noise is added in an attack envelope, nor counted in its boost
+			}
 		}
 		// limiter bands: cap the gains, then boost what is left to the energy asked
 		for b := 0; b < t.nLim; b++ {
@@ -223,7 +227,7 @@ func (s *sbrState) adjust(ch int) {
 				sumO += eo[j]
 				sumC += eCurr[j]
 			}
-			gmax := sbrLimiterGain[s.limGains] * math.Sqrt((sbrEpsilon+sumO)/(sbrEpsilon+sumC))
+			gmax := math.Min(sbrLimiterGain[s.limGains]*math.Sqrt((sbrEpsilon+sumO)/(sbrEpsilon+sumC)), sbrMaxGain)
 			var sumNew float64
 			for j := j0; j < j1; j++ {
 				if gain[j] > gmax {
@@ -246,6 +250,16 @@ func (s *sbrState) adjust(ch int) {
 		// slots: smoothed gain and noise level, noise, sinusoid
 		smooth := smoothing && noAttack
 		for i := lo; i < hi; i++ {
+			if s.refill[ch] {
+				// after a header reset the history is the first slot's own gains, so the
+				// filter starts at rest
+				for k := range a.hist {
+					for j := 0; j < m; j++ {
+						a.hist[k][0][j], a.hist[k][1][j] = gain[j], qm[j]
+					}
+				}
+				s.refill[ch] = false
+			}
 			for j := 0; j < m; j++ {
 				g, q := gain[j]*sbrSmooth[0], qm[j]*sbrSmooth[0]
 				if smooth {

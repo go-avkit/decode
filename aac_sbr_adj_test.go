@@ -14,13 +14,14 @@ import (
 // synthesis) next to the exact reference path on the same core signal, frame by
 // frame, each with its own state.
 type sbrAdjHarness struct {
-	n       int
-	refAna  []*refAnalysis
-	refSyn  []*refSynthesis
-	refLow  [][sbrAnaBands][sbrLowSlots]complex128
-	refBW   [][sbrMaxNoise]float64
-	refAdj  []*refAdjChan
-	started bool
+	n        int
+	refAna   []*refAnalysis
+	refSyn   []*refSynthesis
+	refLow   [][sbrAnaBands][sbrLowSlots]complex128
+	refBW    [][sbrMaxNoise]float64
+	refAdj   []*refAdjChan
+	seen     bool
+	prevSpec sbrSpectrum
 }
 
 func newSBRAdjHarness(n int) *sbrAdjHarness {
@@ -60,6 +61,9 @@ func (h *sbrAdjHarness) step(s *sbrState, pcm [2][]float32) (got [2][]float32, w
 		var y [sbrHFSlots][sbrSynBands]complex128
 		kx, m, end := 32, 0, 0
 		if s.started {
+			if !h.seen || s.spec != h.prevSpec { // a header that changes the tables is a reset
+				h.refAdj[c].refill = true
+			}
 			var alpha [sbrAnaBands][2]complex128
 			for k := 0; k < min(s.t.k[0], sbrAnaBands); k++ {
 				alpha[k][0], alpha[k][1] = refPredictor(&rl[k])
@@ -77,6 +81,9 @@ func (h *sbrAdjHarness) step(s *sbrState, pcm [2][]float32) (got [2][]float32, w
 			w := h.refSyn[c].slot(&x[l])
 			want[c] = append(want[c], w[:]...)
 		}
+	}
+	if s.started {
+		h.seen, h.prevSpec = true, s.spec
 	}
 	return got, want
 }
@@ -123,14 +130,19 @@ type stat struct{ max, rms float64 }
 // short count under the race detector and on the architectures CI emulates (a test
 // binary has ten minutes, and the reference is a direct sum).
 func sbrRefFrames(full, short int) int {
-	switch runtime.GOARCH {
-	case "ppc64le", "s390x", "riscv64", "loong64":
-		return short
-	}
-	if raceEnabled {
+	if sbrEmulated() || raceEnabled {
 		return short
 	}
 	return full
+}
+
+// sbrEmulated says whether the architecture is one CI runs under qemu.
+func sbrEmulated() bool {
+	switch runtime.GOARCH {
+	case "ppc64le", "s390x", "riscv64", "loong64":
+		return true
+	}
+	return false
 }
 
 // sbrBeyondRounding returns the largest error of got against want beyond one float32
@@ -178,11 +190,24 @@ func TestSBRAdjust(t *testing.T) {
 			for i := range left {
 				left[i] = all[2*i]
 			}
+			// this decoder's output against ffmpeg's, sample by sample, on every channel
+			// that ffmpeg decoded: the same signal to 3e-6 (their float32 arithmetic). This
+			// also pins every entry of the noise table: a flipped sign moves it to 1.7e-5.
+			for c := range got {
+				var worst float64
+				for i := 0; i < min(len(got[c]), len(all)/2); i++ {
+					worst = math.Max(worst, math.Abs(float64(got[c][i])-float64(all[2*i+c])))
+				}
+				t.Logf("%s %-20s channel %d against this decoder: largest difference %.2e", fx.name, label, c, worst)
+				if worst > 3e-6 {
+					t.Errorf("%s: %s differs from this decoder by %.2e on channel %d", fx.name, label, worst, c)
+				}
+			}
 			s, _ := sbrBeyondRounding(left, want[0][:len(left)])
 			t.Logf("%s %-20s against the exact path: max %.2e beyond a rounding, rms %.2e", fx.name, label, s.max, s.rms)
 			best.max, best.rms = math.Min(best.max, s.max), math.Min(best.rms, s.rms)
 		}
-		if best.max > 0.05*peak || best.rms > 2e-3*peak {
+		if best.max > 1e-5*peak || best.rms > 2e-6*peak {
 			t.Errorf("%s: ffmpeg's best build is off the exact path by %.2e (rms %.2e) of a peak %.3f: the constants the decoder and the reference share may be wrong", fx.name, best.max, best.rms, peak)
 		}
 		if ours.max > best.max || ours.rms > best.rms {
