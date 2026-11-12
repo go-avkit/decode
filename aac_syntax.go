@@ -208,7 +208,7 @@ func (p *aacParser) parseFrame(data []byte) ([]aacElement, error) {
 			}
 		default: // aacIDEND
 			r.align()
-			p.used = r.pos / 8
+			p.used = r.bitPos() / 8
 			return p.elems, nil
 		}
 		if r.overrun {
