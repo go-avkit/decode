@@ -95,6 +95,34 @@ values:
     symbol: aacSineLong
     source: sine window, as ffmpeg sinewin_tablegen.h:58-65 computes it (standard clause not verified); computed in code with math.Sin
     rationale: no table is held; the windows are computed from the formula and rounded to float32.
+  # SBR (HE-AAC v1). The ten Huffman codes of the envelope and noise floor
+  # scalefactors: the bare (symbol, length) pairs in code order. The codewords
+  # themselves are not held: they are the canonical code of the lengths (the entries
+  # are listed by increasing length), built in aac_sbr.go and checked complete by
+  # TestSBRHuffmanTables. A generator read the C source once and wrote the tables.
+  - kind: normative-values
+    file: aac_sbr_tables.go
+    symbol: aacSBRHuffSyms
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; SBR envelope and noise floor Huffman codes (t_huffman_env_1_5dB, f_huffman_env_1_5dB, t/f_huffman_env_bal_1_5dB, t/f_huffman_env_3_0dB, t/f_huffman_env_bal_3_0dB, t_huffman_noise_3_0dB, t_huffman_noise_bal_3_0dB), symbols read in ffmpeg n9.0.2 libavcodec/aac/aacdec_tab.c:116-251 (sbr_huffman_tab, first column)
+    rationale: a prefix code is dictated by the standard; the only values a decoder can hold are the standard's.
+  - kind: normative-values
+    file: aac_sbr_tables.go
+    symbol: aacSBRHuffLens
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; lengths of the same ten codes, read in ffmpeg n9.0.2 libavcodec/aac/aacdec_tab.c:116-251 (sbr_huffman_tab, second column)
+    rationale: the lengths that go with the symbols above.
+  - kind: normative-values
+    file: aac_sbr_freq.go
+    symbol: sbrOffset
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; start frequency offsets of the SBR master frequency table by sampling rate class and bs_start_freq, read in ffmpeg n9.0.2 libavcodec/aacsbrdata.h:35-42
+    rationale: fixed by the standard so that every encoder and decoder build the same band table.
+  - kind: derived
+    file: aac_sbr_freq.go
+    symbol: sbrLimWarp
+    source: limiter bands per octave 2^(0.49/x) for x = 1.2, 2, 3, as ffmpeg aacsbr_template.c:141-143 states them in its comments (standard clause not verified); computed in code with math.Exp2
+    rationale: no table is held; the three values are computed from their formula.
 require_declared:
   min_numbers: 32
   paths: [aac]

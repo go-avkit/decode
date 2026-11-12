@@ -127,6 +127,32 @@ Read for the AAC-LC synthesis PR (plan item 5), also read only:
 | `libavcodec/aac/aacdec_dsp_template.c:81-219, 325-384` | M/S, intensity, TNS, the window overlap and buffer update cases | the stage order and the cases of `aac_synth.go` |
 | `libavcodec/aac/aacdec_proc_template.c:57-139, 292-326`, `aacdec.c:1263-1296, 1592-1646, 1678-1727, 1785-1918, 2123-2170`, `aacdec_float.c:56-73, 91-113`, `lpc_functions.h:50-106`, `kbdwin.c:33-60`, `sinewin_tablegen.h:58-65`, `aactab.c:110-147, 1968-1997` | the noise generator and its energy rule, the scalefactor offsets and clips, TNS parsing and filtering, the stage order after the spectrum, the transform scale 1/N/32768, the KBD and sine windows, the TNS maximum bands | the same, and the constants of `aacTNSMaxBands` |
 
+Read for the SBR parser PR (HE-AAC v1, `aac_sbr*.go`), also read only (user
+decision 2026-11-12: G1 is settled for SBR by declaring bare normative values in
+`.provenance.yml`; `copycheck` v0.102.0 reports 0 findings):
+
+| File:lines | What it tells us | Used for |
+|------------|------------------|----------|
+| `libavcodec/aacsbr_template.c:188-247` | `sbr_header`: field order, the defaults when `bs_header_extra_1/2` are 0, the spectrum parameters whose change forces a table rebuild | `sbrState.header` |
+| `libavcodec/aacsbr_template.c:249-491` | master frequency table: start/stop minima by rate, `sbr_offset`, the stop band widths, both `bs_freq_scale` cases, the two-region split and its warp, the checks | `sbrTables.makeMaster` (float64 for the log and the power; ffmpeg uses float32) |
+| `libavcodec/aacsbr.c:67-83` | `make_bands`: band widths from rounded geometric steps | `sbrMakeBands` |
+| `libavcodec/aacsbr_template.c:493-622` | patches and the derived tables: high/low/noise, `n_q`, patch loop with its guards | `sbrTables.makePatches`, `makeDerived` |
+| `libavcodec/aacsbr_template.c:122-186` | limiter band table | `sbrTables.makeLim` |
+| `libavcodec/aacsbr_template.c:624-1180` | `sbr_grid` for the four frame classes, `bs_pointer`, `l_A`, delta-coding flags, inverse filtering, envelope and noise floor decoding with the three frequency-resolution cases, coupled and uncoupled pairs, the extension loop, the byte accounting | `aac_sbr.go` |
+| `libavcodec/aac/aacdec_tab.c:114-280` | the ten Huffman codes as (symbol, length) pairs, the symbol offsets, canonical code from lengths | `aacSBRHuffSyms`, `aacSBRHuffLens` (values only), `buildSBRHuff` |
+| `libavcodec/aacsbrdata.h:35-42` | `sbr_offset` | `sbrOffset` |
+| `libavcodec/sbr.h:63-117, 143-193` | which values live from one frame to the next, and the array sizes | `sbrChannel`, `sbrState` |
+| `libavcodec/aac/aacdec.c:2024-2083` | SBR payload sits in a fill element of type 13 or 14 (with CRC), attached to the element before it | `aacParser.sbrFill` |
+
+Behaviours kept from ffmpeg and worth knowing: a refused header turns SBR off
+silently (pure upsampling, the core signal still decodes); a faulty payload turns
+SBR off until the next header and the frame decodes without it (`aacParser.sbrErr`
+says why); a degenerate header can give an empty limiter table or a repeated noise
+border; the end of the limiter table can sit below the stop frequency when the last
+patch was dropped. PS extension data is skipped (its presence is recorded in
+`sbrState.psSeen`). One difference: scalefactors are range-checked as integers
+(0 to 127, noise 0 to 30), ffmpeg checks a byte after wrap-around.
+
 The syntax itself (`aac_syntax.go`) is written from the syntax tables of
 ISO/IEC 14496-3 subpart 4 as known to the author; the reference decoders'
 syntax functions were not opened for it.

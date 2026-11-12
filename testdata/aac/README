@@ -22,3 +22,17 @@ its C code paths, as float32 little-endian, interleaved (the oracle of TestAACOr
   ffmpeg -cpuflags 0 -i st44.aac -f f32le ref/st44.f32           (likewise st44-tools,
   mono22, mono8)
   ffmpeg -cpuflags 0 -i surround51.aac -frames:a 12 -f f32le ref/surround51.f32
+
+HE-AAC fixtures, made with macOS `afconvert -f m4af -d aach -b <rate>` (Apple's
+encoder) from synthetic lavfi sines (a 440 Hz tone, a slowly modulated 2.5 kHz
+tone, an amplitude-modulated 9 kHz tone, two channels), 2 seconds, then
+`ffmpeg -c:a copy -f adts`. The ADTS header carries the CORE rate and the AAC-LC
+profile; the SBR data is in the fill elements.
+
+  he44-st.aac       stereo, core 22050 Hz (SBR output 44100), -b 48000
+  he32-st.aac       stereo, core 16000 Hz (SBR output 32000), -b 40000
+  he48-mono.aac     mono, core 24000 Hz (SBR output 48000), -b 24000. No PS data in it:
+                    ffmpeg calls it "HE-AACv2" and decodes it to stereo because an
+                    implicit-signalled mono SBR stream might carry PS
+  he44-ps.aac       HE-AAC v2 (`-d aacp -b 32000`) from a stereo source: mono core
+                    22050 Hz, SBR and Parametric Stereo data in every frame

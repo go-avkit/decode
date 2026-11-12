@@ -107,6 +107,9 @@ type aacElement struct {
 	msMask uint8 // ms_mask_present: 0 none, 1 flags in msUsed, 2 every band
 	msUsed [aacMaxGroups][aacMaxSfb]bool
 	ch     [2]aacChannel
+	// sbr is the element's SBR state when this frame carried SBR data for it, else
+	// nil; it belongs to the parser and is valid until the next frame.
+	sbr *sbrState
 }
 
 // aacMaxElements bounds the channel elements of a frame.
@@ -125,6 +128,13 @@ type aacParser struct {
 	used     int     // bytes the last frame took, up to its end element
 	longSwb  []uint16
 	shortSwb []uint16
+
+	// SBR (aac_sbr.go): sbrOn says the stream is HE-AAC and a fill element's SBR
+	// data is parsed instead of refused; sbrStates holds the state of each channel
+	// element, kept between frames.
+	sbrOn     bool
+	sbrStates []sbrEntry
+	sbrErr    error // why the last frame's SBR data was dropped, or nil
 }
 
 // newAACParser returns a parser for a stream of the given configuration that
@@ -152,6 +162,7 @@ func (p *aacParser) parseFrame(data []byte) ([]aacElement, error) {
 	r := newAACBits(data)
 	p.elems = p.elems[:0]
 	p.pce = nil
+	p.sbrErr = nil
 	channels := 0
 	for {
 		id := int(r.read(3))
@@ -202,9 +213,13 @@ func (p *aacParser) parseFrame(data []byte) ([]aacElement, error) {
 			}
 			if cnt > 0 {
 				if t := r.read(4); t == 13 || t == 14 { // EXT_SBR_DATA, EXT_SBR_DATA_CRC
-					return nil, fmt.Errorf("%w: HE-AAC (SBR data in a fill element)", ErrAudioUnsupported)
+					if !p.sbrOn {
+						return nil, fmt.Errorf("%w: HE-AAC (SBR data in a fill element)", ErrAudioUnsupported)
+					}
+					p.sbrFill(r, t == 14, 8*cnt-4, len(p.elems)-1)
+				} else {
+					r.skip(8*cnt - 4)
 				}
-				r.skip(8*cnt - 4)
 			}
 		default: // aacIDEND
 			r.align()
