@@ -67,10 +67,9 @@ func FuzzSBRPayload(f *testing.F) {
 
 // FuzzSBRChain feeds sbr_extension_data to the parser as FuzzSBRPayload does and, with
 // whatever state the parse left, runs the signal path (analysis, high frequency
-// generation when SBR is on, synthesis) over a core signal for each channel, three
-// frames in a row: whatever the stream chose (tables, borders, filtering modes), the
-// path stays inside its arrays and its output is finite and bounded (the prediction
-// filter is limited to a gain of 1+4+16 times the bandwidth factors).
+// generation and envelope adjustment when SBR is on, synthesis) over a core signal for
+// each channel, three frames in a row: whatever the stream chose (tables, borders,
+// filtering modes, envelopes), the path stays inside its arrays and never makes NaN.
 func FuzzSBRChain(f *testing.F) {
 	tb := sbrPayload{}.tables(f, sbrTestCore, defaultSBRHdr())
 	for _, elem := range []int{aacIDSCE, aacIDCPE} {
@@ -82,7 +81,10 @@ func FuzzSBRChain(f *testing.F) {
 		}
 	}
 	pcm := sbrTestPCM(1, 5)
-	out := make([]float32, sbrQMFSlots*sbrSynBands)
+	var out [2][]float32
+	for c := range out {
+		out[c] = make([]float32, sbrQMFSlots*sbrSynBands)
+	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) < 1 {
 			return
@@ -93,19 +95,14 @@ func FuzzSBRChain(f *testing.F) {
 		for i := 0; i < 3; i++ {
 			r := newAACBits(data[1:])
 			_ = s.parse(r, data[0]>>4&1 != 0, 8*(len(data)-1), elem)
-			for c := 0; c <= elem-aacIDSCE; c++ {
-				d := s.channelDSP(c)
-				d.analyse(pcm)
-				kx, m := 32, 0
-				if s.started {
-					s.hfGenerate(c)
-					kx, m = s.t.kx[1], s.t.m[1]
-				}
-				x := sbrX(&d.low, &d.high, kx, m)
-				d.syn.process(out, &x)
-				for _, v := range out {
-					if v != v || v > 1e3 || v < -1e3 {
-						t.Fatalf("frame %d channel %d: sample %v", i, c, v)
+			n := 1 + elem - aacIDSCE
+			s.frame(n, [2][]float32{pcm, pcm}, [2][]float32{out[0], out[1]})
+			for c := 0; c < n; c++ {
+				for _, v := range out[c] {
+					// an envelope of 2^127 overflows float32 to infinity, which is the
+					// stream's, but nothing is NaN
+					if v != v {
+						t.Fatalf("frame %d channel %d: NaN", i, c)
 					}
 				}
 			}
