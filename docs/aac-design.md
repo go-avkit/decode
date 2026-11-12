@@ -160,7 +160,7 @@ from `aacDecoder`.
 | `libavcodec/aacsbrdata.h:45-206, 208-371` | the 320 and 640 window values; the first is every second value of the second (checked); two entries of each are written `-Q31(x)`, the sign outside the macro | the values of `sbrQMFWindow`, carried by a throwaway generator |
 
 Differences from ffmpeg, by design: every stage is float64 and the output is rounded
-once; the transforms are DCT-IV and DST-IV (go-fft) of 64 points, not a 64-point MDCT;
+once; the transforms are two DCT-IV of 64 points (go-fft's plan; the sine part is a DST-IV, done as a DCT-IV of the reversed input), not a 64-point MDCT;
 the low band keeps its history in all 32 bands where ffmpeg zeroes the bands between
 `kx[0]` and `kx[1]`; frames of 1024 only (ffmpeg's autocorrelation has the 38 terms
 of that frame length written in; its 960 mode was not examined). Not done: the downsampled

@@ -33,12 +33,14 @@ import (
 // uses: with the angle of the kernel written as pi*(2k+1)*(2m+1)/256, the analysis
 // is a DCT-IV (real part) plus i times a DST-IV (imaginary part) of the 64 sums
 // folded onto odd indices m, and the synthesis is the same pair of transforms in the
-// other direction. go-fft's DCT-IV and DST-IV plans compute them, with the factor 2
-// the analysis needs built in.
+// other direction. go-fft's DCT-IV plan computes both, with the factor 2 the analysis
+// needs built in: DST-IV(x)[k] is (-1)^k times DCT-IV of x reversed (go-fft's own
+// dst.go states it), so the reversal is folded into the folding and the sign into the
+// last step, and the plan's second pass and wrapper are saved.
 //
 // Every stage runs in float64 and the synthesis rounds once, to float32, at the
 // output: the error of the banks is that one rounding plus about 1e-13 of the
-// signal. The plans are immutable and shared; the working memory of one channel
+// signal. The plan is immutable and shared; the working memory of one channel
 // lives in its sbrAnalysis and sbrSynthesis, so decoders never share a buffer.
 
 // Sizes of the banks.
@@ -58,7 +60,6 @@ const (
 
 var (
 	sbrDCT4 = fft.NewDCTPlan(sbrSynBands, 4)
-	sbrDST4 = fft.NewDSTPlan(sbrSynBands, 4)
 
 	// sbrAnaWindow is the analysis window: every second tap of the prototype.
 	sbrAnaWindow = func() (w [sbrAnaTaps]float64) {
@@ -84,30 +85,35 @@ func (a *sbrAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]compl
 		a.hist[sbrAnaKeep+i] = float64(s) * sbrPCMUnit
 	}
 	for l := 0; l < sbrQMFSlots; l++ {
-		// x[i] of the definition is hist[l*32+319-i]
+		// x[i] of the definition is hist[l*32+319-i]: the five taps n+64j of the
+		// sum are the 64 samples ending at hist[l*32+319-64j], read backwards
 		h := a.hist[l*32 : l*32+sbrAnaTaps]
-		for n := range a.u {
-			var sum float64
-			for j := 0; j < 5; j++ {
-				sum += sbrAnaWindow[n+64*j] * h[sbrAnaTaps-1-n-64*j]
+		a.u = [sbrSynBands]float64{}
+		for j := 0; j < 5; j++ {
+			win := (*[sbrSynBands]float64)(sbrAnaWindow[64*j:])
+			x := (*[sbrSynBands]float64)(h[sbrAnaTaps-64-64*j:])
+			for n := range a.u {
+				a.u[n] += win[n] * x[63-n]
 			}
-			a.u[n] = sum
 		}
-		// fold the 64 sums onto the odd angles of the DCT-IV and DST-IV kernels: the
-		// angle (4n-1) is 2m+1 for m = 2n-1 up to n = 32, and for n >= 33 it is
-		// mirrored (256-(4n-1) = 2m+1 with m = 128-2n), which negates the cosine
-		// and keeps the sine; n = 0 is m = -1, the mirror of m = 0 about -1/2.
-		a.v[0], a.w[0] = a.u[0], -a.u[0]
+		// fold the 64 sums onto the odd angles of the DCT-IV kernel: the angle
+		// (4n-1) is 2m+1 for m = 2n-1 up to n = 32, and for n >= 33 it is mirrored
+		// (256-(4n-1) = 2m+1 with m = 128-2n), which negates the cosine and keeps
+		// the sine; n = 0 is m = -1, the mirror of m = 0 about -1/2. The sine part
+		// is a DST-IV, which is the DCT-IV of the reversed input: w[63-m] is the
+		// sine part's value at m.
+		a.v[0], a.w[63] = a.u[0], -a.u[0]
 		for n := 1; n <= 32; n++ {
-			a.v[2*n-1], a.w[2*n-1] = a.u[n], a.u[n]
+			a.v[2*n-1], a.w[64-2*n] = a.u[n], a.u[n]
 		}
 		for n := 33; n < sbrSynBands; n++ {
-			a.v[128-2*n], a.w[128-2*n] = -a.u[n], a.u[n]
+			a.v[128-2*n], a.w[2*n-65] = -a.u[n], a.u[n]
 		}
 		sbrDCT4.DCT(a.c[:], a.v[:], fft.NormBackward)
-		sbrDST4.DST(a.s[:], a.w[:], fft.NormBackward)
-		for k := 0; k < sbrAnaBands; k++ {
+		sbrDCT4.DCT(a.s[:], a.w[:], fft.NormBackward)
+		for k := 0; k < sbrAnaBands; k += 2 {
 			low[k][first+l] = complex(a.c[k], a.s[k])
+			low[k+1][first+l] = complex(a.c[k+1], -a.s[k+1])
 		}
 	}
 }
@@ -130,26 +136,34 @@ func (y *sbrSynthesis) process(out []float32, x *[sbrQMFSlots][sbrSynBands]compl
 	out = out[:sbrQMFSlots*sbrSynBands]
 	for l := range x {
 		for k, z := range x[l] {
-			y.a[k], y.b[k] = real(z), imag(z)
+			y.a[k], y.b[sbrSynBands-1-k] = real(z), imag(z)
 		}
 		sbrDCT4.DCT(y.c[:], y.a[:], fft.NormBackward)
-		sbrDST4.DST(y.s[:], y.b[:], fft.NormBackward)
+		sbrDCT4.DCT(y.s[:], y.b[:], fft.NormBackward)
 		y.off -= 128
 		v := y.buf[y.off : y.off+128]
 		// the 1/64 of the definition, the 1/2 of the transforms' factor 2 and the
-		// 1/32768 back to +-1.0: 2^-22, exact
+		// 1/32768 back to +-1.0: 2^-22, exact. The sine part is (-1)^n y.s[n].
 		const scale = 1.0 / (128 * sbrPCMUnit)
-		for n := 0; n < sbrSynBands; n++ {
+		for n := 0; n < sbrSynBands; n += 2 {
 			v[n] = (y.s[n] - y.c[n]) * scale
 			v[127-n] = (y.c[n] + y.s[n]) * scale
+			v[n+1] = (-y.s[n+1] - y.c[n+1]) * scale
+			v[126-n] = (y.c[n+1] - y.s[n+1]) * scale
 		}
-		o := out[l*sbrSynBands : (l+1)*sbrSynBands]
-		for q := range o {
-			var sum float64
-			for n := 0; n < 10; n++ {
-				sum += sbrQMFWindow[64*n+q] * y.buf[y.off+128*n+64*(n&1)+q]
+		// ten products of 64 values: block n of the window against the 64 values of
+		// v that the definition's g takes at 128n (+64 for odd n)
+		var acc [sbrSynBands]float64
+		for n := 0; n < 10; n++ {
+			win := (*[sbrSynBands]float64)(sbrQMFWindow[64*n:])
+			vn := (*[sbrSynBands]float64)(y.buf[y.off+128*n+64*(n&1):])
+			for q := range acc {
+				acc[q] += win[q] * vn[q]
 			}
-			o[q] = float32(sum)
+		}
+		o := (*[sbrSynBands]float32)(out[l*sbrSynBands:])
+		for q, s := range acc {
+			o[q] = float32(s)
 		}
 	}
 }
