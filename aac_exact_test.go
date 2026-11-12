@@ -39,6 +39,19 @@ func exactSine(n int) []float64 {
 	return w
 }
 
+// aacBesselI0 is the modified Bessel function of the first kind, order zero, by its
+// power series: the reference's own, independent of the library the decoder takes
+// its windows from.
+func aacBesselI0(x float64) float64 {
+	sum, term := 1.0, 1.0
+	q := x * x / 4
+	for k := 1; term > 1e-18*sum; k++ {
+		term *= q / float64(k*k)
+		sum += term
+	}
+	return sum
+}
+
 func exactKBD(alpha float64, n int) []float64 {
 	a2 := 4 * (alpha * math.Pi / float64(n)) * (alpha * math.Pi / float64(n))
 	k := make([]float64, n/2+1)

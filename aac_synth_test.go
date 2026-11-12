@@ -117,10 +117,23 @@ func TestAACWindows(t *testing.T) {
 			}
 		}
 	}
-	// the sine window is the sine of a float32 argument, rounded to float32: the
-	// midpoint of the rising half
-	if got, want := aacSineLong[511], float32(math.Sin(float64(float32(511.5)*float32(math.Pi/2048)))); math.Abs(float64(got-want)) > 1e-6 {
-		t.Errorf("sine[511] = %v, want about %v", got, want)
+	// the windows are the reference's, built independently in float64, rounded to
+	// float32 (half an ulp, 6e-8, at most)
+	for name, c := range map[string]struct {
+		got  []float32
+		want []float64
+	}{
+		"sine 1024": {aacSineLong[:], exactSine(1024)},
+		"sine 128":  {aacSineShort[:], exactSine(128)},
+		"kbd 1024":  {aacKBDLong[:], exactKBD(4, 1024)},
+		"kbd 128":   {aacKBDShort[:], exactKBD(6, 128)},
+	} {
+		for i, g := range c.got {
+			if d := math.Abs(float64(g) - c.want[i]); d > 6e-8 {
+				t.Errorf("%s[%d] = %v, the reference has %v (differ by %g)", name, i, g, c.want[i], d)
+				break
+			}
+		}
 	}
 	for x, want := range map[float64]float64{0: 1, 1: 1.2660658777520082, 5: 27.239871823604442} {
 		if got := aacBesselI0(x); math.Abs(got-want) > 1e-12*want {
