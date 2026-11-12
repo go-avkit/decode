@@ -62,7 +62,7 @@ func TestAACMDCTMatchesDefinition(t *testing.T) {
 }
 
 // TestAACFFTParseval: a DFT of n points, whatever order it leaves its bins in,
-// multiplies the energy by n. The sizes cover the two base cases (2 and 4) and
+// multiplies the energy by n. The sizes cover the base cases (2, 4 and 8) and
 // every combine step up to 512.
 func TestAACFFTParseval(t *testing.T) {
 	rng := rand.New(rand.NewSource(4))

@@ -15,6 +15,8 @@ github.com/go-avkit/bitstream v0.3.1 h1:hZL/9IyRQaXmDd8iEm8ZKT79Tec4pS+HZ+wnQiLa
 github.com/go-avkit/bitstream v0.3.1/go.mod h1:aA50I8nXKyJu6ElfTHM957BRrx5JjgSYUxs++n5VM8o=
 github.com/go-avkit/h264 v0.9.0 h1:yrXbVFZCfZhG9okTJqITHdldVciXMw0ioPaH/NorWsQ=
 github.com/go-avkit/h264 v0.9.0/go.mod h1:LcFlgGaV0CHWk4oEpO3GWv+93vylXsuJeepcDW9Md3I=
+github.com/go-fft/fft v0.28.16 h1:q0ApF59+H6cUBWafbGo6/oQBqyjs2R9kriH7+0S6vko=
+github.com/go-fft/fft v0.28.16/go.mod h1:GN5V4TWCjV05ECqH1ONfjFM6Z1m2shqCdssxKGqQ41s=
 github.com/go-test/deep v1.1.0 h1:WOcxcdHcvdgThNXjw0t76K42FXTU7HpNQWHpA2HHNlg=
 github.com/go-test/deep v1.1.0/go.mod h1:5C2ZWiW0ErCdrYzpqxLbTX7MG14M9iiw8DgHncVwcsE=
 github.com/icza/bitio v1.1.0 h1:ysX4vtldjdi3Ygai5m1cWy4oLkhWTAi+SyO6HC8L9T0=
