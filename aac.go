@@ -211,10 +211,22 @@ func (d *aacDecoder) decodeInto(data, dst []byte) error {
 		}
 		seen |= 1 << uint(idx)
 		d.synth.element(&els[e], d.firsts[idx], [2][]float32{d.pcm[0][:], d.pcm[1][:]})
+		if els[e].nch == 2 && d.slot[idx][1] == d.slot[idx][0]+1 {
+			// a pair of channels in adjacent slots (the usual stereo pair): both
+			// samples of an instant in one 8-byte store
+			l := d.pcm[0][:]
+			r := d.pcm[1][:len(l)]
+			for i, v := range l {
+				o := (i*nch + d.slot[idx][0]) * 4
+				binary.LittleEndian.PutUint64(dst[o:o+8], uint64(math.Float32bits(v))|uint64(math.Float32bits(r[i]))<<32)
+			}
+			continue
+		}
 		for c := 0; c < int(els[e].nch); c++ {
 			slot := d.slot[idx][c]
 			for i, v := range d.pcm[c] {
-				binary.LittleEndian.PutUint32(dst[(i*nch+slot)*4:], math.Float32bits(v))
+				o := (i*nch + slot) * 4
+				binary.LittleEndian.PutUint32(dst[o:o+4], math.Float32bits(v))
 			}
 		}
 	}
