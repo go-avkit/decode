@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/go-dsp/signal"
+	"github.com/go-simd/floats"
 )
 
 // Synthesis of AAC-LC: noise substitution, M/S and intensity stereo, TNS, the
@@ -28,26 +29,18 @@ func mul(a, b float32) float32 { return float32(a * b) }
 // arm64 (measured in TestAACOracle: unfused, more than half of the samples differ
 // by an ulp; fused, none), and math.FMA gives the same bits on every architecture.
 // Only tests change it.
+//
+// It no longer covers the windowing step: the overlap-add is
+// floats.Float32OverlapWindow, which fuses the second product of each sum on arm64
+// and amd64 (NEON and AVX2+FMA) and rounds every product on other platforms,
+// whatever aacFuse says. The oracle tests that set it false (TestAACOracle,
+// TestAACOraclePlatform) therefore measure the unfused arithmetic of everything
+// but the windowing; they only log counts and assert nothing about them, and the
+// gates that decide are the accuracy bound (TestAACAccuracy) and the conformance
+// test.
 var aacFuse = true
 
 func fma32(a, b, c float32) float32 { return float32(math.FMA(float64(a), float64(b), float64(c))) }
-
-// msub is a*b - c*d, and madd is a*b + c*d: when fused, the first product is
-// fused with the sum and the second is rounded, which is how a C compiler
-// contracts the expression.
-func msub(a, b, c, d float32) float32 {
-	if aacFuse {
-		return fma32(a, b, -mul(c, d))
-	}
-	return mul(a, b) - mul(c, d)
-}
-
-func madd(a, b, c, d float32) float32 {
-	if aacFuse {
-		return fma32(a, b, mul(c, d))
-	}
-	return mul(a, b) + mul(c, d)
-}
 
 // addmul is c + a*b and submul is c - a*b.
 func addmul(c, a, b float32) float32 {
@@ -313,13 +306,7 @@ func (s *aacSynth) tns(coef *[aacFrameLen]float32, ch *aacChannel) {
 // 2n samples to dst, from the n samples of a and n of b, with a window of 2n
 // points.
 func fmulWindow(dst, a, b, win []float32, n int) {
-	for i := 0; i < n; i++ {
-		j := n - 1 - i
-		s0, s1 := a[i], b[j]
-		wi, wj := win[i], win[2*n-1-i]
-		dst[i] = msub(s0, wj, s1, wi)
-		dst[2*n-1-i] = madd(s0, wi, s1, wj)
-	}
+	floats.Float32OverlapWindow(dst[:2*n], a[:n], b[:n], win[:2*n])
 }
 
 // imdctWindow transforms the spectrum of a channel to its 1024 output samples,
