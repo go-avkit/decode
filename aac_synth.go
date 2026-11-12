@@ -6,6 +6,8 @@ package decode
 import (
 	"math"
 	"sync"
+
+	"github.com/go-dsp/signal"
 )
 
 // Synthesis of AAC-LC: noise substitution, M/S and intensity stereo, TNS, the
@@ -114,44 +116,6 @@ var aacTNSMaxBands = [2][13]uint8{
 	{9, 9, 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14},
 }
 
-// aacBesselI0 is the modified Bessel function of the first kind, order zero.
-func aacBesselI0(x float64) float64 {
-	sum, term := 1.0, 1.0
-	q := x * x / 4
-	for k := 1; term > 1e-18*sum; k++ {
-		term *= q / float64(k*k)
-		sum += term
-	}
-	return sum
-}
-
-// aacKBD returns the rising half, n points, of the Kaiser-Bessel-derived window
-// of 2n points with parameter alpha: the square root of the running sum of a
-// Kaiser window of n+1 points over its total.
-func aacKBD(dst []float32, alpha float64, n int) {
-	a2 := 4 * (alpha * math.Pi / float64(n)) * (alpha * math.Pi / float64(n))
-	kaiser := make([]float64, n/2+1)
-	var scale float64
-	for i := range kaiser {
-		kaiser[i] = aacBesselI0(math.Sqrt(float64(i) * float64(n-i) * a2))
-		w := 1.0
-		if i != 0 && i < n/2 {
-			w = 2
-		}
-		scale += kaiser[i] * w
-	}
-	scale = 1 / (scale + 1)
-	sum := 0.0
-	for i := 0; i < n; i++ {
-		if i <= n/2 {
-			sum += kaiser[i]
-		} else {
-			sum += kaiser[n-i]
-		}
-		dst[i] = float32(math.Sqrt(sum * scale))
-	}
-}
-
 // The windows and the transforms are built once.
 var (
 	aacSynthOnce              sync.Once
@@ -161,17 +125,21 @@ var (
 )
 
 func aacSynthInit() {
-	// The sine of the argument rounded to float32, as a single precision sine
-	// takes it.
-	for i := range aacSineLong {
-		aacSineLong[i] = float32(math.Sin(float64(float32((float64(i) + 0.5) * (math.Pi / (2.0 * 1024))))))
-	}
-	for i := range aacSineShort {
-		aacSineShort[i] = float32(math.Sin(float64(float32((float64(i) + 0.5) * (math.Pi / (2.0 * 128))))))
-	}
-	aacKBD(aacKBDLong[:], 4, 1024)
-	aacKBD(aacKBDShort[:], 6, 128)
+	// The rising halves of the windows of 2048 and 256 points, from go-dsp/signal:
+	// the sine window (signal.Cosine, correctly rounded) and the Kaiser-Bessel-derived
+	// window, whose alpha of 4 (long) and 6 (short) is a Kaiser beta of pi*alpha.
+	aacWindowHalf(aacSineLong[:], signal.Cosine(2*len(aacSineLong), true))
+	aacWindowHalf(aacSineShort[:], signal.Cosine(2*len(aacSineShort), true))
+	aacWindowHalf(aacKBDLong[:], signal.KaiserBesselDerived(4*math.Pi)(2*len(aacKBDLong), true))
+	aacWindowHalf(aacKBDShort[:], signal.KaiserBesselDerived(6*math.Pi)(2*len(aacKBDShort), true))
 	aacMDCTLong, aacMDCTShort = newAACMDCT(1024), newAACMDCT(128)
+}
+
+// aacWindowHalf stores the first len(dst) points of the window w, rounded to float32.
+func aacWindowHalf(dst []float32, w []float64) {
+	for i := range dst {
+		dst[i] = float32(w[i])
+	}
 }
 
 // aacChanSynth is what the overlap-add of one channel carries from frame to

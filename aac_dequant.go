@@ -72,12 +72,13 @@ func (ch *aacChannel) dequantise(out *[aacFrameLen]float32, noise *uint32) {
 			for k := 0; k < int(ics.groupLen[g]); k++ {
 				base := (w0 + k) * aacShortLen
 				for i := base + lo; i < base+hi; i++ {
+					// branch-free, the signs being random: the magnitude from the table,
+					// the sign of q put on the float's sign bit (which is -(x*gain) for a
+					// negative q, as x*gain is positive then)
 					q := ch.q[i]
-					if q < 0 {
-						out[i] = -(aacPow43[-q] * gain)
-					} else {
-						out[i] = aacPow43[q] * gain
-					}
+					m := q >> 31
+					v := aacPow43[(q^m)-m] * gain
+					out[i] = math.Float32frombits(math.Float32bits(v) ^ uint32(q)&0x80000000)
 				}
 			}
 		}

@@ -89,12 +89,12 @@ values:
     file: aac_synth.go
     symbol: aacKBDLong
     source: Kaiser-Bessel-derived window, alpha 4 long and 6 short, as ffmpeg kbdwin.c:33-60 and aactab.c:97-98 compute it (standard clause not verified); computed in code
-    rationale: no table is held; the windows are computed from the formula, with the Bessel function in code, and rounded to float32.
+    rationale: no table is held; the windows come from go-dsp/signal's KaiserBesselDerived (its own code, checked against SciPy and a 320-bit computation of the definition) and are rounded to float32.
   - kind: derived
     file: aac_synth.go
     symbol: aacSineLong
-    source: sine window, as ffmpeg sinewin_tablegen.h:58-65 computes it (standard clause not verified); computed in code with math.Sin
-    rationale: no table is held; the windows are computed from the formula and rounded to float32.
+    source: sine window, as ffmpeg sinewin_tablegen.h:58-65 computes it (standard clause not verified); computed by go-dsp/signal's Cosine
+    rationale: no table is held; the windows come from signal.Cosine (sin of the exact argument) and are rounded to float32.
   # SBR (HE-AAC v1). The ten Huffman codes of the envelope and noise floor
   # scalefactors: the bare (symbol, length) pairs in code order. The codewords
   # themselves are not held: they are the canonical code of the lengths (the entries
