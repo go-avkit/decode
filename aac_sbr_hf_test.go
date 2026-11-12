@@ -135,7 +135,7 @@ func TestSBRChirp(t *testing.T) {
 				c.invf[0][2], c.invf[1][2] = cur, prev
 				d.chirp(&c, 3)
 				want := refChirp(cur, prev, old)
-				if d.bw[2] != want {
+				if math.Abs(d.bw[2]-want) > 1e-15 {
 					t.Errorf("modes %d, %d, previous %v: %v, want %v", cur, prev, old, d.bw[2], want)
 				}
 				if d.bw[0] != 0 || d.bw[1] != 0 || d.bw[3] != 0 {

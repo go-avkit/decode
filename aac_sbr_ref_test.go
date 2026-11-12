@@ -125,21 +125,37 @@ func refGenerate(t *sbrTables, c *sbrChannel, low *[sbrAnaBands][sbrLowSlots]com
 }
 
 // refChirp is the chirp factor recurrence by its definition, one factor.
+//
+// The rule, case by case. Wanted value: this mode high, 49/50; mid, 9/10; low, 3/4
+// unless the previous mode was off, then 3/5; off, 0 unless the previous mode was
+// low, then 3/5. Then, with the wanted value w and the old factor o: if w is below
+// o the result is (3w + o)/4, else (29w + 3o)/32; a result under 1/64 is 0.
 func refChirp(cur, prev uint8, old float64) float64 {
-	tab := map[uint8]float64{0: 0, 1: 0.75, 2: 0.9, 3: 0.98}
-	bw := tab[cur]
-	if cur+prev == 1 {
-		bw = 0.6
+	var w float64
+	switch {
+	case cur == 3:
+		w = 49.0 / 50
+	case cur == 2:
+		w = 9.0 / 10
+	case cur == 1 && prev == 0:
+		w = 3.0 / 5
+	case cur == 1:
+		w = 3.0 / 4
+	case prev == 1:
+		w = 3.0 / 5
+	default:
+		w = 0
 	}
-	if bw < old {
-		bw = 0.75*bw + 0.25*old
+	var r float64
+	if w < old {
+		r = (3*w + old) / 4
 	} else {
-		bw = 0.90625*bw + 0.09375*old
+		r = (29*w + 3*old) / 32
 	}
-	if bw < 0.015625 {
-		bw = 0
+	if r < 1.0/64 {
+		return 0
 	}
-	return bw
+	return r
 }
 
 // ratC is an exact complex number.
