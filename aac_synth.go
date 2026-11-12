@@ -191,11 +191,16 @@ type aacSynth struct {
 	coef  [2][aacFrameLen]float32
 	buf   [aacFrameLen]float32
 	temp  [aacShortLen]float32
+
+	// The transforms are shared by every decoder; their working memory is this
+	// decoder's own.
+	scrLong, scrShort *aacMDCTScratch
 }
 
 func newAACSynth(rateIndex, channels int) *aacSynth {
 	aacSynthOnce.Do(aacSynthInit)
-	return &aacSynth{rate: rateIndex, noise: aacNoiseSeed, chans: make([]aacChanSynth, channels)}
+	return &aacSynth{rate: rateIndex, noise: aacNoiseSeed, chans: make([]aacChanSynth, channels),
+		scrLong: aacMDCTLong.newScratch(), scrShort: aacMDCTShort.newScratch()}
 }
 
 // element synthesises the channels of one element. first is the index of the
@@ -369,10 +374,10 @@ func (s *aacSynth) imdctWindow(st *aacChanSynth, ch *aacChannel, coef *[aacFrame
 	buf := s.buf[:]
 	if ics.short() {
 		for i := 0; i < aacFrameLen; i += aacShortLen {
-			aacMDCTShort.inverse(buf[i:i+aacShortLen], coef[i:i+aacShortLen])
+			aacMDCTShort.inverse(buf[i:i+aacShortLen], coef[i:i+aacShortLen], s.scrShort)
 		}
 	} else {
-		aacMDCTLong.inverse(buf, coef[:])
+		aacMDCTLong.inverse(buf, coef[:], s.scrLong)
 	}
 	prevLong := st.prevSeq == aacOnlyLong || st.prevSeq == aacLongStop
 	curLong := ics.windowSeq == aacOnlyLong || ics.windowSeq == aacLongStart

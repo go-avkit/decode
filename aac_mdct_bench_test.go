@@ -10,6 +10,7 @@ import "testing"
 func BenchmarkAACIMDCT(b *testing.B) {
 	for _, n := range []int{1024, 128} {
 		m := newAACMDCT(n)
+		sc := m.newScratch()
 		src := make([]float32, n)
 		dst := make([]float32, n)
 		for i := range src {
@@ -17,7 +18,7 @@ func BenchmarkAACIMDCT(b *testing.B) {
 		}
 		b.Run(map[int]string{1024: "long", 128: "short"}[n], func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				m.inverse(dst, src)
+				m.inverse(dst, src, sc)
 			}
 		})
 	}

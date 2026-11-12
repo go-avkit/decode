@@ -28,7 +28,22 @@ type aacMDCT struct {
 	small *aacSmallMDCT // set for windows below aacGoFFTMin
 	pre   []complex128  // n/2 twiddles
 	post  []complex128  // n/2 twiddles
-	z     []complex128
+}
+
+// aacMDCTScratch is the working memory of one transform call. An aacMDCT is
+// immutable and shared by every decoder; each decoder owns the scratch it passes
+// in, so concurrent decoders do not touch each other's.
+type aacMDCTScratch struct {
+	c []complex128 // the go-fft path
+	s []cpx        // the split-radix path
+}
+
+// newScratch returns working memory for this transform.
+func (m *aacMDCT) newScratch() *aacMDCTScratch {
+	if m.small != nil {
+		return &aacMDCTScratch{s: make([]cpx, m.n/2)}
+	}
+	return &aacMDCTScratch{c: make([]complex128, m.n/2)}
 }
 
 // aacGoFFTMin is the smallest window length that goes through a go-fft plan.
@@ -39,7 +54,7 @@ func newAACMDCT(n int) *aacMDCT {
 		return &aacMDCT{n: n, small: newAACSmallMDCT(n)}
 	}
 	h := n / 2
-	m := &aacMDCT{n: n, plan: fft.NewPlan(h), pre: make([]complex128, h), post: make([]complex128, h), z: make([]complex128, h)}
+	m := &aacMDCT{n: n, plan: fft.NewPlan(h), pre: make([]complex128, h), post: make([]complex128, h)}
 	scale := math.Sqrt(1.0 / float64(n) / 32768)
 	for i := 0; i < h; i++ {
 		alpha := math.Pi / 2 * (float64(i) + 1.0/8.0) / float64(h)
@@ -50,14 +65,15 @@ func newAACMDCT(n int) *aacMDCT {
 	return m
 }
 
-// inverse writes the n samples of the spectrum src into dst.
-func (m *aacMDCT) inverse(dst, src []float32) {
+// inverse writes the n samples of the spectrum src into dst, working in sc, which
+// came from newScratch of this transform and is not shared between goroutines.
+func (m *aacMDCT) inverse(dst, src []float32, sc *aacMDCTScratch) {
 	if m.small != nil {
-		m.small.inverse(dst, src)
+		m.small.inverse(dst, src, sc.s)
 		return
 	}
 	h, q := m.n/2, m.n/4
-	z := m.z
+	z := sc.c
 	for i := range z {
 		z[i] = complex(float64(src[m.n-1-2*i]), float64(src[2*i])) * m.pre[i]
 	}
