@@ -29,6 +29,15 @@ func mul(a, b float32) float32 { return float32(a * b) }
 // arm64 (measured in TestAACOracle: unfused, more than half of the samples differ
 // by an ulp; fused, none), and math.FMA gives the same bits on every architecture.
 // Only tests change it.
+//
+// It no longer covers the windowing step: the overlap-add is
+// floats.Float32OverlapWindow, which fuses the second product of each sum on arm64
+// and amd64 (NEON and AVX2+FMA) and rounds every product on other platforms,
+// whatever aacFuse says. The oracle tests that set it false (TestAACOracle,
+// TestAACOraclePlatform) therefore measure the unfused arithmetic of everything
+// but the windowing; they only log counts and assert nothing about them, and the
+// gates that decide are the accuracy bound (TestAACAccuracy) and the conformance
+// test.
 var aacFuse = true
 
 func fma32(a, b, c float32) float32 { return float32(math.FMA(float64(a), float64(b), float64(c))) }

@@ -560,31 +560,7 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 	}
 	unsigned := cb >= 3 && cb != 5 && cb != 6
 	for i := 0; i < len(dst); i += dim {
-		// One look at the next 32 bits answers the codeword (the table) and, for the
-		// unsigned books, holds the sign bits that follow it: one skip instead of a
-		// walk or a skip and a read. A codeword longer than the table, or one the data
-		// ends in, takes the general path.
-		sym, ok := 0, true
-		var s uint32
-		signsRead := false
-		w := r.peek(32)
-		if e := h.lut[w>>(32-aacLUTBits)]; e != 0 {
-			l := int(e & 0xff)
-			sym = int(e >> 8)
-			n := 0
-			if unsigned {
-				n = bits.OnesCount8(aacTupleNZ[cb-1][sym])
-			}
-			if l+n <= r.left() {
-				s = w << uint(l) >> uint(32-n) // n = 0 gives 0: a shift of 32 empties a uint32
-				r.skip(l + n)
-				signsRead = true
-			} else {
-				sym, ok = h.decode(r)
-			}
-		} else {
-			sym, ok = h.decode(r)
-		}
+		sym, ok := h.decode(r)
 		if !ok {
 			return errTruncated()
 		}
@@ -597,9 +573,7 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 			// the sign bits of the nonzero values, in one read, first value first
 			if nz := aacTupleNZ[cb-1][sym]; nz != 0 {
 				n := bits.OnesCount8(nz)
-				if !signsRead {
-					s = r.read(n)
-				}
+				s := r.read(n)
 				// branch-free: the signs are random, so a branch on each is
 				// mispredicted about half the time
 				for j := range v {
