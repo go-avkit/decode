@@ -113,7 +113,7 @@ Read for the AAC-LC bitstream PR (plan item 4), also read only:
 | `libavcodec/aactab.c:38-91` | `pow2sf` is built as a float32 power of two times a float32 `2^(k/16)`, which is the correctly rounded float32 of `2^(i/4)` | `aacGain` is `float32(math.Exp2(...))` |
 | `libavcodec/aactab.c:149-179` | sample-rate index to table row; band counts | row choice in `aacSwbLongIndex` and `aacSwbShortIndex` |
 | `libavcodec/aactab.c:181-535, 1581-1960` | the bare codeword, length and band-offset values | values only, carried to `aac_tables.go` by a throwaway generator and declared in `.provenance.yml` |
-| `libavcodec/aactab.c:543-1026` | the float vector tables of codebooks 1 to 11 (index to tuple, magnitude `q^(4/3)`) | **a check** of `aacTuple` (digit order, offsets, signed or unsigned books), run once and not committed; nothing copied |
+| `libavcodec/aactab.c:543-1026` | the float vector tables of codebooks 1 to 11 (index to tuple, magnitude `q^(4/3)`) | **a check** of `aacTuples` (digit order, offsets, signed or unsigned books), run once and not committed; nothing copied |
 | `libavcodec/aac/aacdec_proc_template.c:57-139` | spectral data is read group by group, band by band, window by window inside the group | the loop order of `spectral` |
 | `libavcodec/aac/aacdec_dsp_template.c:36-84` | the gain of a band comes from the scalefactor less 100; noise and intensity bands carry no spectrum | `dequantise` |
 | `libavcodec/aac/aacdec.c` (comment lines only: 816, 968, 1359, 1416, 1538, 1583, 1649, 1674, 1730, 1778, 1875) and FAAD2 `libfaad/syntax.c` (comment lines only) | which table of ISO/IEC 14496-3 describes each syntax element | the table numbers cited in the Go comments |

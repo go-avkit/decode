@@ -32,7 +32,7 @@ version: 1
 # AAC lives in aac*.go.
 values:
   # The Huffman codebooks. Codewords and lengths are the bare normative values;
-  # the symbol-to-tuple mapping is code (aacTuple), and the codebooks are checked
+  # the symbol-to-tuple mapping is code (aacTuples), and the codebooks are checked
   # to be complete prefix codes by TestAACCodebooksAreCompletePrefixCodes.
   - kind: normative-values
     file: aac_tables.go

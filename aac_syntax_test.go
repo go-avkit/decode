@@ -951,7 +951,9 @@ func TestAACTupleMatchesEncoder(t *testing.T) {
 		}
 		for idx := range aacSpectralCodes[cb-1] {
 			v := make([]int32, dim)
-			aacTuple(cb, idx, v)
+			for j := range v {
+				v[j] = int32(aacTuples[cb-1][idx][j])
+			}
 			w := &bitWriter{}
 			w.band(cb, v)
 			r := newAACBits(w.bytes())

@@ -144,12 +144,11 @@ type aacSmallMDCT struct {
 	pre  []cpx   // n/2 twiddles, in the order of the permuted input
 	post []cpx   // n/2 twiddles
 	idx  []int32 // for each position i, twice the input permutation
-	z    []cpx
 }
 
 func newAACSmallMDCT(n int) *aacSmallMDCT {
 	h := n / 2
-	m := &aacSmallMDCT{n: n, fft: newAACFFT(h), pre: make([]cpx, h), post: make([]cpx, h), idx: make([]int32, h), z: make([]cpx, h)}
+	m := &aacSmallMDCT{n: n, fft: newAACFFT(h), pre: make([]cpx, h), post: make([]cpx, h), idx: make([]int32, h)}
 	scale := math.Sqrt(1.0 / float64(n) / 32768)
 	exp := make([]cpx, h)
 	for i := range exp {
@@ -164,10 +163,10 @@ func newAACSmallMDCT(n int) *aacSmallMDCT {
 	return m
 }
 
-// inverse writes the n samples of the spectrum src into dst.
-func (m *aacSmallMDCT) inverse(dst, src []float32) {
+// inverse writes the n samples of the spectrum src into dst, working in z (n/2
+// values, the caller's: the transform itself is immutable and shared).
+func (m *aacSmallMDCT) inverse(dst, src []float32, z []cpx) {
 	h, q := m.n/2, m.n/4
-	z := m.z
 	for i := 0; i < h; i++ {
 		k := int(m.idx[i])
 		re, im := float64(src[m.n-1-k]), float64(src[k])

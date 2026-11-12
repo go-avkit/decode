@@ -27,6 +27,7 @@ func TestAACMDCTMatchesDefinition(t *testing.T) {
 	rng := rand.New(rand.NewSource(3))
 	for _, n := range []int{1024, 128} {
 		m := newAACMDCT(n)
+		sc := m.newScratch()
 		src := make([]float32, n)
 		sum := 0.0
 		for i := range src {
@@ -34,15 +35,14 @@ func TestAACMDCTMatchesDefinition(t *testing.T) {
 			sum += math.Abs(float64(src[i]))
 		}
 		dst := make([]float32, n)
-		m.inverse(dst, src)
+		m.inverse(dst, src, sc)
 		scale := 1.0 / float64(n) / 32768
-		bound := 4 * math.Log2(float64(n)) * 0x1p-24 * scale * sum
 		// The definition in float64, as the transform library states its naive
 		// inverse: the first half of the output from one phase, the second from
 		// another, which is the arrangement the window overlap reads.
 		half := n / 2
 		phase := math.Pi / (4.0 * float64(n))
-		var worst float64
+		var worst, peak float64
 		for i := 0; i < half; i++ {
 			var down, up float64
 			id := phase * float64(4*half-2*i-1)
@@ -53,7 +53,12 @@ func TestAACMDCTMatchesDefinition(t *testing.T) {
 				up += math.Cos(a*iu) * float64(src[j])
 			}
 			worst = max(worst, math.Abs(float64(dst[i])-down*scale), math.Abs(float64(dst[i+half])+up*scale))
+			peak = max(peak, math.Abs(down*scale), math.Abs(up*scale))
 		}
+		// The transform is float64 and rounds to float32 once: the error is half an
+		// ulp of the sample (2^-24 of its magnitude) plus the float64 error of the
+		// transform, 4*log2(N) half ulps of the sum of the absolute inputs, scaled.
+		bound := peak*0x1p-24 + 4*math.Log2(float64(n))*0x1p-53*scale*sum
 		t.Logf("n=%d: largest error %g, bound %g", n, worst, bound)
 		if worst > bound {
 			t.Errorf("n=%d: error %g exceeds %g", n, worst, bound)

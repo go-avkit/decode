@@ -495,19 +495,11 @@ func (p *aacParser) spectral(r *aacBits, ch *aacChannel) error {
 	return nil
 }
 
-// aacTuple expands the index of a codeword of spectrum codebook cb (1 to 11) into
-// the values it stands for: four for codebooks 1 to 4, two for 5 to 11. Codebooks
-// 1, 2, 5 and 6 are signed (values from -m to m); the others give magnitudes and
-// the signs follow in the stream. The first value is the most significant digit of
-// the index.
-func aacTuple(cb, idx int, out []int32) {
-	t := &aacTuples[cb-1][idx]
-	for i := range out {
-		out[i] = int32(t[i])
-	}
-}
-
-// aacTuples is aacTupleOf for every symbol of every spectrum codebook, built once.
+// aacTuples expands the index of a codeword of spectrum codebook cb (1 to 11), as
+// aacTuples[cb-1][idx], into the values it stands for: four for codebooks 1 to 4,
+// two for 5 to 11. Codebooks 1, 2, 5 and 6 are signed (values from -m to m); the
+// others give magnitudes and the signs follow in the stream. The first value is the
+// most significant digit of the index.
 var aacTuples = func() (t [11][289][4]int8) {
 	for cb := 1; cb <= 11; cb++ {
 		for idx := range aacSpectralCodes[cb-1] {
