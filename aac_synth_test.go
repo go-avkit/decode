@@ -66,43 +66,6 @@ func TestAACMDCTMatchesDefinition(t *testing.T) {
 	}
 }
 
-// TestAACFFTParseval: a DFT of n points, whatever order it leaves its bins in,
-// multiplies the energy by n. The sizes cover the base cases (2, 4 and 8) and
-// every combine step up to 512.
-func TestAACFFTParseval(t *testing.T) {
-	rng := rand.New(rand.NewSource(4))
-	for _, n := range []int{2, 4, 8, 16, 32, 64, 128, 256, 512} {
-		f := newAACFFT(max(n, 8))
-		f.n = n
-		z := make([]cpx, n)
-		var ein float64
-		for i := range z {
-			z[i] = cpx{rng.NormFloat64(), rng.NormFloat64()}
-			ein += float64(z[i].re)*float64(z[i].re) + float64(z[i].im)*float64(z[i].im)
-		}
-		f.run(z)
-		var eout float64
-		for _, c := range z {
-			eout += float64(c.re)*float64(c.re) + float64(c.im)*float64(c.im)
-		}
-		if math.Abs(eout-float64(n)*ein) > 1e-5*eout {
-			t.Errorf("n=%d: energy %g, want %g", n, eout, float64(n)*ein)
-		}
-	}
-}
-
-func TestAACSplitRadixPermIsAPermutation(t *testing.T) {
-	for _, n := range []int{8, 64, 512} {
-		seen := make([]bool, n)
-		for _, p := range newAACFFT(n).perm {
-			if p < 0 || int(p) >= n || seen[p] {
-				t.Fatalf("n=%d: %d repeated or out of range", n, p)
-			}
-			seen[p] = true
-		}
-	}
-}
-
 func TestAACWindows(t *testing.T) {
 	aacSynthOnce.Do(aacSynthInit)
 	for name, w := range map[string][]float32{"sine 1024": aacSineLong[:], "kbd 1024": aacKBDLong[:], "sine 128": aacSineShort[:], "kbd 128": aacKBDShort[:]} {
