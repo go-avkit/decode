@@ -144,6 +144,29 @@ decision 2026-11-12: G1 is settled for SBR by declaring bare normative values in
 | `libavcodec/sbr.h:63-117, 143-193` | which values live from one frame to the next, and the array sizes | `sbrChannel`, `sbrState` |
 | `libavcodec/aac/aacdec.c:2024-2083` | SBR payload sits in a fill element of type 13 or 14 (with CRC), attached to the element before it | `aacParser.sbrFill` |
 
+Read for the SBR QMF and high frequency generation PR (part 2: `aac_sbr_qmf.go`,
+`aac_sbr_hf.go`, `aac_sbr_qmf_tables.go`), also read only. The decoder still refuses
+HE-AAC: the envelope adjustment (part 3) is not written, so nothing calls this code
+from `aacDecoder`.
+
+| File:lines | What it tells us | Used for |
+|------------|------------------|----------|
+| `libavcodec/aacsbr_template.c:1363-1405` | analysis: 320 samples of history, 32 new per slot, reversed window multiply, `sum64x5`, a 64-point transform with a pre- and a post-shuffle | the form of the analysis and the stage order in `sbrAnalysis.process` |
+| `libavcodec/aacsbr_template.c:1408-1463` | synthesis: history of 1280 moved back once per slot, two transforms (real and sign-alternated imaginary parts), a butterfly, ten window passes at offsets 0, 192, 256, 448, 512, 704, 768, 960, 1024, 1216 | the form of `sbrSynthesis.process` |
+| `libavcodec/sbrdsp.c:46-95`, `sbrdsp_template.c:27-48` | the shuffles and the butterfly, bit by bit | worked out, with the transform definition of `aac_exact_test.go:81-101`, to the angle of the kernels (`(4n-1)` in the analysis, `(2n-255)` in the synthesis) and the factor 2; the check was a throwaway program, not committed |
+| `libavcodec/aacsbr_template.c:85-107` | the transforms' scales: `1/(64*32768)` in synthesis, `-2*32768` in analysis | the subband domain is in 16-bit units |
+| `libavcodec/aacsbr_template.c:1465-1560, 1690-1780` | the low band holds 8 slots of history, the high band is generated from `X_low[i+2-2..i+2]`, `X_high` over `2*t_env[0]` to `2*t_env[n]`, the stage order of one frame | `sbrChanDSP.analyse`, `generate`, the constants `sbrHFGen` and `sbrHFAdj` |
+| `libavcodec/aacsbr.c:149-226`, `sbrdsp.c:101-184`, `sbr.h:90`, `aacsbr.h:37` | the covariance sums, the 1.000001 regularisation, the limit of 16 on the squared magnitude, the chirp table and its smoothing, the 38-sample window | `sbrPredictor`, `sbrChanDSP.chirp` (the estimate is derived from the least-squares problem, see the comment of `aac_sbr_hf.go`) |
+| `libavcodec/aacsbrdata.h:45-206, 208-371` | the 320 and 640 window values; the first is every second value of the second (checked); two entries of each are written `-Q31(x)`, the sign outside the macro | the values of `sbrQMFWindow`, carried by a throwaway generator |
+
+Differences from ffmpeg, by design: every stage is float64 and the output is rounded
+once; the transforms are DCT-IV and DST-IV (go-fft) of 64 points, not a 64-point MDCT;
+the low band keeps its history in all 32 bands where ffmpeg zeroes the bands between
+`kx[0]` and `kx[1]`; frames of 1024 only (ffmpeg's autocorrelation has the 38 terms
+of that frame length written in; its 960 mode was not examined). Not done: the downsampled
+(32-band) synthesis used when the output keeps the core rate, and implicit signalling
+(the first frames before the first SBR header are not at the double rate).
+
 Behaviours kept from ffmpeg and worth knowing: a refused header turns SBR off
 silently (pure upsampling, the core signal still decodes); a faulty payload turns
 SBR off until the next header and the frame decodes without it (`aacParser.sbrErr`
@@ -198,8 +221,8 @@ once ffmpeg's order is known.
 | 960 framing | — | missing | — | **skipped** (S1 excludes it) | — |
 | SBR bitstream and Huffman | S6 `sbr_get_*`, `sbr_decode_huff_cw` | complete | syntax, delta coding, coupling | integers | exact |
 | SBR frequency tables, limiter, patches | S6 `sbr_update_freq_scale`, `sbr_create_limiter_bands`, … | complete | derivation rules | integers (+ `log2` in limiter) | exact |
-| SBR QMF analysis/synthesis | S6 `calc_sbr_*filterbank`, `qmf_filterbank_coeff.cpp:148` (Q15, "10/9*table"); S9 order | **partial (G1)** | modulation, 32-band synthesis mode | float32, S9's order: window multiply, 5-term sums, 64-point MDCT, 10 multiply-add passes | exact **only if** we hold the same 640 float coefficients (G1); otherwise tolerance |
-| HF generation | S6 `calc_auto_corr`, `sbr_generate_high_freq` | complete | covariance, chirp, patches | float32 | close, exact needs ffmpeg's accumulation order (read before PR 6) |
+| SBR QMF analysis/synthesis | S6 `calc_sbr_*filterbank`, `qmf_filterbank_coeff.cpp:148` (Q15, "10/9*table"); S9 order | **done (part 2): 64-band synthesis; the 32-band mode of a downsampled output is not**; prototype declared in `.provenance.yml` | modulation | float64 in every stage, one float32 rounding at the output, go-fft DCT-IV and DST-IV | within one float32 rounding of the float64 definition and of the 256-bit evaluation; low band of `he44-st.aac` against the exact path: 2.3e-8 largest error, ffmpeg's two builds 6.3e-5 (a stated bound, not equality) |
+| HF generation | S6 `calc_auto_corr`, `sbr_generate_high_freq` | **done (part 2)** | covariance, chirp, patches | float64 | 4e-10 relative against the exact rational solution of the normal equations (float32 evaluation: 0.24 on tonal bands) |
 | HF adjustment | S6 `calc_sbr_envelope`, `sbr_envelope_calc_tbl` | partial (G1) | operation order, limiter, smoothing | float32; noise table and smoothing constants needed in float | tolerance until G1 |
 | SBR LP | S6 `sbr_aliasing_reduction` | partial | aliasing reduction | only if needed | — |
 | PS bitstream | S6 `ps_read_data`, `ps_decode_bs_utils` | complete | syntax, dequantisation | integers | exact |
@@ -331,8 +354,10 @@ manifest above.**
    ffmpeg `-threads 1`.
 6. **User decision on G1** (and G4 if tables are to be copied). Nothing in
    SBR starts before it.
-7. **SBR (HQ):** bitstream and frequency tables (exact), QMF, HF generation,
-   adjustment. Conformance `al_sbr_*` streams.
+7. **SBR (HQ):** bitstream and frequency tables (exact; part 1, decode#45), QMF
+   banks and HF generation (part 2, this note: against the float64 reference,
+   256-bit and exact-rational oracles, and ffmpeg's low band), adjustment (part 3,
+   not written). Conformance `al_sbr_*` streams.
 8. **PS:** bitstream (exact), hybrid filterbank, decorrelator, mixing.
    Conformance `al_sbr_ps_*` streams.
 9. Later and separately: LTP (`ap*`), 960 framing, CCE.
