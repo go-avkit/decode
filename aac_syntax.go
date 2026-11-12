@@ -559,12 +559,13 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 			if nz := aacTupleNZ[cb-1][sym]; nz != 0 {
 				n := bits.OnesCount8(nz)
 				s := r.read(n)
+				// branch-free: the signs are random, so a branch on each is
+				// mispredicted about half the time
 				for j := range v {
 					if nz>>uint(j)&1 != 0 {
 						n--
-						if s>>uint(n)&1 != 0 {
-							v[j] = -v[j]
-						}
+						m := -int32(s >> uint(n) & 1) // 0, or -1 for a negative value
+						v[j] = (v[j] ^ m) - m
 					}
 				}
 			}
