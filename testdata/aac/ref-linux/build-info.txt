@@ -1,0 +1,48 @@
+gcc (Debian 14.2.0-19) 14.2.0
+Copyright (C) 2024 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+built with gcc 14 (Debian 14.2.0-19)
+configuration: --disable-everything --disable-programs --enable-ffmpeg --disable-doc --disable-asm --disable-autodetect --enable-decoder=aac --enable-demuxer=aac --enable-parser=aac --enable-muxer=pcm_f32le --enable-encoder=pcm_f32le --enable-protocol=file --enable-filter=aresample --enable-filter=anull --enable-filter=aformat --enable-swresample
+libavutil      61.  1.102 / 61.  1.102
+libavcodec     63.  1.102 / 63.  1.102
+libavformat    63.  1.102 / 63.  1.102
+libavdevice    63.  1.102 / 63.  1.102
+libavfilter    12.  1.102 / 12.  1.102
+libswscale     10.  1.102 / 10.  1.102
+libswresample   7.  1.102 /  7.  1.102
+
+Exiting with exit code 0
+configuration: --disable-everything --disable-programs --enable-ffmpeg --disable-doc --disable-asm --disable-autodetect --enable-decoder=aac --enable-demuxer=aac --enable-parser=aac --enable-muxer=pcm_f32le --enable-encoder=pcm_f32le --enable-protocol=file --enable-filter=aresample --enable-filter=anull --enable-filter=aformat --enable-swresample
+ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 14 (Debian 14.2.0-19)
+  configuration: --disable-everything --disable-programs --enable-ffmpeg --disable-doc --disable-asm --disable-autodetect --enable-decoder=aac --enable-demuxer=aac --enable-parser=aac --enable-muxer=pcm_f32le --enable-encoder=pcm_f32le --enable-protocol=file --enable-filter=aresample --enable-filter=anull --enable-filter=aformat --enable-swresample
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+
+  configuration:
+    --disable-everything
+    --disable-programs
+    --enable-ffmpeg
+    --disable-doc
+    --disable-asm
+    --disable-autodetect
+    --enable-decoder=aac
+    --enable-demuxer=aac
+    --enable-parser=aac
+    --enable-muxer=pcm_f32le
+    --enable-encoder=pcm_f32le
+    --enable-protocol=file
+    --enable-filter=aresample
+    --enable-filter=anull
+    --enable-filter=aformat
+    --enable-swresample
+
+Exiting with exit code 0

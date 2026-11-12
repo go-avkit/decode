@@ -80,6 +80,7 @@ type sbrState struct {
 	psSeen       bool // a PS extension was found in the payload (not decoded)
 	extBits      int  // bits of bs_extension_data in the last frame, 0 for none
 	ch           [2]sbrChannel
+	dsp          [2]*sbrChanDSP      // signal state of the channels (aac_sbr_hf.go)
 	buf          [sbrMaxPayload]byte // the payload being parsed
 }
 

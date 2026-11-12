@@ -71,4 +71,6 @@ func TestAACConcurrentDecoders(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	// the SBR signal path shares its plans the same way (aac_sbr_hf_test.go)
+	t.Run("SBR", TestSBRConcurrentChannels)
 }

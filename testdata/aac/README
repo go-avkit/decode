@@ -36,3 +36,10 @@ profile; the SBR data is in the fill elements.
                     implicit-signalled mono SBR stream might carry PS
   he44-ps.aac       HE-AAC v2 (`-d aacp -b 32000`) from a stereo source: mono core
                     22050 Hz, SBR and Parametric Stereo data in every frame
+
+ref/he44-st.f32 and ref-linux/he44-st.f32 are what ffmpeg 9.0.2 decodes he44-st.aac
+to (its first 24 frames of 2048 samples per channel, 44100 Hz stereo, SBR included):
+macOS clang as above, and the linux gcc 14 build of ffaac (`build-info.txt` says how
+it was configured; C code paths only, `--disable-asm`), run with
+`ffmpeg -cpuflags 0 -i he44-st.aac -frames:a 24 -f f32le he44-st.f32`. Only the low
+band is compared (aac_sbr_ffmpeg_test.go): the envelope adjustment is not written.
