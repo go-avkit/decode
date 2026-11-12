@@ -98,9 +98,6 @@ func TestSBRTablesSweep(t *testing.T) {
 						for scale := 0; scale < 4; scale++ {
 							for alter := 0; alter < 2; alter++ {
 								for nb := 0; nb < 4; nb++ {
-									if lb != 2 && (xover != 0 && xover != 7) {
-										continue
-									}
 									var tb sbrTables
 									tb.rate = rate
 									sp := sbrSpectrum{uint8(start), uint8(stop), uint8(xover), uint8(scale), uint8(alter), uint8(nb)}

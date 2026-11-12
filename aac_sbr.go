@@ -80,6 +80,7 @@ type sbrState struct {
 	psSeen       bool // a PS extension was found in the payload (not decoded)
 	extBits      int  // bits of bs_extension_data in the last frame, 0 for none
 	ch           [2]sbrChannel
+	buf          [sbrMaxPayload]byte // the payload being parsed
 }
 
 // newSBRState returns the state of a stream whose core runs at coreRate: SBR
@@ -222,23 +223,38 @@ func (p *aacParser) sbrFill(r *aacBits, crc bool, nbits, idx int) {
 	}
 }
 
+// sbrMaxPayload is the most bytes a fill element can hold for its data.
+const sbrMaxPayload = 272
+
 // parse reads the sbr_extension_data of a fill element: nbits bits that start at
 // r's position (the fill element's byte count less its 4-bit extension type).
 // elem is the element the data belongs to, the one before the fill element:
-// aacIDSCE or aacIDCPE. It leaves r at the end of the payload. On an error SBR is
-// turned off.
+// aacIDSCE or aacIDCPE. Whatever the data says, r ends exactly nbits further: the
+// payload is copied to the state's own buffer and parsed from there, so a field
+// that reads past its end is an error and never takes bits of the next element.
+// On an error SBR is turned off.
 func (s *sbrState) parse(r *aacBits, crc bool, nbits, elem int) error {
-	start := r.bitPos()
-	err := s.parsePayload(r, crc, elem)
-	used := r.bitPos() - start
-	if err == nil && (r.overrun || used > nbits) {
-		err = sbrErr("payload of %d bits read %d", nbits, used)
+	if nbits > 8*sbrMaxPayload {
+		r.skip(nbits)
+		s.turnoff()
+		return sbrErr("payload of %d bits", nbits)
+	}
+	n := (nbits + 7) / 8
+	for i := 0; i < n; i++ {
+		take := min(8, nbits-8*i)
+		s.buf[i] = byte(r.read(take) << uint(8-take))
+	}
+	if r.overrun {
+		s.turnoff()
+		return errTruncated()
+	}
+	sub := newAACBits(s.buf[:n])
+	err := s.parsePayload(sub, crc, elem)
+	if err == nil && (sub.overrun || sub.bitPos() > nbits) {
+		err = sbrErr("payload of %d bits read %d", nbits, sub.bitPos())
 	}
 	if err != nil {
 		s.turnoff()
-	}
-	if used < nbits && !r.overrun {
-		r.skip(nbits - used)
 	}
 	return err
 }
@@ -340,133 +356,148 @@ func (s *sbrState) reset() error {
 
 var sbrCeilLog2 = [...]uint{0, 1, 2, 2, 3, 3}
 
-// grid reads sbr_grid for one channel.
+// grid reads sbr_grid of one channel. The four frame classes differ in which
+// envelope borders the stream chooses: FIXFIX none (the frame is cut into 1, 2 or
+// 4 equal envelopes), FIXVAR the borders counted down from a free last border,
+// VARFIX those counted up from a free first border, VARVAR both. They are read into
+// one description (first and last border, widths up from the first, widths down
+// from the last, a pointer to the envelope that holds a transient) and everything
+// else is derived from it in one place.
 func (s *sbrState) grid(r *aacBits, c *sbrChannel) error {
 	oldEnv := c.numEnv
 	c.freqRes[0] = c.freqRes[oldEnv]
 	c.ampRes = s.ampResHeader
-	trail := sbrTimeSlots
-	pointer := 0
 	class := int(r.read(2))
-	switch class {
-	case sbrFixFix:
-		n := 1 << r.read(2)
+	var t [sbrMaxEnv + 1]int
+	var n, pointer int
+	if class == sbrFixFix {
+		n = 1 << r.read(2)
 		if n > 4 {
 			return sbrErr("%d envelopes in a FIXFIX frame", n)
 		}
-		c.numEnv = n
-		if n == 1 {
-			c.ampRes = 0
+		width := (sbrTimeSlots + n/2) / n
+		for i := 0; i < n; i++ {
+			t[i] = i * width
 		}
-		c.tEnv[0], c.tEnv[n] = 0, uint8(trail)
-		step := (trail + n>>1) / n
-		for i := 0; i < n-1; i++ {
-			c.tEnv[i+1] = c.tEnv[i] + uint8(step)
+		t[n] = sbrTimeSlots
+	} else {
+		freeFirst := class == sbrVarFix || class == sbrVarVar
+		freeLast := class == sbrFixVar || class == sbrVarVar
+		first, last, nUp, nDown := 0, sbrTimeSlots, 0, 0
+		if freeFirst {
+			first = int(r.read(2))
 		}
-		c.freqRes[1] = uint8(r.bit())
-		for i := 1; i < n; i++ {
-			c.freqRes[i+1] = c.freqRes[1]
+		if freeLast {
+			last += int(r.read(2))
 		}
-	case sbrFixVar:
-		trail += int(r.read(2))
-		rel := int(r.read(2))
-		c.numEnv = rel + 1
-		c.tEnv[0], c.tEnv[c.numEnv] = 0, uint8(trail)
-		for i := 0; i < rel; i++ {
-			c.tEnv[c.numEnv-1-i] = c.tEnv[c.numEnv-i] - uint8(2*r.read(2)+2)
+		if freeFirst {
+			nUp = int(r.read(2))
 		}
-		pointer = int(r.read(int(sbrCeilLog2[c.numEnv])))
-		for i := 0; i < c.numEnv; i++ {
-			c.freqRes[c.numEnv-i] = uint8(r.bit())
+		if freeLast {
+			nDown = int(r.read(2))
 		}
-	case sbrVarFix:
-		c.tEnv[0] = uint8(r.read(2))
-		rel := int(r.read(2))
-		c.numEnv = rel + 1
-		c.tEnv[c.numEnv] = uint8(trail)
-		for i := 0; i < rel; i++ {
-			c.tEnv[i+1] = c.tEnv[i] + uint8(2*r.read(2)+2)
+		if n = nUp + nDown + 1; n > sbrMaxEnv {
+			return sbrErr("%d envelopes in a variable frame", n)
 		}
-		pointer = int(r.read(int(sbrCeilLog2[c.numEnv])))
-		readBits1(r, c.freqRes[1:c.numEnv+1])
-	default: // sbrVarVar
-		c.tEnv[0] = uint8(r.read(2))
-		trail += int(r.read(2))
-		lead := int(r.read(2))
-		rel := int(r.read(2))
-		n := lead + rel + 1
-		if n > sbrMaxEnv {
-			return sbrErr("%d envelopes in a VARVAR frame", n)
+		t[0], t[n] = first, last
+		for i := 0; i < nUp; i++ {
+			t[i+1] = t[i] + 2*int(r.read(2)) + 2
 		}
-		c.numEnv = n
-		c.tEnv[n] = uint8(trail)
-		for i := 0; i < lead; i++ {
-			c.tEnv[i+1] = c.tEnv[i] + uint8(2*r.read(2)+2)
-		}
-		for i := 0; i < rel; i++ {
-			c.tEnv[n-1-i] = c.tEnv[n-i] - uint8(2*r.read(2)+2)
+		for i := 0; i < nDown; i++ {
+			t[n-1-i] = t[n-i] - 2*int(r.read(2)) - 2
 		}
 		pointer = int(r.read(int(sbrCeilLog2[n])))
+	}
+	switch class {
+	case sbrFixFix:
+		res := uint8(r.bit())
+		for i := 1; i <= n; i++ {
+			c.freqRes[i] = res
+		}
+	case sbrFixVar: // the resolution of the last envelope comes first
+		for i := n; i >= 1; i-- {
+			c.freqRes[i] = uint8(r.bit())
+		}
+	default:
 		readBits1(r, c.freqRes[1:n+1])
 	}
-	c.frameClass = uint8(class)
-	if pointer > c.numEnv+1 {
-		return sbrErr("bs_pointer %d with %d envelopes", pointer, c.numEnv)
+	if pointer > n+1 {
+		return sbrErr("bs_pointer %d with %d envelopes", pointer, n)
 	}
 	if r.overrun {
 		return errTruncated()
 	}
-	// the borders are unsigned bytes: a border that went below zero wrapped to a
-	// large value, and the last border is at most 19, so the strict increase
-	// tested here refuses it
-	for i := 1; i <= c.numEnv; i++ {
-		if c.tEnv[i-1] >= c.tEnv[i] {
+	for i := 1; i <= n; i++ {
+		if t[i-1] >= t[i] { // also catches a border pushed below zero
 			return sbrErr("time borders not strictly increasing")
 		}
 	}
+	c.frameClass = uint8(class)
+	c.numEnv = n
+	if n == 1 && class == sbrFixFix {
+		c.ampRes = 0
+	}
+	for i := 0; i <= n; i++ {
+		c.tEnv[i] = uint8(t[i])
+	}
+	// the noise floor has one envelope's worth of borders, or two split at one
+	// border of the envelopes
 	c.numNoise = 1
-	if c.numEnv > 1 {
+	if n > 1 {
 		c.numNoise = 2
+		c.tQ[1] = c.tEnv[sbrNoiseSplit(class, n, pointer)]
 	}
-	c.tQ[0], c.tQ[c.numNoise] = c.tEnv[0], c.tEnv[c.numEnv]
-	if c.numNoise > 1 {
-		var idx int
-		switch {
-		case class == sbrFixFix:
-			idx = c.numEnv >> 1
-		case class&1 != 0: // FIXVAR, VARVAR
-			idx = c.numEnv - max(pointer-1, 1)
-		case pointer == 0:
-			idx = 1
-		case pointer == 1:
-			idx = c.numEnv - 1
-		default:
-			idx = pointer - 1
-		}
-		c.tQ[1] = c.tEnv[idx]
+	c.tQ[0], c.tQ[c.numNoise] = c.tEnv[0], c.tEnv[n]
+	c.rollAttack(oldEnv)
+	c.eA[1] = sbrAttack(class, n, pointer)
+	return nil
+}
+
+// sbrNoiseSplit is the index of the envelope border at which the noise floor
+// changes, for a frame of n > 1 envelopes. FIXFIX splits in the middle. When the
+// last border is free the pointer counts envelopes back from the end and the split
+// is the border that many from the end, at least one. VARFIX counts from the
+// start: no pointer splits after the first envelope, pointer 1 before the last,
+// and a larger one after envelope pointer-1.
+func sbrNoiseSplit(class, n, pointer int) int {
+	switch {
+	case class == sbrFixFix:
+		return n / 2
+	case class == sbrFixVar || class == sbrVarVar:
+		return n - max(pointer-1, 1)
+	case pointer == 0:
+		return 1
+	case pointer == 1:
+		return n - 1
 	}
-	if c.eA[1] != int8(oldEnv) {
-		c.eA[0] = -1
-	} else {
+	return pointer - 1
+}
+
+// sbrAttack is l_A: the envelope in which a transient starts, or -1. With a free
+// last border pointer p names envelope n+1-p; VARFIX names envelope p-1 for p > 1.
+func sbrAttack(class, n, pointer int) int8 {
+	switch {
+	case (class == sbrFixVar || class == sbrVarVar) && pointer != 0:
+		return int8(n + 1 - pointer)
+	case class == sbrVarFix && pointer > 1:
+		return int8(pointer - 1)
+	}
+	return -1
+}
+
+// rollAttack sets l_APrev: 0 when the previous frame's attack was in its last
+// envelope (old is its envelope count), else -1.
+func (c *sbrChannel) rollAttack(old int) {
+	c.eA[0] = -1
+	if c.eA[1] == int8(old) {
 		c.eA[0] = 0
 	}
-	c.eA[1] = -1
-	if class&1 != 0 && pointer != 0 {
-		c.eA[1] = int8(c.numEnv + 1 - pointer)
-	} else if class == sbrVarFix && pointer > 1 {
-		c.eA[1] = int8(pointer - 1)
-	}
-	return nil
 }
 
 // copyGrid gives dst, the second channel of a coupled pair, the grid of src.
 func (dst *sbrChannel) copyGrid(src *sbrChannel) {
 	dst.freqRes[0] = dst.freqRes[dst.numEnv]
-	if dst.eA[1] != int8(dst.numEnv) {
-		dst.eA[0] = -1
-	} else {
-		dst.eA[0] = 0
-	}
+	dst.rollAttack(dst.numEnv)
 	copy(dst.freqRes[1:], src.freqRes[1:])
 	dst.tEnv = src.tEnv
 	dst.tQ = src.tQ

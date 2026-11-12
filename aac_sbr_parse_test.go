@@ -496,9 +496,12 @@ func TestSBRTruncation(t *testing.T) {
 	errs := 0
 	for _, p := range payloads {
 		b, n := p.build(t, tb)
+		if err := newSBRState(sbrTestCore).parse(newAACBits(b[:len(b)/2]), p.crc, n, p.elem); err == nil {
+			t.Fatal("a payload longer than the data was accepted")
+		}
 		for k := 0; k < len(b); k++ {
 			s := newSBRState(sbrTestCore)
-			if err := s.parse(newAACBits(b[:k]), p.crc, n, p.elem); err != nil {
+			if err := s.parse(newAACBits(b[:k]), p.crc, 8*k, p.elem); err != nil {
 				errs++
 				if s.started {
 					t.Fatalf("an error left SBR on")
@@ -588,5 +591,40 @@ func TestSBRRefusedWithoutOptIn(t *testing.T) {
 	}
 	if _, err := p.parseFrame(frames[0]); !errors.Is(err, ErrAudioUnsupported) {
 		t.Errorf("SBR data without opt-in: %v", err)
+	}
+}
+
+// TestSBROverrun: a payload that says more than the fill element holds (an
+// extension of 9 bytes in a payload cut 2 bytes short) is an error, and the reader
+// ends exactly at the end of the declared payload: the element after it, here a
+// marker byte, is read from the right bit. A payload larger than a fill element
+// can be is refused and skipped the same way.
+func TestSBROverrun(t *testing.T) {
+	tb := sbrTestTables(t)
+	p := sbrBasic()
+	p.ext = &[2]int{9, 0}
+	b, _ := p.build(t, tb)
+	declared := 8 * (len(b) - 2)
+	data := append(append([]byte{}, b[:len(b)-2]...), 0xA5, 0x5A)
+	s := newSBRState(sbrTestCore)
+	r := newAACBits(data)
+	if err := s.parse(r, false, declared, aacIDSCE); !errors.Is(err, errSBR) || s.started {
+		t.Fatalf("overlong extension: %v, started %v", err, s.started)
+	}
+	if r.bitPos() != declared || r.read(8) != 0xA5 {
+		t.Fatalf("reader at bit %d, want %d then the marker", r.bitPos(), declared)
+	}
+	// the same payload, honest about its size, leaves the reader on the marker
+	data = append(append([]byte{}, b...), 0xA5)
+	r = newAACBits(data)
+	if err := s.parse(r, false, 8*len(b), aacIDSCE); err != nil || r.read(8) != 0xA5 {
+		t.Fatalf("honest payload: %v", err)
+	}
+	// larger than any fill element
+	big := make([]byte, sbrMaxPayload+2)
+	big[len(big)-1] = 0xA5
+	r = newAACBits(big)
+	if err := s.parse(r, false, 8*(len(big)-1), aacIDSCE); !errors.Is(err, errSBR) || r.read(8) != 0xA5 {
+		t.Fatalf("oversized payload: %v", err)
 	}
 }
