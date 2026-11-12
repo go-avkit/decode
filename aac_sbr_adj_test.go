@@ -6,6 +6,7 @@ package decode
 import (
 	"math"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -118,6 +119,20 @@ func sbrAdjRun(t testing.TB, name string, frames int) (got [][]float32, want [][
 
 type stat struct{ max, rms float64 }
 
+// sbrRefFrames is how many frames the slow reference path runs: all of them, or the
+// short count under the race detector and on the architectures CI emulates (a test
+// binary has ten minutes, and the reference is a direct sum).
+func sbrRefFrames(full, short int) int {
+	switch runtime.GOARCH {
+	case "ppc64le", "s390x", "riscv64", "loong64":
+		return short
+	}
+	if raceEnabled {
+		return short
+	}
+	return full
+}
+
 // sbrBeyondRounding returns the largest error of got against want beyond one float32
 // rounding of want, the RMS error, and the peak of want.
 func sbrBeyondRounding(got []float32, want []float64) (s stat, peak float64) {
@@ -149,9 +164,7 @@ func TestSBRAdjust(t *testing.T) {
 		frames int
 	}{{"he44-st.aac", 24}, {"he32-st.aac", 16}, {"he48-mono.aac", 16}}
 	for _, fx := range fixtures {
-		if raceEnabled {
-			fx.frames = 8 // the reference is slow under the race detector
-		}
+		fx.frames = sbrRefFrames(fx.frames, 8)
 		got, want := sbrAdjRun(t, fx.name, fx.frames)
 		ours, peak := sbrBeyondRounding(got[0], want[0])
 		t.Logf("%s channel 0: this decoder against the exact path: max %.2e beyond a float32 rounding, rms %.2e, peak %.3f", fx.name, ours.max, ours.rms, peak)

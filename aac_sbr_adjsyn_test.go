@@ -59,10 +59,7 @@ func TestSBRAdjustWritten(t *testing.T) {
 		s := newSBRState(sbrTestCore)
 		n := 1 + tc.elem - aacIDSCE
 		h := newSBRAdjHarness(n)
-		frames := 5
-		if raceEnabled {
-			frames = 3 // the reference is slow under the race detector
-		}
+		frames := sbrRefFrames(5, 2)
 		pcm := sbrTestPCM(frames, 11)
 		var peak, worst float64
 		for f := 0; f < frames; f++ {
