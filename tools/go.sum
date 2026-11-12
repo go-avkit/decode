@@ -25,8 +25,8 @@ github.com/go-numerics/special v0.4.0 h1:nTAwJv1T79Aw1cFb3SO6c3HUd1/xX0ORHjKf2wb
 github.com/go-numerics/special v0.4.0/go.mod h1:A4gX/e2znfRvkjSDMmMaFomZVeD9rDMeMlAILQLtoIA=
 github.com/go-scikit/refbench v0.1.1 h1:3UNGHqwOzIdjaKQo2A1j6q0UtmqIXBZ4htCiVEb17rg=
 github.com/go-scikit/refbench v0.1.1/go.mod h1:PhJxvLwXiQeKLP2f5ndcb9k5k4PTvU1rSFJ/MKRCrU0=
-github.com/go-simd/floats v0.7.0 h1:6puR4IJ5EXl7m0Fg1PYERcN40h+xLL8AuAeXItdlJ1k=
-github.com/go-simd/floats v0.7.0/go.mod h1:Aq5a6oY5pUqm9Hpi+iV2nrNmaaUb0rwHvUHIerXWSvA=
+github.com/go-simd/floats v0.16.0 h1:mqKLHChhgKV2qqWfeZOJlIIWstqFA1CPa6HIlI88K+k=
+github.com/go-simd/floats v0.16.0/go.mod h1:Aq5a6oY5pUqm9Hpi+iV2nrNmaaUb0rwHvUHIerXWSvA=
 github.com/go-test/deep v1.1.0 h1:WOcxcdHcvdgThNXjw0t76K42FXTU7HpNQWHpA2HHNlg=
 github.com/go-test/deep v1.1.0/go.mod h1:5C2ZWiW0ErCdrYzpqxLbTX7MG14M9iiw8DgHncVwcsE=
 github.com/icza/bitio v1.1.0 h1:ysX4vtldjdi3Ygai5m1cWy4oLkhWTAi+SyO6HC8L9T0=
