@@ -131,6 +131,24 @@ Streaming: `decode.NewAudioTrack(trackConfig, cfg)`, then `DecodeSample(sample)`
 its container states it (edit list, Opus pre-skip; a bare `StartDelay` is a timestamp shift in ffmpeg and drops nothing) and an edit list's
 end cuts the last buffer, which is what ffmpeg does.
 
+The sample count is meant to be what the container's edit list and gapless metadata
+define, in the output rate. Two open defects of this package fall short of that:
+iTunSMPB is ignored ([#53](https://github.com/go-avkit/decode/issues/53)) and
+Matroska priming and trimming are applied in milliseconds
+([#54](https://github.com/go-avkit/decode/issues/54)). Apart from them the count
+equals ffmpeg's except where ffmpeg is known to differ, deliberate divergences each
+with its issue:
+
+* [#57](https://github.com/go-avkit/decode/issues/57): an implicitly signalled
+  HE-AAC MP4 track whose timescale is the core rate (22050 Hz) and whose edit list
+  starts after 0. 1000 ticks are 45.35 ms, 2000 samples at the 44100 Hz output; this
+  package drops 2000, ffmpeg 9.0.2 drops 1000 and gives 1000 more (the ends agree).
+  The fixture `testdata/aac/core22-he44-st.mp4` asserts 89520 samples where ffmpeg
+  gives 90520 (to be reported to ffmpeg). None of 817 real HE-AAC files measured
+  has this shape.
+* [#20](https://github.com/go-avkit/decode/issues/20): a fragmented MP4, whose edit
+  list ffmpeg does not apply.
+
 | Codec | Library | Licence | Output | Oracle |
 |---|---|---|---|---|
 | FLAC (`fLaC`) | [`mewkiz/flac`](https://github.com/mewkiz/flac) v1.0.14 | Unlicense (public domain) | `s16le` up to 16 bits, `s32le` (left-justified) up to 24 | bit-exact, 13 fixtures |
