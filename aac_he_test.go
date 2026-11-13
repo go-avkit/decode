@@ -164,16 +164,21 @@ func TestAACDecodeHEFirstFrames(t *testing.T) {
 	}
 }
 
+// aacHEExceptionCap bounds the values TestAACDecodeHEImplicitEditList excuses.
+const aacHEExceptionCap = 3000
+
 // TestAACDecodeHEImplicitEditList: an MP4 made with `ffmpeg -c copy` from an HE-AAC
 // ADTS stream says AAC-LC at the core rate (SBR is implicit) and carries an edit list.
 // The rate is known only when the first frame turns SBR on, so the start and the
 // length the edit list states are converted then: the track has the samples ffmpeg
 // gives. Sample by sample it is within 3e-6 of ffmpeg's output, with one explained
 // exception: where ffmpeg itself is far from the exact float64 path (its float32
-// prediction-error estimate: 1.0e-5 in two blocks of he32-st's second channel, where
-// this decoder is 1.5e-8 from the exact path, shown per block when this was looked
-// into), this decoder must be accurate (1e-6) and the closer of the two to the exact
-// path.
+// prediction-error estimate: up to 1.03e-5 in output blocks 16-17 and 29-30 of
+// he32-st's second channel, where this decoder is 1.5e-8 from the exact path, shown per
+// block when this was looked into), this decoder must be accurate (1e-6) and the closer
+// of the two to the exact path. The exception is confined to those blocks, to 1.1e-5 of
+// deviation and to 3000 values; reintroducing the attack-noise bug (aac_sbr_adj.go and
+// its reference) puts ffmpeg thousands of times further away and fails the test.
 func TestAACDecodeHEImplicitEditList(t *testing.T) {
 	for _, tc := range []struct {
 		name, adts string
@@ -222,9 +227,13 @@ func TestAACDecodeHEImplicitEditList(t *testing.T) {
 					continue
 				}
 				// allowed only where this decoder is accurate and the closer to the exact
-				// path, ffmpeg being the one that is off
-				if math.Abs(v-w) >= math.Abs(f-w) || math.Abs(v-w) > 1e-6 {
-					t.Fatalf("%s: sample %d channel %d: this decoder %v, ffmpeg %v, exact %v", tc.name, i, c, v, f, w)
+				// path, ffmpeg being the one that is off, and only where it was localised: he32-st's
+				// second channel, output blocks (2048 samples) 16-17 and 29-30, ffmpeg within
+				// 1.1e-5 of this decoder, at most aacHEExceptionCap values (2939 are)
+				blk := (skip + i) / 2048
+				where := tc.name == "imp-he32-st" && c == 1 && (blk == 16 || blk == 17 || blk == 29 || blk == 30)
+				if !where || d > 1.1e-5 || exceptions >= aacHEExceptionCap || math.Abs(v-w) >= math.Abs(f-w) || math.Abs(v-w) > 1e-6 {
+					t.Fatalf("%s: sample %d (block %d) channel %d: this decoder %v, ffmpeg %v (%.2e away), exact %v, %v exceptions", tc.name, i, blk, c, v, f, d, w, exceptions)
 				}
 				exceptions++
 			}
@@ -272,70 +281,5 @@ func TestAACDecodeHERateChange(t *testing.T) {
 				t.Fatalf("frame 2: %d buffers, first %d samples at %d Hz, PTS %d", len(out), out[0].Samples(), out[0].SampleRate, out[0].PTS)
 			}
 		}
-	}
-}
-
-// TestMP4AEnd: how many samples an MP4 AAC track presents, in the shapes the real files
-// have (numbers taken from them: track timescale 44100, movie timescale 1000, packets of
-// 2048 and a last one of 1922).
-func TestMP4AEnd(t *testing.T) {
-	packets := func(n int, last uint32) []container.Sample {
-		s := make([]container.Sample, n)
-		for i := range s {
-			s[i].Duration = 2048
-		}
-		s[n-1].Duration = last
-		return s
-	}
-	edits := func(e ...container.Edit) *container.EditList {
-		return &container.EditList{MovieTimescale: 1000, Edits: e}
-	}
-	tc := func(el *container.EditList) container.TrackConfig {
-		return container.TrackConfig{Codec: "mp4a", Timescale: 44100, EditList: el}
-	}
-	for _, c := range []struct {
-		name     string
-		tc       container.TrackConfig
-		samples  []container.Sample
-		mediaDur uint64
-		want     int64
-	}{
-		{"no edit list: the sum of the packets", tc(nil), packets(10, 1922), 0, 9*2048 + 1922},
-		{"no edit list: the media header is less", tc(nil), packets(10, 2048), 20000, 20000},
-		{"no information", tc(nil), nil, 0, -1},
-		// a start of 5058, a duration of 52103 ms (2297742) over 1122 packets whose last
-		// has 1922 and a media duration of 2297730: the packets end first
-		{"the end of the packets", tc(edits(container.Edit{MediaTime: 5058, SegmentDuration: 52103})), packets(1122, 1922), 2297730, 2297730 - 5058},
-		// the edit list ends first: 123691 ms is 5454773
-		{"the edit list's end", tc(edits(container.Edit{MediaTime: 5058, SegmentDuration: 123691})), packets(2666, 1922), 5454784, 5454773},
-		// an empty edit first: its 66 ms count in the track's duration, the packets are kept
-		// whole up to the one that reaches the end of the non-empty edit
-		{"an empty edit first", tc(edits(container.Edit{MediaTime: container.EmptyEdit, SegmentDuration: 66}, container.Edit{MediaTime: 0, SegmentDuration: 11310})), packets(244, 2048), 499712, 244 * 2048},
-		// the same, ending inside a packet: 5000 ms is 220500, and the packet that reaches it
-		// ends at 108 * 2048 = 221184, which an empty edit's 66 ms leave room for
-		{"a packet kept whole", tc(edits(container.Edit{MediaTime: container.EmptyEdit, SegmentDuration: 66}, container.Edit{MediaTime: 0, SegmentDuration: 5000})), packets(244, 2048), 499712, 108 * 2048},
-		// an edit that lasts to the end of the media states no end
-		{"an open edit", tc(edits(container.Edit{MediaTime: 1000, SegmentDuration: 0})), packets(10, 2048), 0, 10*2048 - 1000},
-	} {
-		if got := mp4aEnd(c.tc, c.samples, c.mediaDur, 44100); got != c.want {
-			t.Errorf("%s: %d, want %d", c.name, got, c.want)
-		}
-	}
-	// the media duration of a track the file does not have is 0
-	b, err := os.ReadFile(filepath.Join("testdata", "aac", "imp-he44-st.mp4"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	rd, err := container.NewReader(b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := FirstAudioTrack(rd)
-	if mediaDuration(rd, id) == 0 || mediaDuration(rd, id+100) != 0 {
-		t.Errorf("media durations %d, %d", mediaDuration(rd, id), mediaDuration(rd, id+100))
-	}
-	// at twice the track's rate: every figure doubles
-	if got := mp4aEnd(tc(nil), packets(10, 2048), 0, 88200); got != 2*10*2048 {
-		t.Errorf("at twice the rate: %d", got)
 	}
 }

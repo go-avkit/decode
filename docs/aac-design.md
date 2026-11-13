@@ -171,26 +171,24 @@ edit list again, exactly, when nothing has been placed) and the position, and
 `decodeAudio` the length the edit list states. Before this, such a track came out at half
 its length.
 
-Where an MP4 AAC track ends (`mp4aEnd`; ffmpeg n9.0.2 `libavformat/mov.c` read: the
-edit list's duration is converted to the track timescale at 4060, packets are kept up to
-and including the first that reaches the end of the edit, 4625, and the stream's duration
-is the least of the media header's and the edit list's total, empty edits included, 4668;
-the last packet takes the duration its `stts` entry states). It is the least of two ends in
-the track timescale: the track's duration (the media header's, or the edit list's total if
-less) and the end of its packets (the sum of the samples' durations, or with an edit list up
-to and including the first packet that reaches the end of the non-empty edits, a packet
-being kept whole), less the start the edit list drops. The last sample's duration is where
-the encoder says how much of its frame is padding (1922 where the others have 2048); an
-edit list in a movie timescale of milliseconds cannot say that, which is why it is not the
-end by itself. This took the real files on which this decoder's length differed from
-ffmpeg's from 160 of 817 to 11 (none has an iTunSMPB tag, none is in a Matroska file).
-Left: 7 PS streams whose edit list starts with an empty edit `[media -1, 66 or 72 ms]`
-(ffmpeg keeps whole packets and does not give the last the duration of its `stts` entry;
-this decoder does), 2 PS streams with a start of 6974 (this decoder 66 and 98 samples
-longer), and 2 stereo SBR streams whose track timescale is the CORE rate (22050:
-1024-sample packets, a last one of 1023), where this decoder is 2 and 4 samples shorter:
-it looks as if ffmpeg trims a last packet's output to its duration only when the track
-timescale is the output rate, which `libavcodec/decode.c` would show (not read).
+Where an MP4 AAC track ends (`mp4aEnd`, `audio_mp4a.go`; ffmpeg n9.0.2 read: libavformat
+mov.c 4625 keeps packets up to and including the first that reaches the end of the edit
+list, 4668 sets the stream's duration to the least of the media header's and the edit
+list's total, 11697-11713 records where the stream ends, demux.c 1535-1543 turns that into
+a padding for the last packet, libavcodec/decode.c 363-417 drops it from the decoded
+frame). Every kept packet decodes to a whole frame whatever its `stts` duration says; only
+the last is cut, by what its frame exceeds what the stream's duration leaves of it,
+measured from that packet's own start. A short last packet (1922 where the others have
+2048) is cut by 126; a track whose durations lose a tick or two (a timescale at the core
+rate, 262 packets of 1024 lasting 268287 in all) loses nothing, ffmpeg counts the frames it
+decodes. The previous rule (the sum of the durations as the end) was right only when the
+durations add up to whole frames, and was 2 and 4 samples short on the two real stereo SBR
+files at a core-rate timescale. This took the real files on which this decoder's length
+differed from ffmpeg's from 160 of 817 to 0. The last packet's start is on a timeline that
+begins after the leading empty edits (mov.c 4452, 4460); without them the 7 files with an
+empty first edit lost 126 to 1179 samples. Unverified: a start in the edit list at a
+core-rate timescale (ffmpeg's `skip_samples`, mov.c 4549-4550, are in timescale units and
+decode.c 363-396 drops them as output samples; no real file has one).
 
 | File:lines | What it tells us | Used for |
 |------------|------------------|----------|

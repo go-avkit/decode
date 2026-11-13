@@ -183,6 +183,10 @@ func (d *aacDecoder) sampleRate() int {
 	}
 	return d.cfg.rate
 }
+
+// frameSamples is the samples of one output frame at the output rate.
+func (d *aacDecoder) frameSamples() int { return aacSamplesPerFrame * d.sampleRate() / d.cfg.rate }
+
 func (d *aacDecoder) flush() ([]Audio, error) {
 	return nil, nil
 }
