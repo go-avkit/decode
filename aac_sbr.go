@@ -81,6 +81,7 @@ type sbrState struct {
 	extBits      int  // bits of bs_extension_data in the last frame, 0 for none
 	ch           [2]sbrChannel
 	dsp          [2]*sbrChanDSP      // signal state of the channels (aac_sbr_hf.go)
+	refill       [2]bool             // a header reset: the smoothing history is refilled at the next adjustment
 	buf          [sbrMaxPayload]byte // the payload being parsed
 }
 
@@ -352,6 +353,7 @@ func (s *sbrState) reset() error {
 		return err
 	}
 	s.haveSpe = true
+	s.refill = [2]bool{true, true}
 	return nil
 }
 

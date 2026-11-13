@@ -136,6 +136,18 @@ values:
     symbol: sbrAnaWindow
     source: every second tap of sbrQMFWindow (the analysis window of the 32-band bank, ffmpeg aacsbrdata.h sbr_qmf_window_ds, checked equal to it), computed in code
     rationale: no table is held; the 320 values are taken from the 640 above.
+  # The SBR noise table and smoothing filter (envelope adjustment).
+  - kind: normative-values
+    file: aac_sbr_noise_table.go
+    symbol: sbrNoiseTable
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the 512 complex values of the SBR noise generator, values read in ffmpeg n9.0.2 libavcodec/sbrdsp_template.c:112-388 (ff_sbr_noise_table, 544 entries there, the first 32 repeated at the end), carried by a throwaway generator that applies a sign written outside the macro, never typed
+    rationale: a noise sequence is a fixed table the standard defines so that every decoder adds the same noise; the only values a decoder can hold are the standard's.
+  - kind: derived
+    file: aac_sbr_adj.go
+    symbol: sbrSmooth
+    source: the five taps of the smoothing filter, (1+cos(n*pi/5))/6, n = 0..4, which is the raised cosine whose taps 0.33333333333333, 0.30150283239582, 0.21816949906249, 0.11516383427084, 0.03183050093751 ffmpeg aacsbr.c:298-304 lists; computed in code, checked against them by TestSBRSmoothing
+    rationale: no table is held; the five values are computed from their formula.
 require_declared:
   min_numbers: 32
   paths: [aac]

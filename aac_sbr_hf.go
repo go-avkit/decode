@@ -63,6 +63,8 @@ type sbrChanDSP struct {
 	high  [sbrSynBands][sbrHFSlots]complex128
 	alpha [sbrAnaBands][2]complex128 // a0, a1 of each low band below k0
 	bw    [sbrMaxNoise]float64       // chirp factors, one per noise floor band
+	adj   sbrAdjState                // the envelope adjustment (aac_sbr_adj.go)
+	x     [sbrQMFSlots][sbrSynBands]complex128
 }
 
 // analyse runs the analysis bank on the 1024 core samples of a frame, keeping the

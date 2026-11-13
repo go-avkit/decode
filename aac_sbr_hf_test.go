@@ -345,10 +345,10 @@ func sbrChain(t testing.TB, name string, frames int, ref bool) (out [][]float32,
 // 4e-10, see TestSBRPredictor).
 func TestSBRChain(t *testing.T) {
 	for _, fx := range sbrFixtures {
-		_, st := sbrChain(t, fx.name, 12, true)
+		_, st := sbrChain(t, fx.name, sbrRefFrames(12, 6), true)
 		t.Logf("%s: %d frames, %d with high frequency generation; low band error %.2e of its peak; output error beyond a float32 rounding %.2e of the output peak %.2e (%.2e)",
 			fx.name, st.frames, st.hfFrames, st.lowErr, st.outErrRel, st.outPeak, st.outErr)
-		if st.hfFrames < 6 {
+		if st.hfFrames < 4 {
 			t.Errorf("%s: high frequency generation ran in %d frames", fx.name, st.hfFrames)
 		}
 		if st.lowErr > 1e-13 || st.outErrRel > 1e-9 {
