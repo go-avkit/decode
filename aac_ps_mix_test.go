@@ -177,6 +177,9 @@ var psAnchors = [8][3]float64{
 // the decoder follows eq. 8 and differs from eq. 7 where the specification says it does
 // (Q1).
 func TestPSMixGains(t *testing.T) {
+	if sbrEmulated() {
+		t.Skip("368 gains at 192 bits: the native lanes run it")
+	}
 	for icc, a := range psAnchors {
 		g := psMixGain(0, icc, false)
 		want := psGain{a[1], a[2], a[1], -a[2]}
@@ -273,6 +276,9 @@ func psImpulse(is34 bool, k, frames int) []complex128 {
 // frequency, its impulse response is the series of section 3.2, and it starts at slot 2
 // with -a0 a1 a2 gamma^3 times the rotation; the delay rows delay by 14 and 1 slots.
 func TestPSAllPass(t *testing.T) {
+	if sbrEmulated() {
+		t.Skip("80 frequency sweeps and 192-bit impulse responses: the native lanes run it")
+	}
 	for layout, is34 := range []bool{false, true} {
 		dl := psDecLayouts[layout]
 		ly := psLayoutOf(is34)
@@ -594,6 +600,9 @@ func TestPSMixTiming(t *testing.T) {
 // for procedure A with eq. 8 (the approximation of the rotation angle makes the ICC off
 // by a measured amount at large IID; the table logs it).
 func TestPSMixOutputStatistics(t *testing.T) {
+	if sbrEmulated() {
+		t.Skip("seven runs of 400 frames: the native lanes run it")
+	}
 	rng := rand.New(rand.NewSource(8))
 	for _, c := range []struct{ iid, icc int }{{0, 1}, {0, 3}, {0, 5}, {2, 2}, {-3, 4}, {4, 3}, {0, 6}} {
 		m := new(psMixer)
