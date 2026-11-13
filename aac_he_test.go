@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/go-avkit/avkit/container"
@@ -53,7 +54,7 @@ func aacHEDecode(t testing.TB, fx aacHEFixture, signalling string, frames int) (
 	if err != nil {
 		t.Fatal(err)
 	}
-	n := aacChannelConfig(fx.config)
+	n := c.(*aacDecoder).nOut
 	ch = make([][]float32, n)
 	for i := 0; i < min(frames, len(fr)); i++ {
 		out, err := c.decode(fr[i])
@@ -95,8 +96,21 @@ func TestAACDecodeHE(t *testing.T) {
 					t.Fatalf("%s, %s: frame %d has %d samples", fx.name, sig, i, p)
 				}
 			}
+			// the channel policy (aacConfig.stereoOut): a mono core whose configuration
+			// signals SBR and does not say PS absent is stereo from the first frame, the
+			// second channel a copy of the first; one that signals nothing stays mono
+			wantCh := aacChannelConfig(fx.config)
+			if fx.config == 1 && sig != "implicit" {
+				wantCh = 2
+				if !slices.Equal(got[0], got[1]) {
+					t.Errorf("%s, %s: the second channel is not a copy of the first", fx.name, sig)
+				}
+			}
+			if len(got) != wantCh {
+				t.Errorf("%s, %s: %d channels, want %d", fx.name, sig, len(got), wantCh)
+			}
 			for c := range got {
-				e, peak := sbrBeyondRounding(got[c], want[c])
+				e, peak := sbrBeyondRounding(got[c], want[min(c, len(want)-1)])
 				if e.max > 1e-6*peak {
 					t.Errorf("%s, %s, channel %d: %.2e beyond a float32 rounding, peak %.3f", fx.name, sig, c, e.max, peak)
 				}

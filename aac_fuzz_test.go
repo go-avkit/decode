@@ -138,7 +138,11 @@ func FuzzAACHE(f *testing.F) {
 			if err != nil {
 				return
 			}
-			if len(out) != 1 || out[0].Samples() != 2*aacSamplesPerFrame || out[0].SampleRate != 2*aacRates[rate] || out[0].Channels != ch {
+			// a mono core is announced as stereo: SBR is signalled and PS not stated absent
+			if ch == 1 {
+				ch = 2
+			}
+			if len(out) != 1 || out[0].Samples() != 2*aacSamplesPerFrame || out[0].SampleRate != 2*aacRates[rate] || out[0].Channels != ch || out[0].Layout.Channels() != ch {
 				t.Fatalf("output %+v", out)
 			}
 		}

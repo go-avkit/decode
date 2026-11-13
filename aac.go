@@ -48,6 +48,7 @@ var aacConfigMaps = [8][]aacElemMap{
 
 type aacDecoder struct {
 	cfg    aacConfig
+	nOut   int // channels of the output: the core's, or two for a mono core that may carry PS
 	layout ChannelLayout
 	parser *aacParser
 	synth  *aacSynth
@@ -119,6 +120,13 @@ func newAAC(tc container.TrackConfig, cfg AudioConfig) (audioCodec, error) {
 		d.slot = append(d.slot, s)
 		d.firsts = append(d.firsts, first)
 		first += aacChannelsOfID(e.id)
+	}
+	// A mono core that may carry Parametric Stereo is announced as stereo from the
+	// first frame (aacConfig.stereoOut); the slot of its channel is 0, the second
+	// channel is a copy of it until PS is decoded.
+	d.nOut = ac.outChannels()
+	if ac.stereoOut() {
+		d.layout = LayoutStereo
 	}
 	return d, nil
 }
@@ -197,12 +205,12 @@ func (d *aacDecoder) end(tc container.TrackConfig, samples []container.Sample) i
 // decode decodes one raw_data_block: 1024 samples of every channel, 2048 when SBR is
 // on.
 func (d *aacDecoder) decode(data []byte) ([]Audio, error) {
-	buf := make([]byte, 2*aacSamplesPerFrame*d.cfg.channels*4)
+	buf := make([]byte, 2*aacSamplesPerFrame*d.nOut*4)
 	n, err := d.decodeInto(data, buf)
 	if err != nil {
 		return nil, err
 	}
-	return []Audio{{Format: SampleF32, SampleRate: d.sampleRate(), Channels: d.cfg.channels, Layout: d.layout, Data: buf[:n*d.cfg.channels*4]}}, nil
+	return []Audio{{Format: SampleF32, SampleRate: d.sampleRate(), Channels: d.nOut, Layout: d.layout, Data: buf[:n*d.nOut*4]}}, nil
 }
 
 // decodeInto decodes one raw_data_block into dst, which must hold 2048 samples of
@@ -234,7 +242,7 @@ func (d *aacDecoder) decodeInto(data, dst []byte) (int, error) {
 	if d.sbrActive {
 		samples *= 2
 	}
-	nch := d.cfg.channels
+	nch := d.nOut
 	var seen uint32
 	for e := range els {
 		// the element's place: by position for a channel configuration, by type and
@@ -276,11 +284,15 @@ func (d *aacDecoder) decodeInto(data, dst []byte) (int, error) {
 			}
 			continue
 		}
+		dup := d.cfg.stereoOut() // the mono channel also fills the next slot
 		for c := 0; c < int(els[e].nch); c++ {
 			slot := d.slot[idx][c]
 			for i, v := range src[c][:samples] {
 				o := (i*nch + slot) * 4
 				binary.LittleEndian.PutUint32(dst[o:o+4], math.Float32bits(v))
+				if dup {
+					binary.LittleEndian.PutUint32(dst[o+4:o+8], math.Float32bits(v))
+				}
 			}
 		}
 	}

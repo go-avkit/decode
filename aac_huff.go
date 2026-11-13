@@ -72,6 +72,48 @@ func buildAACHuff(codes []uint32, lens []uint8) (*aacHuff, error) {
 	return h, nil
 }
 
+// buildListedHuff builds the code of entries listed in codeword order, given their
+// lengths: the codeword of an entry is the next free slot of the code space at its
+// length, which must be a slot of that length (the entries before it filled a whole
+// number of them). Lengths that never decrease give the canonical code; the PS codes
+// are listed in an order that is not by length. The code is checked complete.
+func buildListedHuff(lens []uint8) (*aacHuff, error) {
+	codes := make([]uint32, len(lens))
+	var next uint64 // the first free codeword, left-aligned in 32 bits
+	for i, l := range lens {
+		if l < 1 || l > 32 {
+			return nil, fmt.Errorf("aac huffman: entry %d has a length of %d bits", i, l)
+		}
+		span := uint64(1) << (32 - l)
+		if next%span != 0 || next >= 1<<32 {
+			return nil, fmt.Errorf("aac huffman: entry %d of %d bits does not fit the code space", i, l)
+		}
+		codes[i] = uint32(next >> (32 - l))
+		next += span
+	}
+	return buildAACHuff(codes, lens)
+}
+
+// buildListedHuffs builds ten codes with buildListedHuff.
+func buildListedHuffs(lens [10][]uint8) (hs [10]*aacHuff, err error) {
+	for i, l := range lens {
+		if hs[i], err = buildListedHuff(l); err != nil {
+			return hs, fmt.Errorf("huffman code %d: %w", i, err)
+		}
+	}
+	return hs, nil
+}
+
+// mustListedHuffs is buildListedHuffs for tables that are constants of the program:
+// one that does not build is a bug.
+func mustListedHuffs(lens [10][]uint8) [10]*aacHuff {
+	hs, err := buildListedHuffs(lens)
+	if err != nil {
+		panic(err)
+	}
+	return hs
+}
+
 // decode reads one symbol. The tree is complete, so every bit string leads to a
 // symbol; a reader that runs out returns false.
 func (h *aacHuff) decode(r *aacBits) (int, bool) {
