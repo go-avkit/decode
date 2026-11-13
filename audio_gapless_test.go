@@ -162,6 +162,20 @@ func TestGaplessRecord(t *testing.T) {
 	if dir == "" {
 		t.Skip("GAPLESS_RECORD=<directory> records what ffmpeg delivers for the variants")
 	}
+	// the two-track file: `ffmpeg -i two.m4a -map 0:a:N -f f32le` for N = 0 and 1
+	for _, f := range []string{"lc", "he"} {
+		two := filepath.Join(dir, f+"-two.m4a")
+		if err := os.WriteFile(two, twoAudioTracks(t, mustRead(t, filepath.Join("testdata", "gapless", f+".m4a"))), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for n := range 2 {
+			out := filepath.Join(dir, fmt.Sprintf("%s-two-%d.f32", f, n))
+			if b, err := exec.Command("ffmpeg", "-nostdin", "-v", "error", "-y", "-i", two, "-map", fmt.Sprintf("0:a:%d", n), "-f", "f32le", out).CombinedOutput(); err != nil {
+				t.Fatalf("ffmpeg: %v\n%s", err, b)
+			}
+			t.Logf("%s two tracks, stream %d: ffmpeg delivers %d samples", f, n, len(readF32(t, out))/2)
+		}
+	}
 	for _, fx := range []struct {
 		file                           string
 		delay, padding, samples, media uint64
@@ -593,4 +607,73 @@ func FuzzGaplessPad(f *testing.F) {
 			t.Fatalf("pad %d, applies %v", pad, ok)
 		}
 	})
+}
+
+// twoAudioTracks is a copy of an afconvert fixture with its track repeated as a second,
+// track ID 2, after the first and before the iTunSMPB, in the room of the free box. Both
+// tracks have the same samples. ffmpeg reads the item when the second is the last stream
+// parsed, and attaches it to that one.
+func twoAudioTracks(t testing.TB, base []byte) []byte {
+	t.Helper()
+	b := append([]byte(nil), base...)
+	box := func(lo, hi int, name string) (int, int) {
+		for p := lo; p+8 <= hi; {
+			n := int(binary.BigEndian.Uint32(b[p:]))
+			if n < 8 || p+n > hi {
+				t.Fatalf("bad box size %d at %d", n, p)
+			}
+			if string(b[p+4:p+8]) == name {
+				return p, n
+			}
+			p += n
+		}
+		t.Fatalf("no %s box", name)
+		return 0, 0
+	}
+	moov, moovSize := box(0, len(b), "moov")
+	trak, trakSize := box(moov+8, moov+moovSize, "trak")
+	free, freeSize := box(moov+moovSize, len(b), "free")
+	if freeSize < 8+trakSize {
+		t.Fatalf("the free box has no room for a track: %d bytes", freeSize)
+	}
+	second := append([]byte(nil), b[trak:trak+trakSize]...)
+	tkhd, _ := box(trak+8, trak+trakSize, "tkhd")
+	binary.BigEndian.PutUint32(second[tkhd-trak+20:], 2) // track_id, version 0
+	out := append(append(append([]byte(nil), b[:trak+trakSize]...), second...), b[trak+trakSize:free]...)
+	binary.BigEndian.PutUint32(out[moov:], uint32(moovSize+trakSize))
+	out = binary.BigEndian.AppendUint32(out, uint32(freeSize-trakSize))
+	out = append(out, "free"...)
+	out = append(out, b[free+8+trakSize:]...)
+	if len(out) != len(b) {
+		t.Fatalf("%d bytes, the fixture %d", len(out), len(b))
+	}
+	return out
+}
+
+// TestGaplessItemOnTheWrongStream: with a second track after the audio, ffmpeg 9.0.2 attaches
+// the item to the second and trims nothing from the first (12288 samples for the AAC-LC
+// fixture, 16384 for the HE-AAC one; the second: 9600 for both). This package trims the
+// first audio track, which is what the item says, and leaves the other alone. It is a
+// deliberate divergence, stated in the doc of DecodeAudioTrack.
+func TestGaplessItemOnTheWrongStream(t *testing.T) {
+	for _, c := range []struct {
+		file          string
+		first, second int // samples: this package's first audio track, and the other
+		ffmpegFirst   int
+	}{{"lc.m4a", 9600, 12288, 12288}, {"he.m4a", 9600, 16384, 16384}} {
+		r, first := audioReader(t, twoAudioTracks(t, mustRead(t, filepath.Join("testdata", "gapless", c.file))))
+		for id, want := range map[uint32]int{first: c.first, first + 1: c.second} {
+			bufs, err := DecodeAudioTrack(r, id, AudioConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			n := 0
+			for _, a := range bufs {
+				n += a.Samples()
+			}
+			if n != want {
+				t.Errorf("%s track %d: %d samples, want %d (ffmpeg gives the first %d)", c.file, id, n, want, c.ffmpegFirst)
+			}
+		}
+	}
 }

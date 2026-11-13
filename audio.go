@@ -454,7 +454,7 @@ func FirstAudioTrack(r *container.Reader) (uint32, error) {
 //
 // An MP4's iTunSMPB (container.Metadata.Gapless) is applied to an AAC track the way
 // ffmpeg 9.0.2 does (libavformat/mov.c mov_read_custom, libavformat/demux.c), to the
-// last track of the file only, as ffmpeg attaches it to the last stream it has read.
+// first audio track of the file, the one the item describes.
 //   - Start: an encoder delay in (0, 16384) ticks replaces the start the edit list
 //     states; the packets the edit list drops whole still count against it, so the track
 //     starts at the larger of the delay and those packets. With no edit list it starts
@@ -479,6 +479,11 @@ func FirstAudioTrack(r *container.Reader) (uint32, error) {
 //     signalled one, so it delivers 1000 more, and of an explicitly signalled one drops
 //     the packets before the start whole and none of the one that holds it.
 //   - go-avkit/decode#20: a fragmented MP4, whose edit list ffmpeg does not apply.
+//   - iTunSMPB on the wrong stream: ffmpeg attaches the item to the last stream parsed
+//     when it reads it, so in a file whose audio track comes before another track it lands
+//     on that one and ffmpeg trims no audio. Here the item trims the first audio track, as
+//     it says. (The delay's range, 0 to 16384 ticks, and the padding's conditions are
+//     ffmpeg's sanity checks on the values and are kept.)
 func DecodeAudioTrack(r *container.Reader, trackID uint32, cfg AudioConfig) ([]Audio, error) {
 	tc, err := r.TrackConfig(trackID)
 	var samples []container.Sample
@@ -491,12 +496,12 @@ func DecodeAudioTrack(r *container.Reader, trackID uint32, cfg AudioConfig) ([]A
 	return decodeAudioGapless(tc, samples, cfg, mediaDuration(r, trackID), gaplessOf(r, trackID))
 }
 
-// gaplessOf is the iTunSMPB that applies to a track: the file's, when the track is the
-// last of its tracks (libavformat/mov.c 5818 of master, 5559 of n9.0.2: the item is
-// attached to the stream read last), else nil.
+// gaplessOf is the iTunSMPB that applies to a track: the file's, when the track is its
+// first audio track, which is the one an Apple encoder's item describes, else nil.
+// (ffmpeg attaches it to the last stream parsed when it reads the item, libavformat/mov.c
+// mov_read_custom: see DecodeAudioTrack.)
 func gaplessOf(r *container.Reader, trackID uint32) *container.Gapless {
-	tracks := r.File().Tracks
-	if len(tracks) == 0 || tracks[len(tracks)-1].ID != trackID {
+	if id, err := FirstAudioTrack(r); err != nil || id != trackID {
 		return nil
 	}
 	return r.File().Metadata.Gapless
