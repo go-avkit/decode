@@ -188,6 +188,9 @@ type sbrPayload struct {
 	// ext is written as bs_extended_data when not nil: its size in bytes (0 to
 	// 270) and the extension id of its first 2 bits, then zero bits.
 	ext *[2]int
+	// extBody writes the data that follows the id of ext (a PS payload), the rest of the
+	// extension being zero bits.
+	extBody func(w *sbrBW)
 	// bytesAfter is appended as raw bits after the data: n bits of value v.
 	pad [2]int
 }
@@ -393,7 +396,11 @@ func (p sbrPayload) build(t testing.TB, tb *sbrTables) (b []byte, nbits int) {
 			}
 			if size > 0 {
 				w.put(2, p.ext[1])
-				w.put(8*size-2, 0)
+				at := w.n
+				if p.extBody != nil {
+					p.extBody(w)
+				}
+				w.put(8*size-2-(w.n-at), 0)
 			}
 		} else {
 			w.put(1, 0)

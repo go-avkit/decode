@@ -9,8 +9,8 @@ import (
 
 // AudioSpecificConfig and the ADTS header, from ISO/IEC 14496-3 as known to the
 // author (clause and table numbers not verified). AAC-LC (audio object type 2) is
-// decoded, with SBR over it (HE-AAC v1, at twice the rate; PS is signalled but not
-// decoded). Main, SSR, LTP, the downsampled SBR mode, and 960-sample frames are
+// decoded, with SBR over it (HE-AAC v1, at twice the rate; PS is parsed but not
+// applied, see stereoOut). Main, SSR, LTP, the downsampled SBR mode, and 960-sample frames are
 // refused with ErrAudioUnsupported.
 
 // aacRates are the sampling frequencies of sampling_frequency_index 0 to 12.
@@ -116,8 +116,30 @@ type aacConfig struct {
 	pce    *aacPCE
 	// sbr is set when the AudioSpecificConfig signals SBR (explicitly or backward
 	// compatibly): the output is at twice the rate. ps says Parametric Stereo is
-	// signalled too; it is not decoded, the SBR output is the core's mono channel.
+	// signalled too.
 	sbr, ps bool
+	// psOff is set when the extension signal states psPresentFlag 0: no PS, whatever
+	// the SBR data carries.
+	psOff bool
+}
+
+// stereoOut says that the output has two channels over a core of one: a mono core
+// with SBR signalled (explicitly or backward compatibly) whose PS is not stated absent
+// may carry Parametric Stereo, which makes the stereo image from the mono signal. The
+// count is fixed from the first frame, at the configuration, because Audio.Channels,
+// the layout and the slot map are those of the track and cannot change mid-stream; a
+// stream that signals no SBR at all but carries it from its first frame, where ffmpeg
+// turns stereo on at that frame, stays mono here (docs/aac-ps-design.md, decision 1).
+// Before PS is decoded, and while a stream sends no PS parameters, the second channel
+// is a copy of the first, as in ffmpeg.
+func (c aacConfig) stereoOut() bool { return c.sbr && c.channels == 1 && !c.psOff }
+
+// outChannels is the channel count of the decoder's output.
+func (c aacConfig) outChannels() int {
+	if c.stereoOut() {
+		return 2
+	}
+	return c.channels
 }
 
 // outRate is the sampling rate of the decoder's output, the SBR one when SBR is
@@ -248,6 +270,7 @@ func parseAudioSpecificConfig(b []byte) (aacConfig, error) {
 				extRate = aacRates[ei]
 				if r.left() >= 12 && r.read(11) == 0x548 {
 					c.ps = r.bit() != 0
+					c.psOff = !c.ps
 				}
 			}
 		case 0x548:

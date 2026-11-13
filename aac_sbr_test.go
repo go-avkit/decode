@@ -50,21 +50,21 @@ func TestSBRHuffmanTables(t *testing.T) {
 
 func TestSBRBuildHuffErrors(t *testing.T) {
 	bad := aacSBRHuffLens
-	bad[3] = []uint8{2, 1, 3}
-	if _, err := buildSBRHuff(bad); err == nil {
-		t.Error("decreasing lengths accepted")
+	bad[3] = []uint8{2, 1, 3} // a 1-bit code cannot start at the third quarter of the code space
+	if _, err := buildListedHuffs(bad); err == nil {
+		t.Error("a length that does not fit the code space accepted")
 	}
 	bad = aacSBRHuffLens
 	bad[0] = []uint8{1, 2, 3} // Kraft sum 7/8: an open branch
-	if _, err := buildSBRHuff(bad); err == nil {
+	if _, err := buildListedHuffs(bad); err == nil {
 		t.Error("an incomplete code accepted")
 	}
 	defer func() {
 		if recover() == nil {
-			t.Error("mustSBRHuff did not stop on a bad table")
+			t.Error("mustListedHuffs did not stop on a bad table")
 		}
 	}()
-	mustSBRHuff(bad)
+	mustListedHuffs(bad)
 }
 
 func TestSBRMakeBands(t *testing.T) {

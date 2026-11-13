@@ -77,8 +77,10 @@ type sbrState struct {
 	interpolFreq uint8
 	smoothing    uint8
 	coupling     bool
-	psSeen       bool // a PS extension was found in the payload (not decoded)
-	extBits      int  // bits of bs_extension_data in the last frame, 0 for none
+	psSeen       bool // a PS extension was found in the payload
+	psOn         bool // PS may be carried (the channel policy, aacConfig.stereoOut): its extension is parsed into ps
+	ps           psState
+	extBits      int // bits of bs_extension_data in the last frame, 0 for none
 	ch           [2]sbrChannel
 	dsp          [2]*sbrChanDSP      // signal state of the channels (aac_sbr_hf.go)
 	refill       [2]bool             // a header reset: the smoothing history is refilled at the next adjustment
@@ -105,19 +107,12 @@ func (s *sbrState) turnoff() {
 }
 
 // The ten Huffman codes of the envelope and noise scalefactors, built at start-up
-// from the normative lengths: the code of the i-th entry is the canonical one,
-// entries being listed by increasing length. They are read-only afterwards. The
-// lengths are constants of the program, checked complete by a test, so a table
-// that does not build is a bug and stops the program at start-up.
-var sbrHuff = mustSBRHuff(aacSBRHuffLens)
-
-func mustSBRHuff(lens [10][]uint8) [10]*aacHuff {
-	hs, err := buildSBRHuff(lens)
-	if err != nil {
-		panic(err)
-	}
-	return hs
-}
+// from the normative lengths: the code of the i-th entry is the next free one at its
+// length (buildListedHuffs; here the entries are listed by increasing length, so it is
+// the canonical code). They are read-only afterwards. The lengths are constants of
+// the program, checked complete by a test, so a table that does not build is a bug
+// and stops the program at start-up.
+var sbrHuff = mustListedHuffs(aacSBRHuffLens)
 
 // sbrHuffOffset is the value of symbol 0 of each code: a symbol s is the delta
 // s+offset.
@@ -136,27 +131,6 @@ const (
 	sbrTNoise30
 	sbrTNoiseBal30
 )
-
-// buildSBRHuff builds the codes for the given lengths.
-func buildSBRHuff(lens [10][]uint8) (hs [10]*aacHuff, err error) {
-	for i, l := range lens {
-		codes := make([]uint32, len(l))
-		var code uint32
-		for j := range l {
-			if j > 0 {
-				if l[j] < l[j-1] {
-					return hs, fmt.Errorf("SBR huffman %d: lengths decrease at %d", i, j)
-				}
-				code = (code + 1) << (l[j] - l[j-1])
-			}
-			codes[j] = code
-		}
-		if hs[i], err = buildAACHuff(codes, l); err != nil {
-			return hs, fmt.Errorf("SBR huffman %d: %w", i, err)
-		}
-	}
-	return hs, nil
-}
 
 // huff reads one delta with code number c.
 func sbrReadHuff(r *aacBits, c int) (int, error) {
@@ -202,6 +176,7 @@ func (p *aacParser) sbrOf(id, tag uint8) *sbrState {
 		return nil
 	}
 	s := newSBRState(p.cfg.rate)
+	s.psOn = p.cfg.stereoOut()
 	p.sbrStates = append(p.sbrStates, sbrEntry{id, tag, s})
 	return s
 }
@@ -317,9 +292,13 @@ func (s *sbrState) parsePayload(r *aacBits, crc bool, elem int) error {
 		if left > 0 {
 			if r.read(2) == sbrExtPS {
 				s.psSeen = true
+				if s.psOn {
+					s.ps.parse(r, left-2) // its own bits only; a fault turns PS off, not SBR
+					return nil
+				}
 			}
-			// Parametric Stereo is not decoded and no other extension is defined:
-			// the rest of the extension is skipped.
+			// no other extension is defined, and PS is read only where the stream may
+			// carry it: the rest of the extension is skipped.
 			r.skip(left - 2)
 		}
 	}

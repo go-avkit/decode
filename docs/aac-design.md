@@ -139,7 +139,7 @@ decision 2026-11-12: G1 is settled for SBR by declaring bare normative values in
 | `libavcodec/aacsbr_template.c:493-622` | patches and the derived tables: high/low/noise, `n_q`, patch loop with its guards | `sbrTables.makePatches`, `makeDerived` |
 | `libavcodec/aacsbr_template.c:122-186` | limiter band table | `sbrTables.makeLim` |
 | `libavcodec/aacsbr_template.c:624-1180` | `sbr_grid` for the four frame classes, `bs_pointer`, `l_A`, delta-coding flags, inverse filtering, envelope and noise floor decoding with the three frequency-resolution cases, coupled and uncoupled pairs, the extension loop, the byte accounting | `aac_sbr.go` |
-| `libavcodec/aac/aacdec_tab.c:114-280` | the ten Huffman codes as (symbol, length) pairs, the symbol offsets, canonical code from lengths | `aacSBRHuffSyms`, `aacSBRHuffLens` (values only), `buildSBRHuff` |
+| `libavcodec/aac/aacdec_tab.c:114-280` | the ten Huffman codes as (symbol, length) pairs, the symbol offsets, canonical code from lengths | `aacSBRHuffSyms`, `aacSBRHuffLens` (values only), `buildListedHuffs` |
 | `libavcodec/aacsbrdata.h:35-42` | `sbr_offset` | `sbrOffset` |
 | `libavcodec/sbr.h:63-117, 143-193` | which values live from one frame to the next, and the array sizes | `sbrChannel`, `sbrState` |
 | `libavcodec/aac/aacdec.c:2024-2083` | SBR payload sits in a fill element of type 13 or 14 (with CRC), attached to the element before it | `aacParser.sbrFill` |
@@ -158,10 +158,22 @@ files tried needs either (the files are all at 22.05 kHz core and 44.1 kHz outpu
 Without signalling, the parser reads SBR data anyway and the decoder switches to the
 double rate at the first frame that carries any (as ffmpeg does), staying there: a
 later frame without SBR data is upsampled, not dropped. **PS** (object type 29, the
-`0x548` extension, or a mono core that carries it): not decoded, the output is the
-SBR mono channel. Of the 822 real HE-AAC files tried, 801 signal PS, so this is the
-common case in practice and the first thing to decide after the conformance streams:
+`0x548` extension, or a mono core that carries it): the PS data is parsed (PS1,
+`aac_ps.go`) but not yet applied; the output is stereo whose second channel is a copy of
+the SBR mono channel, because the channel count is fixed at the configuration
+(`aacConfig.stereoOut`: a mono core with SBR signalled and PS not stated absent). Of
+the 822 real HE-AAC files tried, 801 signal PS, so this is the common case in practice;
 ffmpeg decodes those to stereo.
+
+Read for the PS parser PR (PS1, `aac_ps*.go`), also read only (`docs/aac-ps-design.md`
+has the plan and the census):
+
+| File:lines | What it tells us | Used for |
+|------------|------------------|----------|
+| `libavcodec/aacps_common.c:28-306` | `ps_data`: header (IID and ICC modes, extension flag), frame class and envelope borders, delta decoding in time and frequency with the range checks, the extension loop and IPD/OPD, the closing envelope, the 34-band switch, the error path and the bit accounting | `psState.data`, `readEnvelope`, `extensions`, `closeEnvelopes` |
+| `libavcodec/aacpsdata.c:24-113` | the ten Huffman codes as (symbol, length) pairs in codeword order, the symbol offsets, the two hybrid-row to parameter-band maps | `aacPSHuffSyms`, `aacPSHuffLens`, `aacPSBandOf20`, `aacPSBandOf34` (values only, by a throwaway generator) |
+| `libavcodec/aacps_tablegen.h:87-112` | the IID gains in linear form, the ICC values and their arc cosines | a **check** of the dB steps and of `arccos` (run once, not committed): the 46 gains agree with 10^(dB/20) to 6.2e-13 relative |
+| `libavcodec/mpeg4audio.c:100-210`, `libavcodec/aac/aacdec.c:529-535, 1006-1009, 2040-2070` | when PS is switched on: explicit object type 29, the `0x548` flag; an SBR signal over a mono core with no PS flag turns it on; with nothing signalled it turns on at the first frame that carries SBR; stereo layout | the channel policy `aacConfig.stereoOut` |
 
 Presentation (`audio.go`). An MP4 whose configuration does not signal SBR (ffmpeg's
 `-c copy` of an ADTS stream) says AAC-LC at the core rate, and its edit list is in

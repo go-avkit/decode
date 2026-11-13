@@ -148,6 +148,85 @@ values:
     symbol: sbrSmooth
     source: the five taps of the smoothing filter, (1+cos(n*pi/5))/6, n = 0..4, which is the raised cosine whose taps 0.33333333333333, 0.30150283239582, 0.21816949906249, 0.11516383427084, 0.03183050093751 ffmpeg aacsbr.c:298-304 lists; computed in code, checked against them by TestSBRSmoothing
     rationale: no table is held; the five values are computed from their formula.
+  # Parametric Stereo (HE-AAC v2), docs/aac-ps-design.md. The ten Huffman codes of the
+  # PS data as (symbol, length) pairs in CODEWORD order (not by increasing length): the
+  # codeword of an entry is the next free slot of the code space at its length, built in
+  # aac_huff.go (buildListedHuff) and checked complete by TestPSHuffmanTables; every
+  # real PS frame of the 801-file library is consumed to within the fill of its extension.
+  - kind: normative-values
+    file: aac_ps_tables.go
+    symbol: aacPSHuffSyms
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; PS Huffman codes (huff_iid_df1, huff_iid_dt1, huff_iid_df0, huff_iid_dt0, huff_icc_df, huff_icc_dt, huff_ipd_df, huff_ipd_dt, huff_opd_df, huff_opd_dt), symbols read in ffmpeg n9.0.2 libavcodec/aacpsdata.c:26-89 (aacps_huff_tabs, first column), carried by a throwaway generator, never typed
+    rationale: a prefix code is dictated by the standard; the only values a decoder can hold are the standard's.
+  - kind: normative-values
+    file: aac_ps_tables.go
+    symbol: aacPSHuffLens
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; lengths of the same ten codes, read in ffmpeg n9.0.2 libavcodec/aacpsdata.c:26-89 (aacps_huff_tabs, second column)
+    rationale: the lengths that go with the symbols above.
+  - kind: normative-values
+    file: aac_ps_tables.go
+    symbol: aacPSBandOf20
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified (a comment at ffmpeg aacpsdata.c:99 says "Table 8.48", which I did not check); the parameter band of each of the 71 hybrid rows at 10 and 20 bands, values read in ffmpeg n9.0.2 libavcodec/aacpsdata.c:100-105 (ff_k_to_i_20)
+    rationale: a band layout is fixed by the standard so that every encoder and decoder agree on which hybrid rows a parameter governs.
+  - kind: normative-values
+    file: aac_ps_tables.go
+    symbol: aacPSBandOf34
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified (a comment at ffmpeg aacpsdata.c:106 says "Table 8.49", which I did not check); the parameter band of each of the 91 hybrid rows at 34 bands, values read in ffmpeg n9.0.2 libavcodec/aacpsdata.c:107-113 (ff_k_to_i_34)
+    rationale: the same, for the 34-band layout.
+  - kind: normative-values
+    file: aac_ps_params.go
+    symbol: psIIDdBCoarse
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the 15 IID steps in dB (-25, -18, -14, -10, -7, -4, -2, 0, ...), read in ffmpeg n9.0.2 libavcodec/aacps_tablegen.h:91-96 as linear gains and recovered as integers by a throwaway program (20 log10 of each gain is an integer within 1e-12)
+    rationale: the quantiser of the intensity difference is fixed by the standard.
+  - kind: normative-values
+    file: aac_ps_params.go
+    symbol: psIIDdBFine
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the 31 IID steps in dB of the fine resolution, read as above from aacps_tablegen.h:97-105
+    rationale: the same, for the fine quantiser.
+  - kind: derived
+    file: aac_ps_params.go
+    symbol: psIIDGainCoarse
+    source: the linear amplitude ratio 10^(IID/20) (H. Purnhagen, "Low complexity parametric stereo coding in MPEG-4", DAFx'04, eq. 5, with the IID defined in dB, eq. 1); computed in code from psIIDdBCoarse with math.Pow; the 46 gains of both resolutions agree with the 14-digit values ffmpeg aacps_tablegen.h:91-105 holds to 6.2e-13 relative (checked once, not committed)
+    rationale: no table is held; the gains are computed from their formula.
+  - kind: derived
+    file: aac_ps_params.go
+    symbol: psIIDGainFine
+    source: as psIIDGainCoarse, from psIIDdBFine
+    rationale: no table is held; the gains are computed from their formula.
+  - kind: normative-values
+    file: aac_ps_params.go
+    symbol: psICC
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the eight inter-channel coherence values (1, 0.937, 0.84118, 0.60092, 0.36764, 0, -0.589, -1), read in ffmpeg n9.0.2 libavcodec/aacps_tablegen.h:107-109 (icc_invq); no formula found
+    rationale: the quantiser of the coherence is fixed by the standard.
+  - kind: derived
+    file: aac_ps_params.go
+    symbol: psICCAngle
+    source: arccos(ICC)/2 (P1 eq. 5), computed in code with math.Acos; ffmpeg's table (aacps_tablegen.h:110-112) holds the arc cosines rounded to 8 digits, so ours differs from it by up to 8.9e-8 at ICC -0.589, a known and bounded difference
+    rationale: no table is held; the angles are computed from their formula.
+  - kind: derived
+    file: aac_ps_params.go
+    symbol: psPhase
+    source: the IPD and OPD index k stands for the angle k*pi/4 (eight steps of a circle); computed in code
+    rationale: no table is held.
+  - kind: normative-values
+    file: aac_ps_params.go
+    symbol: psLinkDecay
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the decay factors of the three all-pass links of the decorrelator (0.65143905753106, 0.56471812200776, 0.48954165955695), as listed in docs/aac-ps-design.md, read there in ffmpeg n9.0.2 libavcodec/aacpsdsp_template.c:29-211 (not reopened for PS1). They equal exp(-d/7) for d = 3, 4, 5 to 14 digits, but that form was recognised after the values were read and no source gives it, so it is not a derivation
+    rationale: constants of the decorrelator the standard fixes; the only values a decoder can hold are the standard's.
+  - kind: normative-values
+    file: aac_ps_params.go
+    symbol: psPeakDecay
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the decay of the transient detector's peak (0.76592833836465), as listed in docs/aac-ps-design.md, read there in ffmpeg n9.0.2 libavcodec/aacps.c:399-517 (not reopened for PS1). It equals exp(-4/15) to 14 digits; recognised after the fact, no source gives 4/15
+    rationale: a constant of the transient detector the standard fixes.
 require_declared:
   min_numbers: 32
   paths: [aac]
