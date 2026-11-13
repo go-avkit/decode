@@ -9,8 +9,8 @@ github.com/at-wat/ebml-go v0.19.4/go.mod h1:wu3fQj+DWo6SOOl9c4yDi+gFs9Oa96Z2B5qx
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/gen2brain/h265 v0.2.4 h1:JUSbGkRAYZpd7ucCL192yx4ViEo75ZO6OEdm1TQt9qM=
 github.com/gen2brain/h265 v0.2.4/go.mod h1:kefpLxLhGpNCUG/q/aabJcD6GqB9Nhet3fNi9xX9Wzw=
-github.com/go-avkit/avkit v0.15.1-0.20261113135914-9d9b00e9576d h1:GZB0Ytk7VbD5pBQF8cMaAlTKaDywC/VzN8ybT1gT7EY=
-github.com/go-avkit/avkit v0.15.1-0.20261113135914-9d9b00e9576d/go.mod h1:itL/gmFP0/hIVAQgxn0JTTvlGgY9vi5uL8XI2sOQl/c=
+github.com/go-avkit/avkit v0.16.0 h1:QoFoIgAHy8xv+kdnROQ8P3GSqveV5/BJtxPa0i+ZM64=
+github.com/go-avkit/avkit v0.16.0/go.mod h1:itL/gmFP0/hIVAQgxn0JTTvlGgY9vi5uL8XI2sOQl/c=
 github.com/go-avkit/bitstream v0.4.0 h1:cpPNgKWeAjEpTzjORXPH4Advu2BdtCBHloQXSwgl+pk=
 github.com/go-avkit/bitstream v0.4.0/go.mod h1:aA50I8nXKyJu6ElfTHM957BRrx5JjgSYUxs++n5VM8o=
 github.com/go-avkit/h264 v0.9.0 h1:yrXbVFZCfZhG9okTJqITHdldVciXMw0ioPaH/NorWsQ=

@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/Eyevinn/mp4ff v0.62.1
-	github.com/go-avkit/avkit v0.15.1-0.20261113135914-9d9b00e9576d
+	github.com/go-avkit/avkit v0.16.0
 	github.com/go-avkit/decode v0.0.0
 	github.com/spf13/cobra v1.10.2
 )
