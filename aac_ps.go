@@ -207,8 +207,8 @@ func (p *psState) frame(s *psBits) error {
 	if err := p.closing(); err != nil {
 		return err
 	}
+	p.is34Old = p.is34 // every frame, so that a frame that keeps the layout is no switch
 	if p.enableIID || p.enableICC {
-		p.is34Old = p.is34
 		p.is34 = p.enableIID && p.nrIID == 34 || p.enableICC && p.nrICC == 34
 	}
 	if p.hdr {

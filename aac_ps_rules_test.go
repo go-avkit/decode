@@ -76,6 +76,45 @@ func TestPSFrequencyWrap(t *testing.T) {
 	}
 }
 
+// TestPSLayoutSwitch: the layout of the frame before is updated by every frame, so a
+// frame that carries no IID or ICC keeps the layout and is no switch: 20 bands, 34
+// bands, then a frame without data gives is34 and is34Old both set.
+func TestPSLayoutSwitch(t *testing.T) {
+	p := &psState{}
+	enc := newPSEnc()
+	psFeed(t, p, enc, psFrame{hdr: &psHdrSpec{iid: 1, icc: 1}, class: 0, envCode: 1, iid: psConst(20, 1, 1), icc: psConst(20, 1, 2)}, 0)
+	if p.is34 || p.is34Old {
+		t.Fatalf("20 bands: %v %v", p.is34, p.is34Old)
+	}
+	psFeed(t, p, enc, psFrame{hdr: &psHdrSpec{iid: 2, icc: 2}, class: 0, envCode: 1, iid: psConst(34, 1, 1), icc: psConst(34, 1, 2)}, 0)
+	if !p.is34 || p.is34Old {
+		t.Fatalf("34 bands: %v %v", p.is34, p.is34Old)
+	}
+	psFeed(t, p, enc, psFrame{hdr: &psHdrSpec{iid: -1, icc: -1}, class: 0, envCode: 0}, 0)
+	if !p.start || !p.is34 || !p.is34Old {
+		t.Fatalf("a frame without IID and ICC: start %v, is34 %v, before %v", p.start, p.is34, p.is34Old)
+	}
+}
+
+// TestPSClosingCopiesBandsInForce is a KNOWN DIFFERENCE with the reference, which
+// copies the whole parameter row: the closing envelope copies only the bands of the
+// resolution in force. A frame with no envelope after a 34-band frame, at 20 bands,
+// repeats bands 0..19 of the old last envelope; band 20 of the slot keeps what it held.
+// It matters only to a time-delta read of bands past the count after a count change.
+func TestPSClosingCopiesBandsInForce(t *testing.T) {
+	p := &psState{}
+	enc := newPSEnc()
+	psFeed(t, p, enc, psFrame{hdr: &psHdrSpec{iid: 2, icc: -1}, class: 0, envCode: 2,
+		iid: []psEnvSpec{{v: psRow(34, func(int) int { return 1 })}, {v: psRow(34, func(int) int { return 3 })}}}, 0)
+	if !p.start || p.numEnv != 2 {
+		t.Fatalf("34 bands: %+v", p.start)
+	}
+	psFeed(t, p, enc, psFrame{hdr: &psHdrSpec{iid: 1, icc: -1}, class: 0, envCode: 0}, 0)
+	if !p.start || p.numEnv != 1 || p.iid[0][19] != 3 || p.iid[0][20] != 1 {
+		t.Fatalf("closing at 20 bands: start %v, %d envelopes, bands 19 and 20: %d %d", p.start, p.numEnv, p.iid[0][19], p.iid[0][20])
+	}
+}
+
 // TestPSNegativeLength: a negative length is a fault that reads nothing.
 func TestPSNegativeLength(t *testing.T) {
 	p := &psState{start: true}

@@ -54,7 +54,7 @@ last header; a frame without a header uses them. Before any header they are all 
 - The frame is in the 34-band layout when IID is enabled with 34 bands or ICC is enabled
   with 34 bands. This is recomputed after every successfully parsed frame in which IID or
   ICC is enabled; when neither is, the layout in force is kept. Keep also the layout of
-  the frame before.
+  the frame before: it is updated by EVERY successfully parsed frame, recomputed or not.
 
 ## 4. Envelopes and borders
 
@@ -89,7 +89,7 @@ A decoded symbol plus `psHuffOffset[table]` is the delta.
   plus its delta. The reference is the previous envelope of this frame, or, for the first
   envelope, the last envelope of the previous frame as it stands after section 7. When the
   previous frame had no envelopes at all (old count 0 or 1), the reference is the stored
-  first envelope.
+  first envelope (unverified: reference behaviour, not confirmed against the standard).
 - IPD and OPD only: after each addition the value is reduced modulo 8 (the sum wraps; in
   frequency coding the running value is the wrapped one). They have no further range
   check.
@@ -108,7 +108,11 @@ envelope is added whose border is 31:
    if ICC enabled, IPD and OPD if IPD/OPD are enabled (section 8). When there is nothing
    to copy from (no envelope in this frame and old count 0) the envelope keeps whatever its
    slot holds (zeros at start). When the frame had no envelope and old count is 1, the
-   envelope is its own source: nothing moves.
+   envelope is its own source: nothing moves (unverified: reference behaviour, not
+   confirmed against the standard). Known difference: the reference copies the whole
+   parameter row; the parser copies only the bands of the resolution in force. It matters
+   only to a time-delta read of bands past the count after a count change
+   (`TestPSClosingCopiesBandsInForce`).
 2. A copied IID index must still be in range for the **current** resolution (it may have
    been valid at the old one): else a fault. ICC needs no recheck.
 3. The envelope count increases by one. At most 5 envelopes can result.
