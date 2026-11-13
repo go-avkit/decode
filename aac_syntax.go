@@ -4,6 +4,7 @@
 package decode
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/bits"
 )
@@ -559,10 +560,53 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 		dim = 4
 	}
 	unsigned := cb >= 3 && cb != 5 && cb != 6
+	// The band is read with a bit cursor of its own, a position in the frame's bytes
+	// and a 64-bit window loaded at it, so that a symbol costs no call into the
+	// reader: the codeword (the table, or the tree for a code longer than the table)
+	// and the sign bits that follow it come out of one window. The reader is brought
+	// to the cursor before anything else reads (an escape, the general path) and at
+	// the end. Within the last 8 bytes of the data the window would run off the end:
+	// those symbols take the general path through the reader.
+	data := r.data
+	pos := r.bitPos()
 	for i := 0; i < len(dst); i += dim {
-		sym, ok := h.decode(r)
-		if !ok {
-			return errTruncated()
+		var sym int
+		var s uint32 // the sign bits of the symbol, first value in the top bit
+		if bp := pos >> 3; bp+8 <= len(data) {
+			w := binary.BigEndian.Uint64(data[bp:]) << uint(pos&7) // at least 57 stream bits at the top
+			l := 0
+			if e := h.lut[w>>(64-aacLUTBits)]; e != 0 {
+				l, sym = int(e&0xff), int(e>>8)
+			} else {
+				// a codeword longer than the table: down the tree, a bit at a time
+				cur := 0
+				for {
+					c := h.node[cur][w>>(63-uint(l))&1]
+					l++
+					if c < 0 {
+						sym = int(-c - 1)
+						break
+					}
+					cur = int(c)
+				}
+			}
+			n := 0
+			if unsigned {
+				n = bits.OnesCount8(aacTupleNZ[cb-1][sym])
+			}
+			s = uint32(w << uint(l) >> uint(64-n)) // n = 0 gives 0: a shift of 64 empties a uint64
+			pos += l + n
+		} else {
+			// the general path: the reader at the cursor
+			r.skip(pos - r.bitPos())
+			var ok bool
+			if sym, ok = h.decode(r); !ok {
+				return errTruncated()
+			}
+			if unsigned {
+				s = r.read(bits.OnesCount8(aacTupleNZ[cb-1][sym]))
+			}
+			pos = r.bitPos()
 		}
 		v := dst[i : i+dim]
 		t := &aacTuples[cb-1][sym]
@@ -570,10 +614,9 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 			v[j] = int32(t[j])
 		}
 		if unsigned {
-			// the sign bits of the nonzero values, in one read, first value first
+			// the sign bits of the nonzero values, first value first
 			if nz := aacTupleNZ[cb-1][sym]; nz != 0 {
 				n := bits.OnesCount8(nz)
-				s := r.read(n)
 				// branch-free: the signs are random, so a branch on each is
 				// mispredicted about half the time
 				for j := range v {
@@ -588,6 +631,7 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 		if cb == 11 {
 			// escapes only where a value is the escape marker 16, known from the symbol
 			if esc := aacTupleEsc[sym]; esc != 0 {
+				r.skip(pos - r.bitPos())
 				for j := range v {
 					if esc>>uint(j)&1 == 0 {
 						continue
@@ -601,9 +645,11 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 					}
 					v[j] = m
 				}
+				pos = r.bitPos()
 			}
 		}
 	}
+	r.skip(pos - r.bitPos())
 	return nil
 }
 
