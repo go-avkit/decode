@@ -3,9 +3,9 @@ module github.com/go-avkit/decode/tools
 go 1.27.3
 
 require (
-	github.com/Eyevinn/mp4ff v0.62.1
+	github.com/Eyevinn/mp4ff v0.63.0
 	github.com/go-avkit/avkit v0.16.0
-	github.com/go-avkit/decode v0.0.0
+	github.com/go-avkit/decode v0.5.4
 	github.com/spf13/cobra v1.10.2
 )
 
@@ -13,13 +13,13 @@ require (
 	github.com/asticode/go-astikit v0.30.0 // indirect
 	github.com/asticode/go-astits v1.17.0 // indirect
 	github.com/at-wat/ebml-go v0.19.4 // indirect
-	github.com/gen2brain/h265 v0.2.4 // indirect
+	github.com/gen2brain/h265 v0.2.5 // indirect
 	github.com/go-avkit/bitstream v0.4.0 // indirect
-	github.com/go-avkit/h264 v0.9.0 // indirect
+	github.com/go-avkit/h264 v0.10.0 // indirect
 	github.com/go-dsp/signal v0.2.0 // indirect
-	github.com/go-fft/fft v0.30.1 // indirect
+	github.com/go-fft/fft v0.30.2 // indirect
 	github.com/go-numerics/special v0.4.0 // indirect
-	github.com/go-simd/floats v0.18.0 // indirect
+	github.com/go-simd/floats v0.20.0 // indirect
 	github.com/icza/bitio v1.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mewkiz/flac v1.0.14 // indirect
