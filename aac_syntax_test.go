@@ -5,6 +5,7 @@ package decode
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"strings"
@@ -203,6 +204,40 @@ func newTestParser(t testing.TB, rateIndex, channels int) *aacParser {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// TestAACBandTruncated pins what a band that the data ends in returns: the error
+// of the truncated frame, from the band itself, whichever of the paths the symbol
+// that runs out is on (the window path, which needs 8 bytes, or the reader at the
+// end of the data), and not a later check of the overrun flag. Every codebook is
+// written whole and then cut one byte at a time, so the cut falls inside a codeword,
+// inside its sign bits and between symbols.
+func TestAACBandTruncated(t *testing.T) {
+	p := newTestParser(t, aacRate44, 2)
+	for cb := 1; cb <= 11; cb++ {
+		dim := 2
+		if cb <= 4 {
+			dim = 4
+		}
+		vals := make([]int32, 8*dim)
+		for i := range vals {
+			vals[i] = int32(i%3 - 1)
+			if cb >= 3 && cb != 5 && cb != 6 && vals[i] < 0 {
+				vals[i] = 1
+			}
+		}
+		w := &bitWriter{}
+		w.band(cb, vals)
+		whole := w.bytes()
+		out := make([]int32, len(vals))
+		if err := p.band(newAACBits(whole), cb, out); err != nil {
+			t.Fatalf("codebook %d: the whole band: %v", cb, err)
+		}
+		for cut := 0; cut*8 < w.nbit; cut++ { // fewer bytes than bits written: the band is cut
+			err := p.band(newAACBits(whole[:cut]), cb, out)
+			wantErr(t, fmt.Sprintf("codebook %d cut at %d of %d bytes", cb, cut, len(whole)), err, ErrAudioSample, "truncated frame")
+		}
+	}
 }
 
 func wantErr(t *testing.T, what string, err, kind error, text string) {
