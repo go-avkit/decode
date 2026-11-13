@@ -221,6 +221,15 @@ func psStreamSpecs() []psStreamSpec {
 		}
 		return psStreamFrame{ps: psFixed(h, 10, 34, 2, shift(func(e, b int) int { return (e*2+b*3)%15 - 7 }, i, 2), shift(func(e, b int) int { return (e + b) % 8 }, i, 2))}
 	}))
+	// S14c: IID at 20 bands over ICC at 34, whose 20 -> 34 averages of negative odd sums
+	// show whether the index average truncates toward zero (Q6)
+	add("S14c", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		var h *psHdrSpec
+		if i == 0 {
+			h = psHdr(1, 2)
+		}
+		return psStreamFrame{ps: psFixed(h, 20, 34, 2, shift(func(e, b int) int { return (e*5+b*3)%15 - 7 }, i, 2), shift(func(e, b int) int { return (e + b) % 8 }, i, 2))}
+	}))
 	icc2 := func(e, b int) int { return 2 + (e+b)%3 }
 	add("S15", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
 		if i%4 < 2 {
@@ -417,6 +426,7 @@ var psStreamHashes = map[string]string{
 	"S13b":   "0075af7a824ed6d5",
 	"S14a":   "9f8db503e2e49cf3",
 	"S14b":   "eee90e44c8e1f058",
+	"S14c":   "6a67d9534cd82c27",
 	"S15":    "b6c87d13ce9d9248",
 	"S16a20": "2515622b45702c62",
 	"S16a34": "260ebe7f8fd99edf",

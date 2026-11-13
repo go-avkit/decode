@@ -277,7 +277,7 @@ values:
     file: aac_ps_remap.go
     symbol: psMap34to20
     standard: ISO/IEC 14496-3
-    clause: standard table number not verified; how the 34 parameter bands map to the 20 (weights over sources: 1/3 and 2/3 for the first four, pairs, four for band 18), docs/aac-ps-mixing.md section 4.2, held by ffmpeg n9.0.2 and FAAD2 alike; the index form truncates toward zero (Q6)
+    clause: standard table number not verified; how the 34 parameter bands map to the 20 (weights over sources, 1/3 and 2/3 for the first four, pairs, four for band 18), docs/aac-ps-mixing.md section 4.2, held by ffmpeg n9.0.2 and FAAD2 alike; the index form truncates toward zero (Q6)
     rationale: the map between band resolutions is fixed by the standard.
   - kind: normative-values
     file: aac_ps_remap.go
@@ -295,12 +295,12 @@ values:
     file: aac_ps_mix.go
     symbol: psPreDelay
     standard: ISO/IEC 14496-3
-    clause: standard table number not verified; the decorrelator's constants, docs/aac-ps-mixing.md sections 3.1 to 3.4: the all-pass pre-delay of 2 slots (psPreDelay), the delays 14 and 1 of the other rows (psLongDelay, psShortDelay), the QMF band boundaries 23 and 35 (psAllPassQMF, psLongEndQMF), the decay slope 0.05 (psDecaySlope), the fractional delays 0.39, 0.43, 0.75 and 0.347 slots in thousandths (psPreFracMil, psLinkFracMil)
+    clause: standard table number not verified; the decorrelator's constants, docs/aac-ps-mixing.md sections 3.1 to 3.4, the all-pass pre-delay of 2 slots (psPreDelay), the delays 14 and 1 of the other rows (psLongDelay, psShortDelay), the QMF band boundaries 23 and 35 (psAllPassQMF, psLongEndQMF), the decay slope 0.05 (psDecaySlope), the fractional delays 0.39, 0.43, 0.75 and 0.347 slots in thousandths (psPreFracMil, psLinkFracMil)
     rationale: constants of the decorrelator the standard fixes, held by ffmpeg and FAAD2 alike; the all-pass counts (30 and 50 rows) are derived from the 23 bands of P1 section 4.1.
   - kind: derived
     file: aac_ps_mix.go
     symbol: psRotation
-    source: the phase rotation e^{-j pi delta f} of a fractional delay of delta slots at the centre frequency f of a row (P1 section 4.1; docs/aac-ps-mixing.md section 3.2 and PS2 section 1: band-unit frequency f turns by pi f per slot); the angle is reduced exactly in integers (delta in thousandths, f in 24ths) and TestPSAllPass compares the impulse response with a 192-bit evaluation
+    source: the phase rotation e^{-j pi delta f} of a fractional delay of delta slots at the centre frequency f of a row (P1 section 4.1; docs/aac-ps-mixing.md section 3.2 and PS2 section 1, band-unit frequency f turns by pi f per slot); the angle is reduced exactly in integers (delta in thousandths, f in 24ths) and TestPSAllPass compares the impulse response with a 192-bit evaluation
     rationale: a rotation follows from the delay, so it is computed, not held.
   - kind: derived
     file: aac_ps_mix.go

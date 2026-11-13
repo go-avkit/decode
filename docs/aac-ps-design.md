@@ -354,6 +354,42 @@ history is not updated while PS is off (here it is only updated by frames that g
 the bank). The comparison with ffmpeg's PCM (streams S1 to S6) needs the mixing of PS3 and
 the writer's PS payloads, and is left to PS3.
 
+## PS3 as built
+
+`aac_ps_mix.go` (decorrelator, transient attenuation, interpolation, procedure A mixing)
+and `aac_ps_remap.go` (the 10/20/34 parameter maps, index and value forms), written from
+`docs/aac-ps-mixing.md` sections 1 to 5 alone (clean room: no reference implementation was
+opened, only the ffmpeg binary was run). `sbrState.psApplyTest` runs the path on a mono
+element: hybrid analysis, `psMixer.apply`, hybrid synthesis of the left rows in place and
+of the right rows into the mixer's block, then the two QMF banks; the decoder's default
+output is unchanged (PS4 turns it on). Procedure B and IPD/OPD (section 6) are parsed and
+not applied. A frame that is not applied sends the mono block through both banks.
+
+Measured against ffmpeg 9.0.2 (see the pull request for the tables): the written streams
+S1 to S19 agree to 2.4e-7 where the specification applies (bound asserted: 1e-6), `he44-ps.aac`
+and 8 library files to 1.1e-6 except in the blocks of `he44-ps.aac` whose channels are
+25 dB apart, where ffmpeg's own two builds differ by 2.4e-5. The independent
+double-double and 192-bit reference agrees to 1e-15 of the row's peak (bound 2^-44).
+
+What the PCM decided, beyond the specification (the questions are numbered as in section 8
+of the specification; Q14 and Q15 are new):
+
+- Q1: ffmpeg uses eq. 8 (the decoder does; eq. 7 differs from it by up to 1.07 in a gain).
+- Q6: the index average truncates toward zero (S14c).
+- Q8: the first frame fades in from the all-zero matrix (the first two frames of
+  `he44-ps.aac` agree to 4e-12).
+- Q14: an ps_data that does not parse restarts PS from nothing: the matrix, the
+  decorrelator, the transient detector and the hybrid history are all cleared, and the next
+  header fades in again (S6; `psApplyFrame`). The specification says frames that are not
+  applied change nothing, which holds for a frame without ps_data and not for a fault.
+- Q15: after the first frame, SBR frames without ps_data (S19a) differ from ffmpeg for three
+  frames by up to 0.1 (a startup effect; from the fourth frame on the held matrix agrees to
+  1e-7). Unexplained; no library file has such frames.
+- The property of section 7.1 P3 about a step: a pure step keeps G = 1 (the peak follows
+  the power); the duck follows a pulse, which is what the test uses.
+- S17 (a header that lowers `stop_freq`) differs from ffmpeg by 3e-4 with PS off as well: an
+  SBR matter, not PS; the clearing above the SBR top (Q10) cannot be told apart from it.
+
 ## PR split (each green, reviewed independently, before the next)
 
 1. **PS1: bitstream and tables.** `aac_ps.go` (parse, state, fix-up envelope,
