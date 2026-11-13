@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/gen2brain/h265 v0.2.4
-	github.com/go-avkit/avkit v0.15.0
+	github.com/go-avkit/avkit v0.15.1-0.20261113135914-9d9b00e9576d
 	github.com/go-avkit/bitstream v0.4.0
 	github.com/go-avkit/h264 v0.9.0
 	github.com/go-dsp/signal v0.2.0
@@ -16,7 +16,7 @@ require (
 )
 
 require (
-	github.com/Eyevinn/mp4ff v0.62.0 // indirect
+	github.com/Eyevinn/mp4ff v0.62.1 // indirect
 	github.com/asticode/go-astikit v0.30.0 // indirect
 	github.com/asticode/go-astits v1.17.0 // indirect
 	github.com/at-wat/ebml-go v0.19.4 // indirect

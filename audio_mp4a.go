@@ -40,6 +40,14 @@ func codecFrame(c audioCodec) int {
 // packets' whole frames (a timescale at the core rate and a duration or two lost along the
 // way) loses nothing: ffmpeg counts the frames it decodes, not the durations.
 func mp4aEnd(tc container.TrackConfig, samples []container.Sample, mediaDur uint64, r, frame int) (packets int, pad int64) {
+	return mp4aEndGapless(tc, nil, samples, mediaDur, r, frame)
+}
+
+// mp4aEndGapless is mp4aEnd with the file's iTunSMPB, nil for none. When its end padding
+// applies (see gaplessPad) the cut it makes is the one returned, in place of the last
+// packet's: ffmpeg sets where the stream ends from it first, and the rule for the last
+// packet only sets it when it is not set (libavformat/mov.c 11710, n9.0.2).
+func mp4aEndGapless(tc container.TrackConfig, g *container.Gapless, samples []container.Sample, mediaDur uint64, r, frame int) (packets int, pad int64) {
 	if len(samples) == 0 {
 		return 0, 0
 	}
@@ -78,6 +86,9 @@ func mp4aEnd(tc container.TrackConfig, samples []container.Sample, mediaDur uint
 		dur = all
 	}
 	toR := func(v int64) int64 { return rescale(v, int64(r), ts) }
+	if p, ok := gaplessPad(g, samples[:packets], dur, start, empty, r, frame, ts); ok {
+		return packets, p
+	}
 	// the last kept packet's start on the stream's timeline: after the empty edits that
 	// lead (mov.c 4452, 4460: they count in the timestamps and in the duration)
 	lastPTS := max(sum-last-start+empty, 0)
@@ -90,4 +101,54 @@ func mp4aEnd(tc container.TrackConfig, samples []container.Sample, mediaDur uint
 		return packets, 0 // the last packet starts at or after the end: ffmpeg cuts nothing
 	}
 	return packets, span - toR(kept) // between 0 and span: kept is between 0 and last
+}
+
+// gaplessPad is the cut iTunSMPB's end padding makes at the end of the kept packets, in
+// samples at the rate r, and false when it makes none because it does not apply.
+//
+// It applies when the file states a padding and the stream's duration dur (in ticks; 0 for
+// none) is longer, as samples at r, than both the padding and the original sample count.
+// The stream then ends where the padding begins, F = duration less padding, and a kept
+// packet that reaches past F loses what lies beyond it, at most the whole packet; a packet
+// that starts at or after the duration loses nothing (libavformat/demux.c 1536-1543,
+// libavformat/mov.c 5590-5600, n9.0.2). The numbers are in ticks of the track's timescale
+// ts, like the edit list's; start and empty are the first non-empty edit's media time and
+// the empty edits before it, as in mp4aEnd, and place each packet on the stream's timeline.
+func gaplessPad(g *container.Gapless, samples []container.Sample, dur, start, empty int64, r, frame int, ts int64) (int64, bool) {
+	if g == nil || g.Padding == 0 || dur <= 0 || r <= 0 {
+		return 0, false
+	}
+	conv := func(v uint64) int64 { return rescale(int64(min(v, math.MaxInt64)), int64(r), ts) }
+	total, rem, orig := conv(uint64(dur)), conv(g.Padding), conv(g.Samples)
+	if total <= rem || total <= orig {
+		return 0, false
+	}
+	first := total - rem
+	var cum, pad int64
+	for _, s := range samples {
+		d := int64(s.Duration)
+		at := cum - start // a packet before the edit starts is before 0
+		if empty > 0 && at > math.MaxInt64-empty {
+			at = math.MaxInt64
+		} else {
+			at += empty
+		}
+		var begin int64
+		if at < 0 {
+			begin = -rescale(-at, int64(r), ts)
+		} else {
+			begin = rescale(at, int64(r), ts)
+		}
+		n := max(int64(frame), conv(uint64(d)))
+		end := int64(math.MaxInt64) // saturated: a container states these numbers
+		if begin <= math.MaxInt64-n {
+			end = begin + n
+		}
+		if n > 0 && end >= first && begin < total {
+			cut := min(end-first, n)
+			pad = min(pad, math.MaxInt64-cut) + cut
+		}
+		cum += d
+	}
+	return pad, true
 }
