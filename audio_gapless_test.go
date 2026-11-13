@@ -162,6 +162,17 @@ func TestGaplessRecord(t *testing.T) {
 	if dir == "" {
 		t.Skip("GAPLESS_RECORD=<directory> records what ffmpeg delivers for the variants")
 	}
+	// the item ahead of the track
+	for _, f := range []string{"lc", "he"} {
+		early, out := filepath.Join(dir, f+"-early.m4a"), filepath.Join(dir, f+"-early.f32")
+		if err := os.WriteFile(early, udtaBeforeTrak(t, mustRead(t, filepath.Join("testdata", "gapless", f+".m4a"))), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if b, err := exec.Command("ffmpeg", "-nostdin", "-v", "error", "-y", "-i", early, "-f", "f32le", out).CombinedOutput(); err != nil {
+			t.Fatalf("ffmpeg: %v\n%s", err, b)
+		}
+		t.Logf("%s item before the track: ffmpeg delivers %d samples", f, len(readF32(t, out))/2)
+	}
 	// the two-track file: `ffmpeg -i two.m4a -map 0:a:N -f f32le` for N = 0 and 1
 	for _, f := range []string{"lc", "he"} {
 		two := filepath.Join(dir, f+"-two.m4a")
@@ -674,6 +685,64 @@ func TestGaplessItemOnTheWrongStream(t *testing.T) {
 			if n != want {
 				t.Errorf("%s track %d: %d samples, want %d (ffmpeg gives the first %d)", c.file, id, n, want, c.ffmpegFirst)
 			}
+		}
+	}
+}
+
+// udtaBeforeTrak is a copy of an afconvert fixture with the movie's udta (the iTunSMPB) moved
+// ahead of the track, in the order mvhd, udta, trak. ffmpeg reads the item with no stream yet
+// and ignores it (libavformat/mov.c mov_read_custom, nb_streams < 1).
+func udtaBeforeTrak(t testing.TB, base []byte) []byte {
+	t.Helper()
+	b := append([]byte(nil), base...)
+	box := func(lo, hi int, name string) (int, int) {
+		for p := lo; p+8 <= hi; {
+			n := int(binary.BigEndian.Uint32(b[p:]))
+			if n < 8 || p+n > hi {
+				t.Fatalf("bad box size %d at %d", n, p)
+			}
+			if string(b[p+4:p+8]) == name {
+				return p, n
+			}
+			p += n
+		}
+		t.Fatalf("no %s box", name)
+		return 0, 0
+	}
+	moov, moovSize := box(0, len(b), "moov")
+	trak, trakSize := box(moov+8, moov+moovSize, "trak")
+	udta, udtaSize := box(moov+8, moov+moovSize, "udta")
+	if udta != trak+trakSize || udta+udtaSize != moov+moovSize {
+		t.Fatal("the fixture's moov is not mvhd, trak, udta")
+	}
+	out := append([]byte(nil), b[:trak]...)
+	out = append(append(append(out, b[udta:udta+udtaSize]...), b[trak:trak+trakSize]...), b[moov+moovSize:]...)
+	if len(out) != len(b) {
+		t.Fatalf("%d bytes, the fixture %d", len(out), len(b))
+	}
+	return out
+}
+
+// TestGaplessItemBeforeTheTrack: ffmpeg 9.0.2 delivers 12288 samples for the AAC-LC fixture
+// and 16384 for the HE-AAC one with the item ahead of the track (nothing trimmed). This
+// package reads it wherever it is and delivers 9600, a deliberate divergence stated in the
+// doc of DecodeAudioTrack.
+func TestGaplessItemBeforeTheTrack(t *testing.T) {
+	for _, c := range []struct {
+		file         string
+		want, ffmpeg int
+	}{{"lc.m4a", 9600, 12288}, {"he.m4a", 9600, 16384}} {
+		r, id := audioReader(t, udtaBeforeTrak(t, mustRead(t, filepath.Join("testdata", "gapless", c.file))))
+		bufs, err := DecodeAudioTrack(r, id, AudioConfig{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, a := range bufs {
+			n += a.Samples()
+		}
+		if n != c.want {
+			t.Errorf("%s: %d samples, want %d (ffmpeg gives %d)", c.file, n, c.want, c.ffmpeg)
 		}
 	}
 }

@@ -482,8 +482,12 @@ func FirstAudioTrack(r *container.Reader) (uint32, error) {
 //   - iTunSMPB on the wrong stream: ffmpeg attaches the item to the last stream parsed
 //     when it reads it, so in a file whose audio track comes before another track it lands
 //     on that one and ffmpeg trims no audio. Here the item trims the first audio track, as
-//     it says. (The delay's range, 0 to 16384 ticks, and the padding's conditions are
-//     ffmpeg's sanity checks on the values and are kept.)
+//     it says.
+//   - iTunSMPB before any track: ffmpeg reads the item with no stream yet and ignores it
+//     (a moov whose udta precedes the trak); here it applies wherever it is.
+//
+// The delay's range, 0 to 16384 ticks, and the padding's conditions are ffmpeg's sanity
+// checks on the values and are kept.
 func DecodeAudioTrack(r *container.Reader, trackID uint32, cfg AudioConfig) ([]Audio, error) {
 	tc, err := r.TrackConfig(trackID)
 	var samples []container.Sample
