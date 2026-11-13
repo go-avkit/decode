@@ -15,7 +15,7 @@ jobs:
   # numeric tables or in the shape of its code, or whose references cannot be
   # read. It is a required check, not a report.
   copycheck:
-    uses: go-fleettools/fleettools/.github/workflows/copycheck.yml@v0.102.0
+    uses: go-fleettools/fleettools/.github/workflows/copycheck.yml@4aa52bd375a4e9ab75fd727f19e8eeba68310103 # v0.111.0
     with:
       # The first fleettools tag that contains copycheck; the workflow and the
       # judge are pinned to the same tag.
