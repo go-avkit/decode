@@ -135,7 +135,7 @@ committed) against ffmpeg's printed digits.
 | Hybrid modulation (`exp(j2π(m+½)(λ−6)/M)`) | **derivable**: P1 eq. 11 | the sign (ffmpeg indexes its input oldest first) is checked in PS2 by the identity and the ICC = 1 streams, not assumed |
 | Which hybrid outputs are summed | 20 bands: **derivable** from P1 Fig. 4 (q0,2+q0,5, q0,3+q0,4; for bands 1 and 2 the M = 4 outputs summed in pairs, which P1 notes gives real-valued filters: ffmpeg holds them as one 2-band real prototype); 34 bands: **normative** (P1 gives only the M values) | — |
 | Hybrid band → parameter band maps (71, 91 entries) and the 10/20/34 re-mappings | **normative values** | held as data (source, weight) lists, not as code, so no function's shape is reproduced |
-| Centre frequency of each hybrid row (for the fractional delays) | **derivable**: QMF band q → `q + ½`; hybrid output m of band k split in M_k (P1 Fig. 4: 8, 4, 4) → `k + 2(m+½)/M_k` wrapped into `[k − ½, k + 3/2)` (QMF band units; a complex QMF band is sampled at 2 band widths); a summed pair takes the member that lies inside `[k, k+1)` | for 20 bands this reproduces ffmpeg's 10 values (-3, -1, 1, 3, 5, 7, 10, 14, 18, 22)/8, worked by hand; the 34-band values are derived in PS3 and checked the same way |
+| Centre frequency of each hybrid row (for the fractional delays) | **derivable**: QMF band q → `q + ½`; hybrid output m of band k split in M_k (P1 Fig. 4: 8, 4, 4) → `2(m+½)/M_k` modulo 2, taken in `[k − ½, k + 3/2)` (the earlier `k + 2(m+½)/M_k` was a slip that swaps the low and high rows of QMF 1: docs/aac-ps-hybrid.md Q7) (QMF band units; a complex QMF band is sampled at 2 band widths); a summed pair takes the member that lies inside `[k, k+1)` | for 20 bands this reproduces ffmpeg's 10 values (-3, -1, 1, 3, 5, 7, 10, 14, 18, 22)/8, worked by hand; the 34-band values are derived in PS3 and checked the same way |
 | Fractional-delay rotations `exp(−iπ·d·f)` | **derivable**: P1 §4.1 (a delay of d samples at centre frequency f) | — |
 | Fractional delays d (0.39 pre-delay; 0.43, 0.75, 0.347 per link) | **normative values** | — |
 | Link delays 3, 4, 5 slots | **derivable**: P1 §4.1 | — |
@@ -339,6 +339,20 @@ IID off (54 files) with ICC on. It never uses free borders, IPD/OPD, the extensi
 34 bands or a switch. Those are carried by the written streams (ffmpeg's reading) and
 the ISO conformance streams alone, so they come after the library path in PS2 and PS3,
 and the library comparison in PS4 can be reached without them.
+
+## PS2 as built
+
+`aac_ps_hybrid.go`: the hybrid analysis and synthesis for both layouts (71 and 91 rows),
+written from `docs/aac-ps-hybrid.md` alone (clean room). The row filters, their order and
+their centre frequencies are computed from the 26 normative taps and the derived centre
+and zero taps. The 20-band rows are sorted by centre frequency, the 34-band rows keep the
+order of band and output. The bank is wired behind `sbrState.psHybridTest`, so analysis
+then synthesis runs on a mono element's frame with the look-ahead taken from the low band
+(`d.low[k][34..39]`, zero for bands at or above `kx`); PS is not applied, and the output
+is unchanged. Decisions: Q1, the centred form with no added delay on unsplit bands; Q3, the
+history is not updated while PS is off (here it is only updated by frames that go through
+the bank). The comparison with ffmpeg's PCM (streams S1 to S6) needs the mixing of PS3 and
+the writer's PS payloads, and is left to PS3.
 
 ## PR split (each green, reviewed independently, before the next)
 

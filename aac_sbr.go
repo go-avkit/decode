@@ -78,9 +78,11 @@ type sbrState struct {
 	smoothing    uint8
 	coupling     bool
 	psSeen       bool // a PS extension was found in the payload
+	psHybridTest bool // test switch: a mono element's frame goes through the hybrid analysis and synthesis (PS2); PS is not applied to the output yet
 	psOn         bool // PS may be carried (the channel policy, aacConfig.stereoOut): its extension is parsed into ps
 	ps           psState
-	extBits      int // bits of bs_extension_data in the last frame, 0 for none
+	hyb          *psHybrid // the PS hybrid bank, made when psHybridTest first needs it
+	extBits      int       // bits of bs_extension_data in the last frame, 0 for none
 	ch           [2]sbrChannel
 	dsp          [2]*sbrChanDSP      // signal state of the channels (aac_sbr_hf.go)
 	refill       [2]bool             // a header reset: the smoothing history is refilled at the next adjustment

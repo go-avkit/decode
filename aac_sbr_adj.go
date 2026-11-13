@@ -336,6 +336,9 @@ func (s *sbrState) process(nch int, pcm, out [2][]float32, withSBR bool) {
 			kx, m, end = s.t.kx[1], s.t.m[1], int(s.ch[ch].tEnv[s.ch[ch].numEnv])
 		}
 		d.assemble(&d.x, kx, m, end)
+		if s.psHybridTest && nch == 1 {
+			s.psRoundTrip(d, kx)
+		}
 		d.syn.process(out[ch], &d.x)
 	}
 }
