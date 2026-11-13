@@ -41,6 +41,26 @@ taken), the ISO/IEC 14496-3 text, the AES papers P1 cites ([4], [10]).
 | `libavcodec/aacpsdsp_template.c:29-211` | the C kernels: sum of squares, real gain on complex, the 13-tap analysis, the all-pass link coefficients (0.65143905753106, 0.56471812200776, 0.48954165955695), the 2×2 interpolated mix with and without IPD/OPD |
 | `libavcodec/aacsbr_template.c:965-989, 1526-1559, 1753-1780` | PS extension read only when PS is signalled; SBR output `X` is 38 slots, the last 6 holding the low band only; PS applied to channel 0's `X` before both syntheses; before the first PS header the mono `X` is copied to the second channel |
 
+## Decisions and blockers before any PS code
+
+These come first because they change the scope of the PRs below.
+
+1. **Channel count can change mid-stream (decide in PS1).** With implicit
+   signalling, PS can appear only in the frames, after a mono start. The
+   output would then go from 1 channel to 2. decode's output API does not
+   allow that: `Audio.Channels`, the channel layout and the slot map are fixed
+   for a track. Options to choose from in PS1: always announce stereo for an
+   implicit mono SBR stream (ffmpeg's choice), stay mono and drop the PS data,
+   or refuse. Nothing past PS1 starts without this decision.
+2. **decode#52's blocker applies to PS files.** The edit list is applied at
+   the core rate, not the output rate. That affects the PS files too, so
+   PS4's 801-file comparison against ffmpeg depends on its fix.
+3. **The library census comes before PS2/PS3 are scoped.** Count 20 vs 34
+   bands, IPD/OPD use, frame classes and signalling (explicit, backward
+   compatible, implicit) over the 801 files (PS1 logs it). If the library uses
+   only one configuration, the others are carried by written and conformance
+   streams alone, and PS2/PS3 are sized and ordered accordingly.
+
 ## Where PS sits in decode
 
 PS runs in the QMF domain between the SBR envelope adjustment and the 64-band
@@ -67,7 +87,7 @@ Interfaces, as types to be written (names indicative):
 | `top` | `s.t.kx[1] + s.t.m[1]` | delay lines of bands at or above it are cleared each frame (ffmpeg `aacps.c:726-729`). |
 | output | two `[32][64]complex128` | channel 0 overwritten in place (L), R in the second channel's `sbrChanDSP.x`, synthesised by `dsp[1].syn` — the second channel's bank already exists for a CPE. |
 | before the first PS header, or after a PS error | — | R = L (ffmpeg copies `X`), output stereo. |
-| channel count | `aac_config.go` (decode#52) | PS signalled (explicit or backward compatible) → 2 channels from the first frame. The policy for implicit signalling (ffmpeg treats any implicit mono SBR stream as possible PS and outputs stereo, `testdata/aac/README` on he48-mono) is decided in PS4 from the 801 files' signalling census. |
+| channel count | `aac_config.go` (decode#52) | PS signalled (explicit or backward compatible) → 2 channels from the first frame. The policy for implicit signalling (ffmpeg treats any implicit mono SBR stream as possible PS and outputs stereo, `testdata/aac/README` on he48-mono) is decided in PS1 (decision 1 above), informed by the 801 files' signalling census. |
 
 ## The pipeline, stage by stage
 
@@ -122,18 +142,20 @@ committed) against ffmpeg's printed digits.
 | Pre-delay of 2 slots, the 14-slot delay, the 1-slot delay | **normative values** | — |
 | All-pass band counts 30 / 50 | **derivable**: P1 §4.1's "first 23 QMF bands": 10 hybrid + QMF 3..22 = 30; 32 hybrid + QMF 5..22 = 50 | matches |
 | Short-delay start 42 / 62 | **normative value** (QMF band 35 in both layouts, consistent) | — |
-| Link decay `a_m` | **derivable by recognition**: `a_m = exp(−d_m/7)`, d = 3, 4, 5, equal to ffmpeg's values to 14 digits; the rate 1/7 per slot is the normative value | — |
+| Link decay `a_m` (3 values) | **normative values**. They equal `exp(−d_m/7)`, d = 3, 4, 5, to 14 digits, but that formula was recognised after the fact and no source gives 1/7, so it is not a derivation | — |
 | Decay slope `clip(1 − 0.05(k − k0), 0, 1)` | k0 **derivable** (the first unsplit QMF band: row 10 / row 32); 0.05 **normative** | — |
-| Transient peak decay | **derivable by recognition**: `exp(−4/15)` = 0.76592833836465 to 14 digits | — |
+| Transient peak decay | **normative value** (0.76592833836465). It equals `exp(−4/15)` to 14 digits, recognised after the fact; no source gives 4/15 | — |
 | Transient smoothing 0.25, impact 1.5 | **normative values** | — |
 
 Summary: derivable by formula — linear IID gains, `acos(ICC)`, both mixing
 procedures, IPD/OPD angles, hybrid modulation and 20-band summing, 9 of 35
 prototype taps, centre frequencies, phase rotations, link delays, all-pass band
-counts, decay start, and (by recognition) the link decays and the peak decay.
+counts, decay start.
 Normative values only — the 10 Huffman codes, IID dB steps, the 8 ICC values,
 26 prototype taps, band maps and re-mappings, 4 fractional delays, the pre-,
-14- and 1-slot delays, 0.05, 0.25, 1.5, 0.05 ICC floor, IPD/OPD weights.
+14- and 1-slot delays, the 3 link decays and the peak decay (their exponential
+forms were recognised, not sourced), 0.05, 0.25, 1.5, 0.05 ICC floor, IPD/OPD
+weights.
 Unknown — the IPD/OPD sign rule; and whether eq. 7 or eq. 8 and the procedure-B
 conventions are the standard's (decided by measurement on conformance streams).
 This closes gap G1 of aac-design.md for PS: no float constant is missing.
@@ -163,6 +185,13 @@ adds a way to make each stage visible in ffmpeg's output.
    value, both eq. 7 and eq. 8, procedure B by a numerical 2×2
    eigendecomposition. Decoder against reference: within one float32 rounding
    plus 1e-6 of the peak, as SBR.
+   ⚠ The reference **shares every normative table** with the decoder: the
+   band maps and re-mappings, the 26 prototype taps, the Huffman pairs, the
+   ICC values, the delays and decay constants. It is independent in reading and
+   arithmetic only. An error in one of those tables, whether a wrong value,
+   a wrong sign or a wrong map entry, is invisible to it. Only the absolute
+   bound against ffmpeg's output (item 3) and the conformance streams
+   (item 4) can catch it.
 3. **ffmpeg output**, both builds already used for SBR (macOS clang `-cpuflags 0`,
    linux gcc 14 `--disable-asm`, `testdata/aac/ref*/build-info.txt`):
    - `he44-ps.aac` (committed, Apple encoder): add `ref/he44-ps.f32` and
@@ -235,7 +264,8 @@ covered by `TestAACConcurrentDecoders` under `-race`.
 1. **PS1: bitstream and tables.** `aac_ps.go` (parse, state, fix-up envelope,
    error path), `aac_ps_tables.go` (Huffman pairs, band maps and re-mappings,
    dB steps, ICC values — declared `normative-values`), generic Huffman
-   builder; the PS writer; parse tests, fuzz corpus, the real-file census. The
+   builder; the PS writer; parse tests, fuzz corpus, the real-file census
+   (decision 3). It also records the channel-count policy (decision 1). The
    decoder's output is unchanged.
 2. **PS2: hybrid banks and the hook behind a test switch.** Analysis and
    synthesis for both layouts with derived modulation and taps, the look-ahead
@@ -245,8 +275,9 @@ covered by `TestAACConcurrentDecoders` under `-race`.
 3. **PS3: decorrelator, transients, mixing.** Procedures A and B, IPD/OPD,
    interpolation, 20↔34 switching; the impulse-response reference; the
    stage-isolating written streams and `he44-ps.aac` against both ffmpeg builds.
-4. **PS4: on by default, conformance, real files, speed.** Channel count policy
-   from the census, `al_sbr_ps_*` pins in `tools/aacconf`, the 801-file
+4. **PS4: on by default, conformance, real files, speed.** Requires the fix of
+   decode#52's core-rate edit list (decision 2). It applies the channel count
+   policy chosen in PS1, `al_sbr_ps_*` pins in `tools/aacconf`, the 801-file
    comparison, the speed table against ffmpeg; README, landing and docs site.
 
 Each PR extends the read log of aac-design.md (file:lines) and `.provenance.yml`,
@@ -255,6 +286,12 @@ consulted.
 
 ## Risks
 
+The three listed first under "Decisions and blockers" (channel count, the
+core-rate edit list of decode#52, the census) come before these.
+
+- **Shared normative tables.** The reference cannot see an error in a table
+  it shares with the decoder (oracle item 2). Only ffmpeg's output and the
+  conformance streams can.
 - **Paraphrase.** The decorrelator recursion and the re-mapping functions are
   where a reviewer is most likely to find ffmpeg's shape (the grid and chirp
   precedent; copycheck missed both, fleettools#265). Mitigation: the
