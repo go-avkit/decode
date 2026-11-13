@@ -4,6 +4,7 @@
 package decode
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/bits"
 )
@@ -559,35 +560,68 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 		dim = 4
 	}
 	unsigned := cb >= 3 && cb != 5 && cb != 6
+	// The band is read with a bit cursor of its own, a position in the frame's bytes
+	// and a 64-bit window loaded at it, so that a symbol costs no call into the
+	// reader: the codeword (the table, or the tree for a code longer than the table)
+	// and the sign bits that follow it come out of one window. The reader is brought
+	// to the cursor before anything else reads (an escape, the general path) and at
+	// the end. Within the last 8 bytes of the data the window would run off the end:
+	// those symbols take the general path through the reader.
+	data := r.data
+	pos := r.bitPos()
 	for i := 0; i < len(dst); i += dim {
-		sym, ok := h.decode(r)
-		if !ok {
-			return errTruncated()
-		}
-		v := dst[i : i+dim]
-		t := &aacTuples[cb-1][sym]
-		for j := range v {
-			v[j] = int32(t[j])
-		}
-		if unsigned {
-			// the sign bits of the nonzero values, in one read, first value first
-			if nz := aacTupleNZ[cb-1][sym]; nz != 0 {
-				n := bits.OnesCount8(nz)
-				s := r.read(n)
-				// branch-free: the signs are random, so a branch on each is
-				// mispredicted about half the time
-				for j := range v {
-					if nz>>uint(j)&1 != 0 {
-						n--
-						m := -int32(s >> uint(n) & 1) // 0, or -1 for a negative value
-						v[j] = (v[j] ^ m) - m
+		var sym int
+		var s uint32 // the sign bits of the symbol, first value in the top bit
+		if bp := pos >> 3; bp+8 <= len(data) {
+			w := binary.BigEndian.Uint64(data[bp:]) << uint(pos&7) // at least 57 stream bits at the top
+			l := 0
+			if e := h.lut[w>>(64-aacLUTBits)]; e != 0 {
+				l, sym = int(e&0xff), int(e>>8)
+			} else {
+				// a codeword longer than the table: down the tree, a bit at a time
+				cur := 0
+				for {
+					c := h.node[cur][w>>(63-uint(l))&1]
+					l++
+					if c < 0 {
+						sym = int(-c - 1)
+						break
 					}
+					cur = int(c)
 				}
 			}
+			n := 0
+			if unsigned {
+				n = bits.OnesCount8(aacTupleNZ[cb-1][sym])
+			}
+			s = uint32(w << uint(l) >> uint(64-n)) // n = 0 gives 0: a shift of 64 empties a uint64
+			pos += l + n
+		} else {
+			// the general path: the reader at the cursor
+			r.skip(pos - r.bitPos())
+			var ok bool
+			if sym, ok = h.decode(r); !ok {
+				return errTruncated()
+			}
+			if unsigned {
+				s = r.read(bits.OnesCount8(aacTupleNZ[cb-1][sym]))
+				if r.overrun { // the data ends inside the sign bits
+					return errTruncated()
+				}
+			}
+			pos = r.bitPos()
+		}
+		// the values of the symbol with their signs, in one lookup: the signs are
+		// random, so a branch on each was mispredicted about half the time
+		v := dst[i : i+dim]
+		t := &aacSigned[cb-1][sym<<aacSignShift[cb-1]|int(s)]
+		for j := range v {
+			v[j] = int32(t[j])
 		}
 		if cb == 11 {
 			// escapes only where a value is the escape marker 16, known from the symbol
 			if esc := aacTupleEsc[sym]; esc != 0 {
+				r.skip(pos - r.bitPos())
 				for j := range v {
 					if esc>>uint(j)&1 == 0 {
 						continue
@@ -601,11 +635,53 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 					}
 					v[j] = m
 				}
+				pos = r.bitPos()
 			}
 		}
 	}
+	r.skip(pos - r.bitPos())
 	return nil
 }
+
+// aacSigned[cb-1][sym<<aacSignShift[cb-1] | s] is the tuple of symbol sym of the
+// spectrum codebook cb with the sign bits s applied: s holds one bit per nonzero
+// value, the first nonzero value in the top bit (1 is negative), as the stream
+// carries them after the codeword. A signed codebook (1, 2, 5, 6) has no sign
+// bits, s is 0 and the shift 0; the others have at most 4 (codebooks 3 and 4, four
+// values) or 2 (codebooks 7 to 11, two values).
+var aacSigned, aacSignShift = func() (t [11][][4]int8, shift [11]int) {
+	for cb := range t {
+		unsigned := cb+1 >= 3 && cb+1 != 5 && cb+1 != 6
+		if unsigned {
+			shift[cb] = 2
+			if cb+1 <= 4 {
+				shift[cb] = 4
+			}
+		}
+		t[cb] = make([][4]int8, len(aacSpectralCodes[cb])<<uint(shift[cb]))
+		for sym := range aacSpectralCodes[cb] {
+			nz := aacTupleNZ[cb][sym]
+			n := bits.OnesCount8(nz)
+			if !unsigned {
+				n = 0
+			}
+			for s := 0; s < 1<<uint(n); s++ {
+				e := aacTuples[cb][sym]
+				k := n
+				for j := range e {
+					if nz>>uint(j)&1 != 0 && unsigned {
+						k--
+						if s>>uint(k)&1 != 0 {
+							e[j] = -e[j]
+						}
+					}
+				}
+				t[cb][sym<<uint(shift[cb])|s] = e
+			}
+		}
+	}
+	return t, shift
+}()
 
 // aacTupleNZ has bit j set when value j of the symbol is not zero (so a sign bit
 // follows it), and aacTupleEsc, for codebook 11, when it is the escape marker 16.

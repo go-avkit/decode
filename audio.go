@@ -239,6 +239,67 @@ type AudioDecoder struct {
 	rate     int
 	skipEdit bool // skip came from the edit list
 	fed      bool // some audio has been placed
+	// gapless, when set, is where skip came from: iTunSMPB's encoder delay, or the whole
+	// packets the edit list drops if that is more (see gaplessSkip).
+	gapless *gaplessStart
+}
+
+// gaplessStart is the start of a track whose iTunSMPB gives an encoder delay: both numbers
+// are in ticks of the track's timescale.
+type gaplessStart struct {
+	delay   int64 // the encoder delay
+	dropped int64 // the packets the edit list drops whole, which are not decoded for ffmpeg
+}
+
+// skipAt is the samples to drop from the start, at the output rate r: the larger of the
+// encoder delay and the packets dropped. ffmpeg replaces the edit list's own start (the
+// dropped packets and the part of the next one) by the delay, and the packets it drops
+// are not decoded, so they count against it: a delay of 1000 with 2048 samples dropped
+// drops nothing more, a delay of 3000 drops 3000 from the start of the track.
+func (g *gaplessStart) skipAt(tc container.TrackConfig, r int) int64 {
+	return max(rescale(g.delay, int64(r), int64(tc.Timescale)), rescale(g.dropped, int64(r), int64(tc.Timescale)))
+}
+
+// maxPrimingTicks is the largest encoder delay ffmpeg takes from iTunSMPB, exclusive
+// (libavformat/mov.c 5587, n9.0.2 and master alike): a longer one is read as no delay.
+const maxPrimingTicks = 16384
+
+// useGapless makes the decoder drop what iTunSMPB says at the start of the track: its
+// encoder delay replaces the start the edit list states, as it does in ffmpeg, when it
+// is in (0, 16384) ticks. samples are the track's packets, from which the ones the edit
+// list drops whole are found.
+func (d *AudioDecoder) useGapless(g *container.Gapless, samples []container.Sample) {
+	if g == nil || g.Delay == 0 || g.Delay >= maxPrimingTicks || d.tc.Codec != "mp4a" || d.tc.Timescale == 0 {
+		return
+	}
+	d.gapless = &gaplessStart{delay: int64(g.Delay), dropped: droppedTicks(d.tc, samples)}
+	d.skip = d.gapless.skipAt(d.tc, d.rate)
+	d.skipEdit = false
+}
+
+// droppedTicks is the duration, in ticks of the track's timescale, of the packets that
+// precede the start of the first non-empty edit of the edit list altogether: ffmpeg
+// removes them from the track (a packet that holds the start is kept and cut), and with
+// no edit list, or one that starts at 0, there are none.
+func droppedTicks(tc container.TrackConfig, samples []container.Sample) int64 {
+	el := tc.EditList
+	if el == nil {
+		return 0
+	}
+	for _, e := range el.Edits {
+		if e.MediaTime == container.EmptyEdit {
+			continue
+		}
+		var cum int64
+		for _, s := range samples {
+			if cum+int64(s.Duration) > e.MediaTime {
+				break
+			}
+			cum += int64(s.Duration)
+		}
+		return cum
+	}
+	return 0
 }
 
 // audioDecoders maps a sample entry (TrackConfig.Codec) to its constructor. Each
@@ -280,7 +341,9 @@ func (d *AudioDecoder) setRate(r int) {
 	if r <= 0 || r == d.rate {
 		return
 	}
-	if d.skipEdit && !d.fed {
+	if d.gapless != nil && !d.fed {
+		d.skip = d.gapless.skipAt(d.tc, r)
+	} else if d.skipEdit && !d.fed {
 		d.skip = editSkip(d.tc.EditList, d.tc, r)
 	} else {
 		d.skip = rescale(d.skip, int64(r), int64(d.rate))
@@ -384,8 +447,43 @@ func FirstAudioTrack(r *container.Reader) (uint32, error) {
 
 // DecodeAudioTrack decodes every sample of one audio track of a demuxed file and
 // returns the PCM in presentation order, with the track's start and end trimmed as
-// its container states them (edit list, Opus pre-skip, DiscardPadding):
-// the sample count is what ffmpeg delivers.
+// its container states them (edit list, Opus pre-skip, DiscardPadding). The sample
+// count is meant to be what those edit list and gapless metadata define, measured in
+// the output rate, and is not yet in one case, a defect of this package: Matroska
+// priming and trimming are applied in milliseconds (go-avkit/decode#54).
+//
+// An MP4's iTunSMPB (container.Metadata.Gapless) is applied to an AAC track the way
+// ffmpeg 9.0.2 does (libavformat/mov.c mov_read_custom, libavformat/demux.c), to the
+// first audio track of the file, the one the item describes.
+//   - Start: an encoder delay in (0, 16384) ticks replaces the start the edit list
+//     states; the packets the edit list drops whole still count against it, so the track
+//     starts at the larger of the delay and those packets. With no edit list it starts
+//     at the delay.
+//   - End: when the padding is not 0 and the track's duration (the media header's, or
+//     the edit list's total if that is less) is longer, in samples, than both the padding
+//     and the original sample count, the track ends at the duration less the padding, in
+//     place of the end the last packet's duration gives. Otherwise, as when an edit list
+//     already cuts the track to the original count, that end stands.
+//   - The three numbers are ticks of the track's timescale and become samples of the
+//     output rate as an edit list's start does, so an HE-AAC track whose timescale is
+//     the core rate has them doubled.
+//
+// NewAudioTrack does not apply it, nor to anything but AAC in an MP4.
+//
+// It equals the count ffmpeg delivers except where ffmpeg is known to differ, which
+// are deliberate divergences:
+//   - go-avkit/decode#57: an HE-AAC MP4 track whose timescale is the core rate, with an
+//     edit list that starts after 0 and no iTunSMPB delay to replace it. The start is in
+//     core-rate ticks and is converted to the doubled output rate (1000 ticks at 22050
+//     Hz are 2000 samples at 44100 Hz); ffmpeg 9.0.2 drops 1000 of an implicitly
+//     signalled one, so it delivers 1000 more, and of an explicitly signalled one drops
+//     the packets before the start whole and none of the one that holds it.
+//   - go-avkit/decode#20: a fragmented MP4, whose edit list ffmpeg does not apply.
+//   - iTunSMPB on the wrong stream: ffmpeg attaches the item to the last stream parsed
+//     when it reads it, so in a file whose audio track comes before another track it lands
+//     on that one and ffmpeg trims no audio. Here the item trims the first audio track, as
+//     it says. (The delay's range, 0 to 16384 ticks, and the padding's conditions are
+//     ffmpeg's sanity checks on the values and are kept.)
 func DecodeAudioTrack(r *container.Reader, trackID uint32, cfg AudioConfig) ([]Audio, error) {
 	tc, err := r.TrackConfig(trackID)
 	var samples []container.Sample
@@ -395,7 +493,18 @@ func DecodeAudioTrack(r *container.Reader, trackID uint32, cfg AudioConfig) ([]A
 	if err != nil {
 		return nil, err
 	}
-	return decodeAudioDur(tc, samples, cfg, mediaDuration(r, trackID))
+	return decodeAudioGapless(tc, samples, cfg, mediaDuration(r, trackID), gaplessOf(r, trackID))
+}
+
+// gaplessOf is the iTunSMPB that applies to a track: the file's, when the track is its
+// first audio track, which is the one an Apple encoder's item describes, else nil.
+// (ffmpeg attaches it to the last stream parsed when it reads the item, libavformat/mov.c
+// mov_read_custom: see DecodeAudioTrack.)
+func gaplessOf(r *container.Reader, trackID uint32) *container.Gapless {
+	if id, err := FirstAudioTrack(r); err != nil || id != trackID {
+		return nil
+	}
+	return r.File().Metadata.Gapless
 }
 
 // mediaDuration is the duration the track's media header states, in its timescale, or 0.
@@ -420,11 +529,17 @@ func decodeAudio(tc container.TrackConfig, samples []container.Sample, cfg Audio
 // padding (a last sample of 1922 where the others have 2048), and ffmpeg trims the last
 // packet to it; an edit list in a movie timescale of milliseconds cannot say it exactly.
 func decodeAudioDur(tc container.TrackConfig, samples []container.Sample, cfg AudioConfig, mediaDur uint64) ([]Audio, error) {
+	return decodeAudioGapless(tc, samples, cfg, mediaDur, nil)
+}
+
+// decodeAudioGapless is decodeAudioDur with the iTunSMPB of the file, nil for none.
+func decodeAudioGapless(tc container.TrackConfig, samples []container.Sample, cfg AudioConfig, mediaDur uint64, g *container.Gapless) ([]Audio, error) {
 	d, err := NewAudioTrack(tc, cfg)
 	if err != nil {
 		return nil, err
 	}
 	defer d.Close()
+	d.useGapless(g, samples)
 	// limit is how many samples the track presents, at the rate r
 	limit := func(r int) int64 {
 		if tc.Codec == "mp4a" && tc.Timescale > 0 {
@@ -439,7 +554,7 @@ func decodeAudioDur(tc container.TrackConfig, samples []container.Sample, cfg Au
 
 	mp4 := tc.Codec == "mp4a" && tc.Timescale > 0
 	if mp4 {
-		n, _ := mp4aEnd(tc, samples, mediaDur, d.rate, 0)
+		n, _ := mp4aEndGapless(tc, nil, samples, mediaDur, d.rate, 0)
 		samples = samples[:n]
 	}
 	lim := limit(d.rate)
@@ -479,7 +594,7 @@ func decodeAudioDur(tc container.TrackConfig, samples []container.Sample, cfg Au
 	fs, err := d.Flush()
 	err = errors.Join(emit(fs), err)
 	if mp4 {
-		_, pad := mp4aEnd(tc, samples, mediaDur, d.rate, codecFrame(d.codec))
+		_, pad := mp4aEndGapless(tc, g, samples, mediaDur, d.rate, codecFrame(d.codec))
 		out = trimTail(out, pad)
 	}
 	return out, err

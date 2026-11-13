@@ -11,10 +11,11 @@ import "github.com/go-avkit/bitstream"
 // overrun, so that a parser checks once per element instead of once per field.
 type aacBits struct {
 	r       *bitstream.Reader
+	data    []byte // the bytes r reads, for a loop that keeps its own cursor (band)
 	overrun bool
 }
 
-func newAACBits(b []byte) *aacBits { return &aacBits{r: bitstream.NewReader(b)} }
+func newAACBits(b []byte) *aacBits { return &aacBits{r: bitstream.NewReader(b), data: b} }
 
 // left returns how many bits remain.
 func (r *aacBits) left() int { return r.r.Left() }
