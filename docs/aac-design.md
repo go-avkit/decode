@@ -163,6 +163,20 @@ SBR mono channel. Of the 822 real HE-AAC files tried, 801 signal PS, so this is 
 common case in practice and the first thing to decide after the conformance streams:
 ffmpeg decodes those to stereo.
 
+Presentation (`audio.go`). An MP4 whose configuration does not signal SBR (ffmpeg's
+`-c copy` of an ADTS stream) says AAC-LC at the core rate, and its edit list is in
+samples of the rate the track states: the output rate is known only when the first frame
+turns SBR on. `AudioDecoder.setRate` then converts the start still to drop (from the
+edit list again, exactly, when nothing has been placed) and the position, and
+`decodeAudio` the length the edit list states. Before this, such a track came out at half
+its length. Open: on 160 of the 817 real files decoded (all 817 have a movie timescale
+of 1000 and no iTunSMPB tag, so neither is what tells the 160 from the rest) ffmpeg presents fewer samples than the edit list and the decoded
+frames allow: 38 to 40 fewer on PS streams (edit `[media 0, duration D ms]`), 126 or
+1150 (126 + 1024) fewer on mono and stereo SBR streams (`[media 5058, duration D ms]`),
+with the start of the output equal to 7e-7 and the difference at the END; none on the
+others, which have the same kind of edit list. ffmpeg's `libavformat/mov.c`, which decides
+it, is not among the sources read here.
+
 | File:lines | What it tells us | Used for |
 |------------|------------------|----------|
 | `libavcodec/aacsbr_template.c:1363-1405` | analysis: 320 samples of history, 32 new per slot, reversed window multiply, `sum64x5`, a 64-point transform with a pre- and a post-shuffle | the form of the analysis and the stage order in `sbrAnalysis.process` |

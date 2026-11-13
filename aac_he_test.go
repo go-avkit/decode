@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -160,5 +161,86 @@ func TestAACDecodeHEFirstFrames(t *testing.T) {
 	c, _ = newAAC(aacHETrack(fx, "implicit"), AudioConfig{MaxBlockSamples: 1024})
 	if _, err = c.decode(fr[0]); err == nil {
 		t.Fatal("SBR frames over the block limit")
+	}
+}
+
+// TestAACDecodeHEImplicitEditList: an MP4 made with `ffmpeg -c copy` from an HE-AAC
+// ADTS stream says AAC-LC at the core rate (SBR is implicit) and carries an edit list.
+// The rate is known only when the first frame turns SBR on, so the start and the
+// length the edit list states are converted then: the track has the samples ffmpeg
+// gives (twice the core's frames' worth, minus the priming), equal to 2e-5.
+func TestAACDecodeHEImplicitEditList(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		samples int
+	}{{"imp-he44-st", 94208}, {"imp-he32-st", 69632}} {
+		b, err := os.ReadFile(filepath.Join("testdata", "aac", tc.name+".mp4"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := container.NewReader(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := FirstAudioTrack(r)
+		bufs, err := DecodeAudioTrack(r, id, AudioConfig{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref := readF32(t, filepath.Join("testdata", "aac", "ref", tc.name+".f32"))
+		var got []float32
+		n := 0
+		for _, a := range bufs {
+			n += a.Samples()
+			for i := 0; i+4 <= len(a.Data); i += 4 {
+				got = append(got, math.Float32frombits(binary.LittleEndian.Uint32(a.Data[i:])))
+			}
+		}
+		if n != tc.samples || len(got) != len(ref) {
+			t.Errorf("%s: %d samples (%d values), ffmpeg gives %d (%d)", tc.name, n, len(got), tc.samples, len(ref))
+			continue
+		}
+		var worst float64
+		for i, v := range got {
+			worst = math.Max(worst, math.Abs(float64(v)-float64(ref[i])))
+		}
+		t.Logf("%s: %d samples, largest difference to ffmpeg %.2e", tc.name, n, worst)
+		// over the whole track ffmpeg's float32 arithmetic drifts further than over
+		// the first 16 frames of TestAACDecodeHE (1.0e-5 on he32-st, 1.2e-6 on he44-st)
+		if worst > 2e-5 {
+			t.Errorf("%s: differs from ffmpeg by %.2e", tc.name, worst)
+		}
+	}
+}
+
+// TestAACDecodeHERateChange: when SBR turns on after audio has been placed (an LC frame
+// first, as a stream that signals nothing may do), what remains of the start to drop and
+// the position follow the new rate: 3000 samples of start at the core rate are 1976
+// after the first frame, which are 3952 at twice the rate, dropped over two frames.
+func TestAACDecodeHERateChange(t *testing.T) {
+	fx := aacHEFixtures[0]
+	_, fr := aacADTSFrames(t, filepath.Join("testdata", "aac", fx.name))
+	tc := aacHETrack(fx, "implicit")
+	tc.Timescale = 22050
+	tc.EditList = &container.EditList{MovieTimescale: 22050, Edits: []container.Edit{{MediaTime: 3000}}}
+	d, err := NewAudioTrack(tc, AudioConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, frame := range [][]byte{silentFrame(2), fr[0], fr[1]} {
+		out, err := d.DecodeSample(container.Sample{Data: frame})
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch i {
+		case 0, 1:
+			if len(out) != 0 {
+				t.Fatalf("frame %d is still inside the start: %+v", i, out)
+			}
+		case 2:
+			if len(out) != 1 || out[0].Samples() != 2048-1904 || out[0].SampleRate != 44100 || out[0].PTS != 0 {
+				t.Fatalf("frame 2: %d buffers, first %d samples at %d Hz, PTS %d", len(out), out[0].Samples(), out[0].SampleRate, out[0].PTS)
+			}
+		}
 	}
 }

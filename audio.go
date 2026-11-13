@@ -231,6 +231,14 @@ type AudioDecoder struct {
 	skip   int64 // samples still to drop from the start
 	pos    int64 // presentation position of the next sample delivered
 	closed bool
+	// tc and rate are what skip was computed from: the codec's output rate when the
+	// decoder was made. A codec whose rate is known only from its first frame (AAC
+	// with SBR that its configuration does not signal) changes it then, and skip and
+	// pos, which are in samples of that rate, follow (setRate).
+	tc       container.TrackConfig
+	rate     int
+	skipEdit bool // skip came from the edit list
+	fed      bool // some audio has been placed
 }
 
 // audioDecoders maps a sample entry (TrackConfig.Codec) to its constructor. Each
@@ -256,10 +264,29 @@ func NewAudioTrack(tc container.TrackConfig, cfg AudioConfig) (*AudioDecoder, er
 	// first-packet allowance): ffmpeg shifts the timestamps by it and drops
 	// nothing, except for Opus, whose pre-skip is the codec's own (priming).
 	skip := int64(c.priming())
+	fromEdit := false
 	if skip == 0 && tc.EditList != nil {
 		skip = editSkip(tc.EditList, tc, c.sampleRate())
+		fromEdit = true
 	}
-	return &AudioDecoder{codec: c, cfg: cfg, skip: skip}, nil
+	return &AudioDecoder{codec: c, cfg: cfg, skip: skip, tc: tc, rate: c.sampleRate(), skipEdit: fromEdit}, nil
+}
+
+// setRate follows a change of the codec's output rate to r: the start still to drop
+// and the position are in samples of the rate, so they are converted. Before any
+// audio has been placed the start is computed again from the edit list at the new
+// rate, exactly; after, what remains of it is scaled.
+func (d *AudioDecoder) setRate(r int) {
+	if r <= 0 || r == d.rate {
+		return
+	}
+	if d.skipEdit && !d.fed {
+		d.skip = editSkip(d.tc.EditList, d.tc, r)
+	} else {
+		d.skip = rescale(d.skip, int64(r), int64(d.rate))
+	}
+	d.pos = rescale(d.pos, int64(r), int64(d.rate))
+	d.rate = r
 }
 
 // editSkip reads the media time of the first non-empty edit, which is where the
@@ -323,6 +350,8 @@ func (d *AudioDecoder) Close() error {
 func (d *AudioDecoder) place(in []Audio) []Audio {
 	out := in[:0]
 	for _, a := range in {
+		d.setRate(a.SampleRate)
+		d.fed = true
 		n := int64(a.Samples())
 		if d.skip > 0 {
 			cut := min(d.skip, n)
@@ -377,12 +406,20 @@ func decodeAudio(tc container.TrackConfig, samples []container.Sample, cfg Audio
 	}
 	defer d.Close()
 	limit := presentedSamples(tc, d.codec.sampleRate())
+	fromEdit := limit >= 0
 	if limit < 0 {
 		limit = d.codec.end(tc, samples)
 	}
+	limRate := d.rate
 	var out []Audio
 	var total int64
 	emit := func(fs []Audio) error {
+		if d.rate != limRate && fromEdit {
+			// the codec's rate changed with its first frame: the length the edit list
+			// states is in samples of the new one
+			limit = presentedSamples(tc, d.rate)
+		}
+		limRate = d.rate
 		for _, a := range fs {
 			if limit >= 0 && a.PTS+int64(a.Samples()) > limit {
 				keep := max(limit-a.PTS, 0)

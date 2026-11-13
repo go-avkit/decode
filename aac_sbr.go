@@ -186,7 +186,12 @@ func (p *aacParser) enableSBR() { p.sbrOn = true }
 
 // sbrOf returns the SBR state of the channel element with this type and instance
 // tag, made on first use, or nil when the stream has more elements than a frame can
-// hold.
+// hold. The states are per decoder and at most aacMaxElements of them exist whatever
+// the stream does: they are keyed by type and tag, so two elements of one frame with
+// the same type and tag (only a hostile or broken stream has them) share one state,
+// whose data the later fill element replaces and which a fault in it turns off for
+// both: the output of such a frame is wrong, never unsafe (aacDecoder uses the data
+// only while the state is on).
 func (p *aacParser) sbrOf(id, tag uint8) *sbrState {
 	for _, e := range p.sbrStates {
 		if e.id == id && e.tag == tag {
