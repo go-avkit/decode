@@ -95,69 +95,184 @@ type psState struct {
 	buf [sbrMaxPayload]byte // the data being parsed
 }
 
-// fail turns PS off until the next header and clears the parameters.
+// A psCoding states how the indices of one parameter are coded (docs/aac-ps-syntax.md,
+// section 5): the frequency-delta Huffman table (the time-delta one follows it), the
+// range an index must keep, or, for IPD and OPD, that the running value wraps modulo 8.
+type psCoding struct {
+	table  int
+	lo, hi int
+	wrap   bool
+}
+
+var (
+	psCodeIIDFine   = psCoding{table: psHuffIIDFine, lo: -15, hi: 15}
+	psCodeIIDCoarse = psCoding{table: psHuffIIDCoarse, lo: -7, hi: 7}
+	psCodeICC       = psCoding{table: psHuffICC, lo: 0, hi: 7}
+	psCodeIPD       = psCoding{table: psHuffIPD, wrap: true}
+	psCodeOPD       = psCoding{table: psHuffOPD, wrap: true}
+)
+
+// psBits reads the fields of one ps_data inside its own nbits: a read that crosses
+// the end (or a Huffman code that does not finish) sets bad and yields zeros, so that
+// a parser can read a whole stage and check once.
+type psBits struct {
+	b   *aacBits
+	end int
+	bad bool
+}
+
+func (s *psBits) pos() int { return s.b.bitPos() }
+
+// take reads an n-bit unsigned field.
+func (s *psBits) take(n int) int {
+	if s.bad || s.pos()+n > s.end {
+		s.bad = true
+		return 0
+	}
+	return int(s.b.read(n))
+}
+
+// symbol reads one Huffman symbol.
+func (s *psBits) symbol(h *aacHuff) int {
+	if s.bad {
+		return 0
+	}
+	v, ok := h.decode(s.b)
+	if !ok || s.pos() > s.end {
+		s.bad = true
+		return 0
+	}
+	return v
+}
+
+// skip moves n bits forward.
+func (s *psBits) skip(n int) {
+	if s.bad || s.pos()+n > s.end {
+		s.bad = true
+		return
+	}
+	s.b.skip(n)
+}
+
+// fail turns PS off until the next header and clears the four parameter arrays.
 func (p *psState) fail() {
-	p.start = false
 	p.iid, p.icc, p.ipd, p.opd = psParams{}, psParams{}, psParams{}, psParams{}
+	p.start = false
 }
 
-// parse reads the ps_data of nbits bits that start at r's position and moves r to
-// their end. A fault is not returned: PS is turned off (fail) and the caller goes on.
+// parse reads one ps_data of nbits bits from r and leaves r exactly nbits further.
 func (p *psState) parse(r *aacBits, nbits int) {
-	if nbits > 8*len(p.buf) { // the syntax cannot say it (an extension is at most 270 bytes)
+	p.hdr, p.ipdopdSent, p.extraEnvelop, p.slack = false, false, false, 0
+	if nbits < 0 {
+		p.fail()
+		return
+	}
+	if nbits > 8*len(p.buf) || nbits > r.left() {
+		p.fail()
 		r.skip(nbits)
+		return
+	}
+	for i := 0; i < nbits; i += 8 {
+		n := min(8, nbits-i)
+		p.buf[i/8] = byte(r.read(n) << (8 - n))
+	}
+	s := &psBits{b: newAACBits(p.buf[:(nbits+7)/8]), end: nbits}
+	if p.frame(s) != nil {
 		p.fail()
 		return
 	}
-	n := (nbits + 7) / 8
-	for i := 0; i < n; i++ {
-		take := min(8, nbits-8*i)
-		p.buf[i] = byte(r.read(take) << uint(8-take))
-	}
-	sub := newAACBits(p.buf[:n])
-	err := p.data(sub)
-	if err == nil && (sub.overrun || sub.bitPos() > nbits) {
-		err = psErr("data of %d bits read %d", nbits, sub.bitPos())
-	}
-	if err != nil {
-		p.fail()
-		return
-	}
-	p.slack = nbits - sub.bitPos()
+	p.slack = nbits - s.pos()
 }
 
-// data reads ps_data.
-func (p *psState) data(r *aacBits) error {
-	p.hdr, p.ipdopdSent, p.extraEnvelop = false, false, false
-	if r.bit() != 0 { // enable_ps_header
-		p.hdr = true
-		if err := p.header(r); err != nil {
+// frame reads the fields in order and finishes the frame's state.
+func (p *psState) frame(s *psBits) error {
+	if err := p.header(s); err != nil {
+		return err
+	}
+	p.frameClass = uint8(s.take(1))
+	p.numEnvOld = p.numEnv
+	p.numEnv = psEnvOf[p.frameClass][s.take(2)]
+	if err := p.borders(s); err != nil {
+		return err
+	}
+	if err := p.parameters(s); err != nil {
+		return err
+	}
+	if err := p.extension(s); err != nil {
+		return err
+	}
+	if s.bad {
+		return psErr("fields run past the end of the data")
+	}
+	if err := p.closing(); err != nil {
+		return err
+	}
+	if p.enableIID || p.enableICC {
+		p.is34Old = p.is34
+		p.is34 = p.enableIID && p.nrIID == 34 || p.enableICC && p.nrICC == 34
+	}
+	if p.hdr {
+		p.start = true
+	}
+	return nil
+}
+
+// mode reads a 3-bit resolution mode; 6 and 7 are reserved.
+func psMode(s *psBits, what string) (int, error) {
+	m := s.take(3)
+	if m > 5 {
+		return 0, psErr("reserved %s mode %d", what, m)
+	}
+	return m, nil
+}
+
+// header reads the optional header and updates what persists.
+func (p *psState) header(s *psBits) error {
+	if s.take(1) == 0 {
+		return nil
+	}
+	p.hdr = true
+	var err error
+	if p.enableIID = s.take(1) == 1; p.enableIID {
+		if p.iidMode, err = psMode(s, "IID"); err != nil {
 			return err
 		}
+		p.nrIID = psBandsOf[p.iidMode]
+		p.nrIPDOPD = psIPDBandsOf[p.iidMode]
+		p.iidQuant = p.iidMode >= 3
 	}
-	p.frameClass = uint8(r.bit())
-	p.numEnvOld = p.numEnv
-	p.numEnv = psEnvOf[p.frameClass][r.read(2)]
+	if p.enableICC = s.take(1) == 1; p.enableICC {
+		if p.iccMode, err = psMode(s, "ICC"); err != nil {
+			return err
+		}
+		p.nrICC = psBandsOf[p.iccMode]
+	}
+	p.enableExt = s.take(1) == 1
+	return nil
+}
+
+// borders sets the envelope borders: computed for a fixed class, read for a variable one.
+func (p *psState) borders(s *psBits) error {
 	p.border[0] = -1
 	for e := 1; e <= p.numEnv; e++ {
 		if p.frameClass == 0 {
-			// the frame cut in numEnv equal parts, each border the last slot of its part
 			p.border[e] = int8(e*psSlots/p.numEnv - 1)
 			continue
 		}
-		p.border[e] = int8(r.read(5))
-		if p.border[e] < p.border[e-1] {
-			return psErr("borders %d then %d", p.border[e-1], p.border[e])
+		b := s.take(5)
+		if b < int(p.border[e-1]) {
+			return psErr("envelope border %d falls to %d", e, b)
 		}
+		p.border[e] = int8(b)
 	}
+	return nil
+}
+
+// parameters reads all IID envelopes, then all ICC envelopes.
+func (p *psState) parameters(s *psBits) error {
 	if p.enableIID {
-		code, lim := psHuffIIDCoarse, 7
-		if p.iidQuant {
-			code, lim = psHuffIIDFine, 15
-		}
 		for e := 0; e < p.numEnv; e++ {
-			dt := int(r.bit())
-			if err := p.readEnvelope(r, &p.iid, e, p.nrIID, code+dt, dt != 0, -lim, lim, 0); err != nil {
+			if err := p.envelope(s, &p.iid, e, p.iidCoding(), p.nrIID); err != nil {
 				return err
 			}
 		}
@@ -166,175 +281,132 @@ func (p *psState) data(r *aacBits) error {
 	}
 	if p.enableICC {
 		for e := 0; e < p.numEnv; e++ {
-			dt := int(r.bit())
-			if err := p.readEnvelope(r, &p.icc, e, p.nrICC, psHuffICC+dt, dt != 0, 0, 7, 0); err != nil {
+			if err := p.envelope(s, &p.icc, e, &psCodeICC, p.nrICC); err != nil {
 				return err
 			}
 		}
 	} else {
 		p.icc = psParams{}
 	}
-	if p.enableExt {
-		if err := p.extensions(r); err != nil {
-			return err
+	return nil
+}
+
+// iidCoding is the coding of IID at the resolution in force.
+func (p *psState) iidCoding() *psCoding {
+	if p.iidQuant {
+		return &psCodeIIDFine
+	}
+	return &psCodeIIDCoarse
+}
+
+// envelope reads the time-delta flag and the nb indices of envelope e of par.
+func (p *psState) envelope(s *psBits, par *psParams, e int, c *psCoding, nb int) error {
+	tab := c.table
+	ref := &par[max(p.numEnvOld-1, 0)]
+	if e > 0 {
+		ref = &par[e-1]
+	}
+	timeDelta := s.take(1) == 1
+	if timeDelta {
+		tab++
+	}
+	row, prev := &par[e], 0
+	for b := 0; b < nb; b++ {
+		v := int(aacPSHuffSyms[tab][s.symbol(psHuff[tab])]) + psHuffOffset[tab]
+		if timeDelta {
+			v += int(ref[b])
+		} else {
+			v += prev
+		}
+		if c.wrap {
+			v &= 7
+		} else if v < c.lo || v > c.hi {
+			return psErr("index %d of band %d out of range %d..%d", v, b, c.lo, c.hi)
+		}
+		row[b], prev = int8(v), v
+	}
+	return nil
+}
+
+// extension reads the extension: items of a 2-bit id inside a budget of 8*size bits.
+func (p *psState) extension(s *psBits) error {
+	if !p.enableExt {
+		p.afterExtension()
+		return nil
+	}
+	size := s.take(4)
+	if size == 15 {
+		size += s.take(8)
+	}
+	budget := 8 * size
+	for budget >= 8 {
+		id := s.take(2)
+		budget -= 2
+		if id == 0 {
+			at := s.pos()
+			p.ipdopd(s)
+			budget -= s.pos() - at
 		}
 	}
-	if err := p.closeEnvelopes(); err != nil {
-		return err
+	if budget < 0 {
+		return psErr("extension overruns its size")
 	}
-	p.is34Old = p.is34
-	if p.enableIID || p.enableICC {
-		p.is34 = (p.enableIID && p.nrIID == 34) || (p.enableICC && p.nrICC == 34)
-	}
+	s.skip(budget)
+	p.afterExtension()
+	return nil
+}
+
+// afterExtension clears IPD and OPD when they are not in force.
+func (p *psState) afterExtension() {
 	if !p.enableIPDOPD {
 		p.ipd, p.opd = psParams{}, psParams{}
 	}
-	if p.hdr {
-		p.start = true
-	}
-	return nil
 }
 
-// header reads the rest of the header: the IID and ICC modes and the extension flag.
-func (p *psState) header(r *aacBits) error {
-	if p.enableIID = r.bit() != 0; p.enableIID {
-		m := int(r.read(3))
-		if m >= len(psBandsOf) {
-			return psErr("iid_mode %d is reserved", m)
-		}
-		p.iidMode, p.iidQuant = m, m > 2
-		p.nrIID, p.nrIPDOPD = psBandsOf[m], psIPDBandsOf[m]
+// ipdopd reads the IPD and OPD item of the extension.
+// IPD and OPD wrap and have no range, so reading them cannot fail on a value; a read
+// past the end is caught by the frame (s.bad).
+func (p *psState) ipdopd(s *psBits) {
+	if p.enableIPDOPD = s.take(1) == 1; !p.enableIPDOPD {
+		return
 	}
-	if p.enableICC = r.bit() != 0; p.enableICC {
-		m := int(r.read(3))
-		if m >= len(psBandsOf) {
-			return psErr("icc_mode %d is reserved", m)
-		}
-		p.iccMode, p.nrICC = m, psBandsOf[m]
+	p.ipdopdSent = true
+	for e := 0; e < p.numEnv; e++ {
+		_ = p.envelope(s, &p.ipd, e, &psCodeIPD, p.nrIPDOPD)
+		_ = p.envelope(s, &p.opd, e, &psCodeOPD, p.nrIPDOPD)
 	}
-	p.enableExt = r.bit() != 0
-	return nil
+	s.take(1)
 }
 
-// readEnvelope reads the n indices of envelope e of one parameter with Huffman code
-// code, coded as differences to the previous band (dt false) or to the same band of
-// the previous envelope (dt true, the last envelope of the previous frame for the
-// first one). Sums wrap with mask when it is not 0 and must lie in lo..hi.
-func (p *psState) readEnvelope(r *aacBits, par *psParams, e, n, code int, dt bool, lo, hi, mask int) error {
-	prev := e - 1
-	if e == 0 {
-		prev = max(p.numEnvOld-1, 0)
-	}
-	v := 0
-	for b := 0; b < n; b++ {
-		s, ok := psHuff[code].decode(r)
-		if !ok {
-			return errTruncated()
-		}
-		d := int(aacPSHuffSyms[code][s]) + psHuffOffset[code]
-		if dt {
-			v = int(par[prev][b]) + d
-		} else {
-			v += d
-		}
-		if mask != 0 {
-			v &= mask
-		}
-		if v < lo || v > hi {
-			return psErr("index %d outside %d to %d", v, lo, hi)
-		}
-		par[e][b] = int8(v)
-	}
-	return nil
-}
-
-// extensions reads the extension of the header's flag: a byte count, then extensions
-// of a 2-bit id each, until fewer than 8 bits remain. Only id 0 (IPD and OPD) is
-// defined; the others have no known length and are passed over as the standard's
-// loop does, taking their id bits only.
-func (p *psState) extensions(r *aacBits) error {
-	count := int(r.read(4))
-	if count == 15 {
-		count += int(r.read(8))
-	}
-	left := 8 * count
-	for left > 7 {
-		id := r.read(2)
-		left -= 2
-		if id == 0 {
-			n, err := p.ipdopd(r)
-			if err != nil {
-				return err
-			}
-			left -= n
-		}
-	}
-	if left < 0 {
-		return psErr("extension overflows by %d bits", -left)
-	}
-	r.skip(left)
-	return nil
-}
-
-// ipdopd reads the extension 0: a flag, IPD and OPD of every envelope, a reserved
-// bit. It returns its length in bits.
-func (p *psState) ipdopd(r *aacBits) (int, error) {
-	start := r.bitPos()
-	if p.enableIPDOPD = r.bit() != 0; p.enableIPDOPD {
-		p.ipdopdSent = true
-		for e := 0; e < p.numEnv; e++ {
-			dt := int(r.bit())
-			if err := p.readEnvelope(r, &p.ipd, e, p.nrIPDOPD, psHuffIPD+dt, dt != 0, 0, 7, 7); err != nil {
-				return 0, err
-			}
-			dt = int(r.bit())
-			if err := p.readEnvelope(r, &p.opd, e, p.nrIPDOPD, psHuffOPD+dt, dt != 0, 0, 7, 7); err != nil {
-				return 0, err
-			}
-		}
-	}
-	r.skip(1) // reserved_ps
-	return r.bitPos() - start, nil
-}
-
-// closeEnvelopes makes the frame end at its last slot: when there is no envelope or
-// the last border is short of the end, one more envelope repeats the last one (the
-// last of the previous frame when there is none) and ends at the last slot. A repeated
-// IID index is checked again, the resolution may have changed since it was read (an ICC
-// index is valid whatever the resolution, and so is one that was cleared).
-func (p *psState) closeEnvelopes() error {
-	if p.numEnv > 0 && int(p.border[p.numEnv]) == psSlots-1 {
+// closing adds the envelope that ends at slot 31 when the last one ends before it.
+func (p *psState) closing() error {
+	if p.numEnv > 0 && p.border[p.numEnv] >= 31 {
 		return nil
 	}
-	src := p.numEnv - 1
+	dst, src := p.numEnv, p.numEnv-1
 	if p.numEnv == 0 {
 		src = p.numEnvOld - 1
 	}
-	if src >= 0 && src != p.numEnv {
+	if src >= 0 {
 		if p.enableIID {
-			p.iid[p.numEnv] = p.iid[src]
+			copy(p.iid[dst][:p.nrIID], p.iid[src][:p.nrIID])
+			c := p.iidCoding()
+			for _, v := range p.iid[dst][:p.nrIID] {
+				if int(v) < c.lo || int(v) > c.hi {
+					return psErr("repeated IID index %d out of range %d..%d", v, c.lo, c.hi)
+				}
+			}
 		}
 		if p.enableICC {
-			p.icc[p.numEnv] = p.icc[src]
+			copy(p.icc[dst][:p.nrICC], p.icc[src][:p.nrICC])
 		}
 		if p.enableIPDOPD {
-			p.ipd[p.numEnv] = p.ipd[src]
-			p.opd[p.numEnv] = p.opd[src]
-		}
-	}
-	if p.enableIID {
-		lim := 7
-		if p.iidQuant {
-			lim = 15
-		}
-		for _, v := range p.iid[p.numEnv][:p.nrIID] {
-			if int(v) < -lim || int(v) > lim {
-				return psErr("repeated IID index %d", v)
-			}
+			copy(p.ipd[dst][:p.nrIPDOPD], p.ipd[src][:p.nrIPDOPD])
+			copy(p.opd[dst][:p.nrIPDOPD], p.opd[src][:p.nrIPDOPD])
 		}
 	}
 	p.numEnv++
-	p.border[p.numEnv] = psSlots - 1
+	p.border[p.numEnv] = 31
 	p.extraEnvelop = true
 	return nil
 }
