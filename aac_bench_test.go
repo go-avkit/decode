@@ -74,7 +74,7 @@ func BenchmarkAACDecodeReuse(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, s := range samples {
-			if err := d.decodeInto(s.Data, dst); err != nil {
+			if _, err := d.decodeInto(s.Data, dst); err != nil {
 				b.Fatal(err)
 			}
 		}

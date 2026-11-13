@@ -8,8 +8,10 @@ import (
 )
 
 // AudioSpecificConfig and the ADTS header, from ISO/IEC 14496-3 as known to the
-// author (clause and table numbers not verified). Only AAC-LC (audio object type 2) is decoded: Main, SSR, LTP,
-// SBR and PS are refused with ErrAudioUnsupported.
+// author (clause and table numbers not verified). AAC-LC (audio object type 2) is
+// decoded, with SBR over it (HE-AAC v1, at twice the rate; PS is signalled but not
+// decoded). Main, SSR, LTP, the downsampled SBR mode, and 960-sample frames are
+// refused with ErrAudioUnsupported.
 
 // aacRates are the sampling frequencies of sampling_frequency_index 0 to 12.
 var aacRates = [13]int{96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350}
@@ -112,6 +114,19 @@ type aacConfig struct {
 	// config is channel_configuration; pce is set when it is 0.
 	config int
 	pce    *aacPCE
+	// sbr is set when the AudioSpecificConfig signals SBR (explicitly or backward
+	// compatibly): the output is at twice the rate. ps says Parametric Stereo is
+	// signalled too; it is not decoded, the SBR output is the core's mono channel.
+	sbr, ps bool
+}
+
+// outRate is the sampling rate of the decoder's output, the SBR one when SBR is
+// signalled.
+func (c aacConfig) outRate() int {
+	if c.sbr {
+		return 2 * c.rate
+	}
+	return c.rate
 }
 
 // aacChannelConfig returns the channel count of a channel_configuration
@@ -171,12 +186,23 @@ func parseAudioSpecificConfig(b []byte) (aacConfig, error) {
 	if r.overrun {
 		return c, fmt.Errorf("%w: truncated AudioSpecificConfig", ErrAudioConfig)
 	}
-	switch obj {
-	case aacObjLC:
-	case aacObjSBR, aacObjPS:
-		return c, fmt.Errorf("%w: HE-AAC (audio object type %d): SBR and PS are not decoded", ErrAudioUnsupported, obj)
-	default:
-		return c, fmt.Errorf("%w: AAC audio object type %d, only AAC-LC (2)", ErrAudioUnsupported, obj)
+	// explicit SBR (and PS): the first rate is the core's, the extension rate the
+	// output's, and the object type of the core follows
+	extRate := 0
+	if obj == aacObjSBR || obj == aacObjPS {
+		c.sbr, c.ps = true, obj == aacObjPS
+		ei, err := aacRateIndex(r)
+		if err != nil {
+			return c, err
+		}
+		extRate = aacRates[ei]
+		obj = aacObjectType(r)
+		if r.overrun {
+			return c, fmt.Errorf("%w: truncated AudioSpecificConfig", ErrAudioConfig)
+		}
+	}
+	if obj != aacObjLC {
+		return c, fmt.Errorf("%w: AAC audio object type %d, only AAC-LC (2) and HE-AAC over it", ErrAudioUnsupported, obj)
 	}
 	// GASpecificConfig (Table 4.1).
 	if r.bit() != 0 {
@@ -186,6 +212,11 @@ func parseAudioSpecificConfig(b []byte) (aacConfig, error) {
 		return c, fmt.Errorf("%w: AAC-LC over a core coder", ErrAudioUnsupported)
 	}
 	r.skip(1) // extensionFlag: its fields exist for the error resilient types only
+	if r.overrun {
+		// the flags cannot overrun after a plain AAC-LC header (its bytes hold three
+		// more bits) but can after the extension fields of an explicit SBR one
+		return c, fmt.Errorf("%w: truncated AudioSpecificConfig", ErrAudioConfig)
+	}
 	if c.config == 0 {
 		p, err := parsePCE(r)
 		if err != nil {
@@ -201,21 +232,43 @@ func parseAudioSpecificConfig(b []byte) (aacConfig, error) {
 	// The three flags above cannot overrun: the bytes that held the fields before
 	// them hold three more bits, whatever the escapes made the fields take.
 	//
-	// syncExtensionType 0x2b7 then extensionAudioObjectType 5 and sbrPresentFlag:
-	// backward compatible SBR. 0x548 is PS. Both are HE-AAC.
-	if r.left() >= 16 {
+	// syncExtensionType 0x2b7 then extensionAudioObjectType 5, sbrPresentFlag and the
+	// extension sampling frequency, then perhaps 0x548 and psPresentFlag: backward
+	// compatible SBR and PS.
+	c.rateIndex, c.rate = ri, aacRates[ri]
+	if !c.sbr && r.left() >= 16 {
 		switch r.read(11) {
 		case 0x2b7:
 			if aacObjectType(r) == aacObjSBR && r.bit() != 0 {
-				return c, fmt.Errorf("%w: HE-AAC (backward compatible SBR signalled)", ErrAudioUnsupported)
+				c.sbr = true
+				ei, err := aacRateIndex(r)
+				if err != nil {
+					return c, err
+				}
+				extRate = aacRates[ei]
+				if r.left() >= 12 && r.read(11) == 0x548 {
+					c.ps = r.bit() != 0
+				}
 			}
 		case 0x548:
-			if r.bit() != 0 {
-				return c, fmt.Errorf("%w: HE-AAC v2 (PS signalled)", ErrAudioUnsupported)
+			if r.bit() != 0 { // psPresentFlag: PS rides on SBR
+				c.sbr, c.ps = true, true
 			}
 		}
+		if r.overrun {
+			return c, fmt.Errorf("%w: truncated AudioSpecificConfig", ErrAudioConfig)
+		}
 	}
-	c.rateIndex, c.rate = ri, aacRates[ri]
+	if c.sbr {
+		switch {
+		case extRate != 0 && extRate != 2*c.rate:
+			return c, fmt.Errorf("%w: SBR output at %d Hz over a core at %d Hz: only the double rate is decoded (the downsampled mode is not)", ErrAudioUnsupported, extRate, c.rate)
+		case sbrRateClass(2*c.rate) < 0:
+			return c, fmt.Errorf("%w: SBR over a core at %d Hz", ErrAudioUnsupported, c.rate)
+		case c.ps && c.channels != 1:
+			return c, fmt.Errorf("%w: Parametric Stereo over %d core channels", ErrAudioUnsupported, c.channels)
+		}
+	}
 	return c, nil
 }
 

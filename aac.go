@@ -16,9 +16,11 @@ import (
 // operations of FFmpeg's decoder (docs/aac-design.md). Output is float32 in the
 // range -1 to 1, as ffmpeg's aac decoder gives.
 //
-// Not decoded, and refused with ErrAudioUnsupported: HE-AAC (SBR, PS), AAC Main,
-// LTP, SSR, 960-sample frames, coupling channels, and channel configurations that
-// have no fixed layout (a program_config_element, and 11, 12, 14).
+// HE-AAC v1 (SBR over AAC-LC, aac_sbr*.go) decodes at twice the core rate; PS is
+// signalled but not decoded (the output is the SBR mono channel). Not decoded, and
+// refused with ErrAudioUnsupported: AAC Main, LTP, SSR, 960-sample frames, the
+// downsampled SBR mode, coupling channels, and channel configurations that have no
+// fixed layout (11, 12, 14).
 
 func init() {
 	audioDecoders["mp4a"] = newAAC
@@ -55,6 +57,12 @@ type aacDecoder struct {
 	// slot[e][c] is the position in an interleaved sample of channel c of element e.
 	slot [][2]int
 	pcm  [2][aacSamplesPerFrame]float32
+	// SBR: sbrActive once the AudioSpecificConfig or the first SBR data says so; up
+	// holds an element's channels at twice the rate; maxBlock is the limit on the
+	// samples of a frame.
+	sbrActive bool
+	maxBlock  int
+	up        [2][2 * aacSamplesPerFrame]float32
 }
 
 func newAAC(tc container.TrackConfig, cfg AudioConfig) (audioCodec, error) {
@@ -79,14 +87,19 @@ func newAAC(tc container.TrackConfig, cfg AudioConfig) (audioCodec, error) {
 	default:
 		return nil, fmt.Errorf("%w: AAC channel configuration %d has no fixed layout", ErrAudioUnsupported, ac.config)
 	}
-	if aacSamplesPerFrame > cfg.block() {
-		return nil, fmt.Errorf("%w: frames of %d samples, the limit is %d", ErrOverLimit, aacSamplesPerFrame, cfg.block())
+	frame := aacSamplesPerFrame
+	if ac.sbr {
+		frame *= 2
+	}
+	if frame > cfg.block() {
+		return nil, fmt.Errorf("%w: frames of %d samples, the limit is %d", ErrOverLimit, frame, cfg.block())
 	}
 	p, err := newAACParser(ac, cfg.channels())
 	if err != nil {
 		return nil, err
 	}
-	d := &aacDecoder{cfg: ac, parser: p, synth: newAACSynth(ac.rateIndex, ac.channels), elems: elems, tags: tags}
+	p.enableSBR() // a stream that does not signal SBR may still carry it
+	d := &aacDecoder{cfg: ac, parser: p, synth: newAACSynth(ac.rateIndex, ac.channels), elems: elems, tags: tags, sbrActive: ac.sbr, maxBlock: cfg.block()}
 	if named {
 		for _, e := range d.elems {
 			for c := 0; c < aacChannelsOfID(e.id); c++ {
@@ -160,8 +173,20 @@ func aacChannelsOfID(id int) int {
 	return 1
 }
 
-func (d *aacDecoder) priming() int    { return 0 }
-func (d *aacDecoder) sampleRate() int { return d.cfg.rate }
+func (d *aacDecoder) priming() int { return 0 }
+
+// sampleRate is the rate of the output: twice the core's once SBR is on, whether the
+// AudioSpecificConfig said so or the first SBR data did.
+func (d *aacDecoder) sampleRate() int {
+	if d.sbrActive {
+		return 2 * d.cfg.rate
+	}
+	return d.cfg.rate
+}
+
+// frameSamples is the samples of one output frame at the output rate.
+func (d *aacDecoder) frameSamples() int { return aacSamplesPerFrame * d.sampleRate() / d.cfg.rate }
+
 func (d *aacDecoder) flush() ([]Audio, error) {
 	return nil, nil
 }
@@ -169,25 +194,45 @@ func (d *aacDecoder) flush() ([]Audio, error) {
 // end: a track without an edit list is presented whole.
 func (d *aacDecoder) end(tc container.TrackConfig, samples []container.Sample) int64 { return -1 }
 
-// decode decodes one raw_data_block: 1024 samples of every channel.
+// decode decodes one raw_data_block: 1024 samples of every channel, 2048 when SBR is
+// on.
 func (d *aacDecoder) decode(data []byte) ([]Audio, error) {
-	a := Audio{Format: SampleF32, SampleRate: d.cfg.rate, Channels: d.cfg.channels, Layout: d.layout, Data: make([]byte, aacSamplesPerFrame*d.cfg.channels*4)}
-	if err := d.decodeInto(data, a.Data); err != nil {
+	buf := make([]byte, 2*aacSamplesPerFrame*d.cfg.channels*4)
+	n, err := d.decodeInto(data, buf)
+	if err != nil {
 		return nil, err
 	}
-	return []Audio{a}, nil
+	return []Audio{{Format: SampleF32, SampleRate: d.sampleRate(), Channels: d.cfg.channels, Layout: d.layout, Data: buf[:n*d.cfg.channels*4]}}, nil
 }
 
-// decodeInto decodes one raw_data_block into dst, which must hold 1024 samples of
-// every channel as float32 (4096 bytes per channel): the same work as decode with
-// no allocation, for a caller that reuses its buffer.
-func (d *aacDecoder) decodeInto(data, dst []byte) error {
+// decodeInto decodes one raw_data_block into dst, which must hold 2048 samples of
+// every channel as float32 when the stream has SBR (1024 otherwise: 4096 bytes per
+// channel for each 1024), and returns the number of samples per channel written: the
+// same work as decode with no allocation, for a caller that reuses its buffer.
+//
+// SBR turns on at the first frame that carries SBR data, or at the start when the
+// AudioSpecificConfig signals it, and stays on: from then on every frame is at twice
+// the rate, a frame without SBR data being upsampled. A stream that signals nothing
+// is decoded at the core rate until its first SBR data (ffmpeg's behaviour too).
+func (d *aacDecoder) decodeInto(data, dst []byte) (int, error) {
 	els, err := d.parser.parseFrame(data)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if len(els) != len(d.elems) {
-		return fmt.Errorf("%w: %d channel elements, the configuration has %d", ErrAudioSample, len(els), len(d.elems))
+		return 0, fmt.Errorf("%w: %d channel elements, the configuration has %d", ErrAudioSample, len(els), len(d.elems))
+	}
+	if !d.sbrActive {
+		for e := range els {
+			d.sbrActive = d.sbrActive || els[e].sbr != nil
+		}
+		if d.sbrActive && 2*aacSamplesPerFrame > d.maxBlock {
+			return 0, fmt.Errorf("%w: SBR frames of %d samples, the limit is %d", ErrOverLimit, 2*aacSamplesPerFrame, d.maxBlock)
+		}
+	}
+	samples := aacSamplesPerFrame
+	if d.sbrActive {
+		samples *= 2
 	}
 	nch := d.cfg.channels
 	var seen uint32
@@ -204,18 +249,27 @@ func (d *aacDecoder) decodeInto(data, dst []byte) error {
 				}
 			}
 			if idx < 0 {
-				return fmt.Errorf("%w: element %d (type %d, tag %d) is not in the program_config_element", ErrAudioSample, e, els[e].id, els[e].tag)
+				return 0, fmt.Errorf("%w: element %d (type %d, tag %d) is not in the program_config_element", ErrAudioSample, e, els[e].id, els[e].tag)
 			}
 		} else if int(els[e].id) != d.elems[e].id {
-			return fmt.Errorf("%w: element %d is of type %d, the configuration has %d", ErrAudioSample, e, els[e].id, d.elems[e].id)
+			return 0, fmt.Errorf("%w: element %d is of type %d, the configuration has %d", ErrAudioSample, e, els[e].id, d.elems[e].id)
 		}
 		seen |= 1 << uint(idx)
 		d.synth.element(&els[e], d.firsts[idx], [2][]float32{d.pcm[0][:], d.pcm[1][:]})
+		src := [2][]float32{d.pcm[0][:], d.pcm[1][:]}
+		if d.sbrActive {
+			s := d.parser.sbrOf(els[e].id, els[e].tag)
+			if s == nil { // more elements than a frame holds: no state, no SBR for it
+				return 0, fmt.Errorf("%w: more than %d channel elements", ErrAudioSample, aacMaxElements)
+			}
+			src = [2][]float32{d.up[0][:], d.up[1][:]}
+			s.process(int(els[e].nch), [2][]float32{d.pcm[0][:], d.pcm[1][:]}, src, els[e].sbr != nil)
+		}
 		if els[e].nch == 2 && d.slot[idx][1] == d.slot[idx][0]+1 {
 			// a pair of channels in adjacent slots (the usual stereo pair): both
 			// samples of an instant in one 8-byte store
-			l := d.pcm[0][:]
-			r := d.pcm[1][:len(l)]
+			l := src[0][:samples]
+			r := src[1][:len(l)]
 			for i, v := range l {
 				o := (i*nch + d.slot[idx][0]) * 4
 				binary.LittleEndian.PutUint64(dst[o:o+8], uint64(math.Float32bits(v))|uint64(math.Float32bits(r[i]))<<32)
@@ -224,11 +278,11 @@ func (d *aacDecoder) decodeInto(data, dst []byte) error {
 		}
 		for c := 0; c < int(els[e].nch); c++ {
 			slot := d.slot[idx][c]
-			for i, v := range d.pcm[c] {
+			for i, v := range src[c][:samples] {
 				o := (i*nch + slot) * 4
 				binary.LittleEndian.PutUint32(dst[o:o+4], math.Float32bits(v))
 			}
 		}
 	}
-	return nil
+	return samples, nil
 }

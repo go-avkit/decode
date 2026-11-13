@@ -231,6 +231,14 @@ type AudioDecoder struct {
 	skip   int64 // samples still to drop from the start
 	pos    int64 // presentation position of the next sample delivered
 	closed bool
+	// tc and rate are what skip was computed from: the codec's output rate when the
+	// decoder was made. A codec whose rate is known only from its first frame (AAC
+	// with SBR that its configuration does not signal) changes it then, and skip and
+	// pos, which are in samples of that rate, follow (setRate).
+	tc       container.TrackConfig
+	rate     int
+	skipEdit bool // skip came from the edit list
+	fed      bool // some audio has been placed
 }
 
 // audioDecoders maps a sample entry (TrackConfig.Codec) to its constructor. Each
@@ -256,10 +264,29 @@ func NewAudioTrack(tc container.TrackConfig, cfg AudioConfig) (*AudioDecoder, er
 	// first-packet allowance): ffmpeg shifts the timestamps by it and drops
 	// nothing, except for Opus, whose pre-skip is the codec's own (priming).
 	skip := int64(c.priming())
+	fromEdit := false
 	if skip == 0 && tc.EditList != nil {
 		skip = editSkip(tc.EditList, tc, c.sampleRate())
+		fromEdit = true
 	}
-	return &AudioDecoder{codec: c, cfg: cfg, skip: skip}, nil
+	return &AudioDecoder{codec: c, cfg: cfg, skip: skip, tc: tc, rate: c.sampleRate(), skipEdit: fromEdit}, nil
+}
+
+// setRate follows a change of the codec's output rate to r: the start still to drop
+// and the position are in samples of the rate, so they are converted. Before any
+// audio has been placed the start is computed again from the edit list at the new
+// rate, exactly; after, what remains of it is scaled.
+func (d *AudioDecoder) setRate(r int) {
+	if r <= 0 || r == d.rate {
+		return
+	}
+	if d.skipEdit && !d.fed {
+		d.skip = editSkip(d.tc.EditList, d.tc, r)
+	} else {
+		d.skip = rescale(d.skip, int64(r), int64(d.rate))
+	}
+	d.pos = rescale(d.pos, int64(r), int64(d.rate))
+	d.rate = r
 }
 
 // editSkip reads the media time of the first non-empty edit, which is where the
@@ -323,6 +350,8 @@ func (d *AudioDecoder) Close() error {
 func (d *AudioDecoder) place(in []Audio) []Audio {
 	out := in[:0]
 	for _, a := range in {
+		d.setRate(a.SampleRate)
+		d.fed = true
 		n := int64(a.Samples())
 		if d.skip > 0 {
 			cut := min(d.skip, n)
@@ -366,26 +395,68 @@ func DecodeAudioTrack(r *container.Reader, trackID uint32, cfg AudioConfig) ([]A
 	if err != nil {
 		return nil, err
 	}
-	return decodeAudio(tc, samples, cfg)
+	return decodeAudioDur(tc, samples, cfg, mediaDuration(r, trackID))
+}
+
+// mediaDuration is the duration the track's media header states, in its timescale, or 0.
+func mediaDuration(r *container.Reader, trackID uint32) uint64 {
+	for _, tr := range r.File().Tracks {
+		if tr.ID == trackID {
+			return tr.Duration
+		}
+	}
+	return 0
 }
 
 // decodeAudio is DecodeAudioTrack for a track already read.
 func decodeAudio(tc container.TrackConfig, samples []container.Sample, cfg AudioConfig) ([]Audio, error) {
+	return decodeAudioDur(tc, samples, cfg, 0)
+}
+
+// decodeAudioDur is decodeAudio with the media duration the container states (0 for
+// none). An AAC track ends at the least of three things: what its edit list presents, the
+// media header's duration, and the sum of its samples' durations less the start the edit
+// list drops. The last of them is where the encoder says how much of its last frame is
+// padding (a last sample of 1922 where the others have 2048), and ffmpeg trims the last
+// packet to it; an edit list in a movie timescale of milliseconds cannot say it exactly.
+func decodeAudioDur(tc container.TrackConfig, samples []container.Sample, cfg AudioConfig, mediaDur uint64) ([]Audio, error) {
 	d, err := NewAudioTrack(tc, cfg)
 	if err != nil {
 		return nil, err
 	}
 	defer d.Close()
-	limit := presentedSamples(tc, d.codec.sampleRate())
-	if limit < 0 {
-		limit = d.codec.end(tc, samples)
+	// limit is how many samples the track presents, at the rate r
+	limit := func(r int) int64 {
+		if tc.Codec == "mp4a" && tc.Timescale > 0 {
+			return -1 // by packets and a cut of the last, below
+		}
+		l := presentedSamples(tc, r)
+		if l < 0 {
+			l = d.codec.end(tc, samples)
+		}
+		return l
 	}
+
+	mp4 := tc.Codec == "mp4a" && tc.Timescale > 0
+	if mp4 {
+		n, _ := mp4aEnd(tc, samples, mediaDur, d.rate, 0)
+		samples = samples[:n]
+	}
+	lim := limit(d.rate)
+	limRate := d.rate
 	var out []Audio
 	var total int64
 	emit := func(fs []Audio) error {
+		if d.rate != limRate {
+			// the codec's rate changed with its first frame: the length is in samples of
+			// the new one
+			lim = limit(d.rate)
+		}
+		limRate = d.rate
 		for _, a := range fs {
-			if limit >= 0 && a.PTS+int64(a.Samples()) > limit {
-				keep := max(limit-a.PTS, 0)
+			if lim >= 0 && a.PTS+int64(a.Samples()) > lim {
+				keep := max(lim-a.PTS, 0)
+
 				a.Data = a.Data[:int(keep)*a.Channels*a.Format.Size()]
 				if keep == 0 {
 					continue
@@ -406,7 +477,27 @@ func decodeAudio(tc container.TrackConfig, samples []container.Sample, cfg Audio
 		}
 	}
 	fs, err := d.Flush()
-	return out, errors.Join(emit(fs), err)
+	err = errors.Join(emit(fs), err)
+	if mp4 {
+		_, pad := mp4aEnd(tc, samples, mediaDur, d.rate, codecFrame(d.codec))
+		out = trimTail(out, pad)
+	}
+	return out, err
+}
+
+// trimTail drops the last n samples (per channel) of out.
+func trimTail(out []Audio, n int64) []Audio {
+	for n > 0 && len(out) > 0 {
+		a := &out[len(out)-1]
+		have := int64(a.Samples())
+		cut := min(n, have)
+		a.Data = a.Data[:int(have-cut)*a.Channels*a.Format.Size()]
+		n -= cut
+		if cut == have {
+			out = out[:len(out)-1]
+		}
+	}
+	return out
 }
 
 // presentedSamples is how many samples the track presents, in samples of its

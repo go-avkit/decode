@@ -184,6 +184,28 @@ type sbrEntry struct {
 // instead of refusing it.
 func (p *aacParser) enableSBR() { p.sbrOn = true }
 
+// sbrOf returns the SBR state of the channel element with this type and instance
+// tag, made on first use, or nil when the stream has more elements than a frame can
+// hold. The states are per decoder and at most aacMaxElements of them exist whatever
+// the stream does: they are keyed by type and tag, so two elements of one frame with
+// the same type and tag (only a hostile or broken stream has them) share one state,
+// whose data the later fill element replaces and which a fault in it turns off for
+// both: the output of such a frame is wrong, never unsafe (aacDecoder uses the data
+// only while the state is on).
+func (p *aacParser) sbrOf(id, tag uint8) *sbrState {
+	for _, e := range p.sbrStates {
+		if e.id == id && e.tag == tag {
+			return e.s
+		}
+	}
+	if len(p.sbrStates) >= aacMaxElements {
+		return nil
+	}
+	s := newSBRState(p.cfg.rate)
+	p.sbrStates = append(p.sbrStates, sbrEntry{id, tag, s})
+	return s
+}
+
 // sbrFill reads the SBR data of a fill element that follows element idx of the
 // frame (-1 for none), nbits bits long from r's position, and leaves r at its end.
 // A fault is kept in p.sbrErr and does not fail the frame: the core signal decodes
@@ -202,19 +224,10 @@ func (p *aacParser) sbrFill(r *aacBits, crc bool, nbits, idx int) {
 		skip(sbrErr("SBR data after element type %d", el.id))
 		return
 	}
-	var s *sbrState
-	for _, e := range p.sbrStates {
-		if e.id == el.id && e.tag == el.tag {
-			s = e.s
-		}
-	}
+	s := p.sbrOf(el.id, el.tag)
 	if s == nil {
-		if len(p.sbrStates) >= aacMaxElements {
-			skip(sbrErr("SBR for more than %d channel elements", aacMaxElements))
-			return
-		}
-		s = newSBRState(p.cfg.rate)
-		p.sbrStates = append(p.sbrStates, sbrEntry{el.id, el.tag, s})
+		skip(sbrErr("SBR for more than %d channel elements", aacMaxElements))
+		return
 	}
 	if err := s.parse(r, crc, nbits, int(el.id)); err != nil {
 		p.sbrErr = err

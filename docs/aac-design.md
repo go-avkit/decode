@@ -145,9 +145,50 @@ decision 2026-11-12: G1 is settled for SBR by declaring bare normative values in
 | `libavcodec/aac/aacdec.c:2024-2083` | SBR payload sits in a fill element of type 13 or 14 (with CRC), attached to the element before it | `aacParser.sbrFill` |
 
 Read for the SBR QMF and high frequency generation PR (part 2: `aac_sbr_qmf.go`,
-`aac_sbr_hf.go`, `aac_sbr_qmf_tables.go`), also read only. The decoder still refuses
-HE-AAC: the envelope adjustment (part 3) is not written, so nothing calls this code
-from `aacDecoder`.
+`aac_sbr_hf.go`, `aac_sbr_qmf_tables.go`), also read only. (Part 3 added the envelope
+adjustment and the decoder hook, below.)
+
+The decoder hook (`aac.go`, `aac_config.go`). Signalling: explicit (object type 5
+or 29: the first rate is the core's, the extension rate the output's, then the core's
+object type), backward compatible (`0x2b7` extension, extension rate, perhaps `0x548`),
+or none. The output is at twice the core rate; an extension rate that is not twice the
+core's (the downsampled mode, 32-band synthesis, output at the core rate) is refused,
+as are 960-sample frames: no stream of the four fixtures and none of the 822 HE-AAC
+files tried needs either (the files are all at 22.05 kHz core and 44.1 kHz output).
+Without signalling, the parser reads SBR data anyway and the decoder switches to the
+double rate at the first frame that carries any (as ffmpeg does), staying there: a
+later frame without SBR data is upsampled, not dropped. **PS** (object type 29, the
+`0x548` extension, or a mono core that carries it): not decoded, the output is the
+SBR mono channel. Of the 822 real HE-AAC files tried, 801 signal PS, so this is the
+common case in practice and the first thing to decide after the conformance streams:
+ffmpeg decodes those to stereo.
+
+Presentation (`audio.go`). An MP4 whose configuration does not signal SBR (ffmpeg's
+`-c copy` of an ADTS stream) says AAC-LC at the core rate, and its edit list is in
+samples of the rate the track states: the output rate is known only when the first frame
+turns SBR on. `AudioDecoder.setRate` then converts the start still to drop (from the
+edit list again, exactly, when nothing has been placed) and the position, and
+`decodeAudio` the length the edit list states. Before this, such a track came out at half
+its length.
+
+Where an MP4 AAC track ends (`mp4aEnd`, `audio_mp4a.go`; ffmpeg n9.0.2 read: libavformat
+mov.c 4625 keeps packets up to and including the first that reaches the end of the edit
+list, 4668 sets the stream's duration to the least of the media header's and the edit
+list's total, 11697-11713 records where the stream ends, demux.c 1535-1543 turns that into
+a padding for the last packet, libavcodec/decode.c 363-417 drops it from the decoded
+frame). Every kept packet decodes to a whole frame whatever its `stts` duration says; only
+the last is cut, by what its frame exceeds what the stream's duration leaves of it,
+measured from that packet's own start. A short last packet (1922 where the others have
+2048) is cut by 126; a track whose durations lose a tick or two (a timescale at the core
+rate, 262 packets of 1024 lasting 268287 in all) loses nothing, ffmpeg counts the frames it
+decodes. The previous rule (the sum of the durations as the end) was right only when the
+durations add up to whole frames, and was 2 and 4 samples short on the two real stereo SBR
+files at a core-rate timescale. This took the real files on which this decoder's length
+differed from ffmpeg's from 160 of 817 to 0. The last packet's start is on a timeline that
+begins after the leading empty edits (mov.c 4452, 4460); without them the 7 files with an
+empty first edit lost 126 to 1179 samples. Unverified: a start in the edit list at a
+core-rate timescale (ffmpeg's `skip_samples`, mov.c 4549-4550, are in timescale units and
+decode.c 363-396 drops them as output samples; no real file has one).
 
 | File:lines | What it tells us | Used for |
 |------------|------------------|----------|

@@ -136,16 +136,23 @@ end cuts the last buffer, which is what ffmpeg does.
 | FLAC (`fLaC`) | [`mewkiz/flac`](https://github.com/mewkiz/flac) v1.0.14 | Unlicense (public domain) | `s16le` up to 16 bits, `s32le` (left-justified) up to 24 | bit-exact, 13 fixtures |
 | MP3 (`mp3`) | [`tphakala/go-mp3`](https://github.com/tphakala/go-mp3) v0.3.0 | MIT (a port of minimp3, CC0) | `f32le` | max error 1.07e-6, SNR at least 127.9 dB, 10 fixtures, sample counts equal |
 | Opus (`Opus`) | [`pion/opus`](https://github.com/pion/opus) v0.1.0 | MIT | `f32le`, 48 kHz | opus_compare passes on all 12 RFC 8251 vectors, stereo and mono, quality 66.3 to 99.8 % |
-| AAC-LC (`mp4a`) | in this package, from ISO/IEC 14496-3 | BSD-3-Clause | `f32le` | error against the exact result about half of ffmpeg's on 5 fixtures; 12 of 15 ISO conformance vectors, see below |
+| AAC-LC and HE-AAC v1 (`mp4a`) | in this package, from ISO/IEC 14496-3 | BSD-3-Clause | `f32le` | error against the exact result about half of ffmpeg's on 5 fixtures; HE-AAC within 3e-6 of ffmpeg on 4; 12 of 15 ISO conformance vectors, see below |
 
 AAC-LC (mono to 7.1 by channel configuration 1 to 7, 8 kHz to 96 kHz; M/S and
 intensity stereo, perceptual noise substitution, TNS, pulses, short windows): written
 in Go from the standard and from the order of float32 operations of ffmpeg's decoder
 (`docs/aac-design.md` lists what was read, `.provenance.yml` what each table is, and
 `copycheck` in CI fails the build if code or tables resemble ffmpeg's, FAAD2's or
-PacketVideo's beyond the declared normative values). **Refused with
-`ErrAudioUnsupported`: HE-AAC (SBR, PS), Main, LTP, SSR, 960-sample frames, coupling
-channels, and channel configurations 11, 12 and 14.** The target is the exact result,
+PacketVideo's beyond the declared normative values). **HE-AAC v1 (SBR over AAC-LC)
+decodes at twice the core rate**, whether the AudioSpecificConfig signals it (object
+type 5, or the backward compatible extension) or the stream only carries it (the
+decoder switches at the first SBR data, as ffmpeg does): on the four HE-AAC fixtures
+it is within 3e-6 of ffmpeg 9.0.2's output sample by sample, and within a float32
+rounding plus 1e-6 of a float64 reference. Parametric Stereo (HE-AAC v2) is signalled
+but not decoded: the output is the SBR mono channel, where ffmpeg gives stereo. **Refused
+with `ErrAudioUnsupported`: Main, LTP, SSR, 960-sample frames, SBR in its downsampled
+mode (output at the core rate), coupling channels, and channel configurations 11, 12
+and 14.** The target is the exact result,
 not ffmpeg's output: the inverse MDCT is computed in float64 and rounded to float32
 once, the windows are fused multiply-adds (`math.FMA`, the same bits on every
 architecture), the sine and TNS tables are the correctly rounded formulas.
