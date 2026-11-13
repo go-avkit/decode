@@ -303,7 +303,10 @@ func psRaw(f func(w *sbrBW)) (b []byte, n int) {
 	return w.b, w.n
 }
 
-func TestPSErrors(t *testing.T) {
+// psErrorCases are frames every one of which the parser must refuse, written by hand: a
+// reserved mode, borders that fall, an index out of range in each parameter, an
+// extension that overflows its size, data that ends inside a field.
+func psErrorCases() map[string]func(t testing.TB, w *sbrBW) {
 	ext := false
 	hdr := func(w *sbrBW, iid, icc int) { // enable_ps_header, IID and ICC (-1 off), the extension flag in ext
 		w.put(1, 1)
@@ -318,68 +321,69 @@ func TestPSErrors(t *testing.T) {
 		w.put(1, b2i(ext))
 	}
 	// huff writes delta with the code of table c
-	huff := func(t *testing.T, w *sbrBW, c, delta int) {
+	huff := func(t testing.TB, w *sbrBW, c, delta int) {
 		code, n := psTestCode(t, c, delta)
 		w.put(n, code)
 	}
-	band := func(t *testing.T, w *sbrBW, c, n int, first int) { // n bands: first, then zero steps
+	band := func(t testing.TB, w *sbrBW, c, n int, first int) { // n bands: first, then zero steps
 		huff(t, w, c, first)
 		for b := 1; b < n; b++ {
 			huff(t, w, c, 0)
 		}
 	}
-	for name, build := range map[string]func(t *testing.T, w *sbrBW){
-		"iid mode 6":   func(t *testing.T, w *sbrBW) { hdr(w, 6, -1) },
-		"iid mode 7":   func(t *testing.T, w *sbrBW) { hdr(w, 7, -1) },
-		"icc mode 6":   func(t *testing.T, w *sbrBW) { hdr(w, -1, 6) },
-		"icc mode 7":   func(t *testing.T, w *sbrBW) { hdr(w, 1, 7) },
-		"borders fall": func(t *testing.T, w *sbrBW) { hdr(w, -1, -1); w.put(1, 1); w.put(2, 1); w.put(5, 10); w.put(5, 5) },
-		"iid high": func(t *testing.T, w *sbrBW) {
+	return map[string]func(t testing.TB, w *sbrBW){
+		"iid mode 6":   func(t testing.TB, w *sbrBW) { hdr(w, 6, -1) },
+		"iid mode 7":   func(t testing.TB, w *sbrBW) { hdr(w, 7, -1) },
+		"icc mode 6":   func(t testing.TB, w *sbrBW) { hdr(w, -1, 6) },
+		"icc mode 7":   func(t testing.TB, w *sbrBW) { hdr(w, 1, 7) },
+		"borders fall": func(t testing.TB, w *sbrBW) { hdr(w, -1, -1); w.put(1, 1); w.put(2, 1); w.put(5, 10); w.put(5, 5) },
+		"iid high": func(t testing.TB, w *sbrBW) {
 			hdr(w, 1, -1)
 			w.put(3, 0b001) // class 0, 1 envelope
 			w.put(1, 0)
 			band(t, w, psHuffIIDCoarse, 20, 8)
 		},
-		"iid low": func(t *testing.T, w *sbrBW) {
+		"iid low": func(t testing.TB, w *sbrBW) {
 			hdr(w, 1, -1)
 			w.put(3, 0b001)
 			w.put(1, 0)
 			band(t, w, psHuffIIDCoarse, 20, -8)
 		},
-		"iid fine high": func(t *testing.T, w *sbrBW) {
+		"iid fine high": func(t testing.TB, w *sbrBW) {
 			hdr(w, 4, -1)
 			w.put(3, 0b001)
 			w.put(1, 0)
 			band(t, w, psHuffIIDFine, 20, 16)
 		},
-		"iid climbs": func(t *testing.T, w *sbrBW) { // 7 is fine, a step of one more is not
+		"iid climbs": func(t testing.TB, w *sbrBW) { // 7 is fine, a step of one more is not
 			hdr(w, 1, -1)
 			w.put(3, 0b001)
 			w.put(1, 0)
 			huff(t, w, psHuffIIDCoarse, 7)
 			huff(t, w, psHuffIIDCoarse, 1)
 		},
-		"icc high": func(t *testing.T, w *sbrBW) {
+		"icc high": func(t testing.TB, w *sbrBW) {
 			hdr(w, -1, 1)
 			w.put(3, 0b001)
 			w.put(1, 0)
 			huff(t, w, psHuffICC, 7)
 			huff(t, w, psHuffICC, 1)
 		},
-		"icc low": func(t *testing.T, w *sbrBW) {
+		"icc low": func(t testing.TB, w *sbrBW) {
 			hdr(w, -1, 1)
 			w.put(3, 0b001)
 			w.put(1, 0)
 			huff(t, w, psHuffICC, -1)
 		},
-		"iid in time from nothing, too high": func(t *testing.T, w *sbrBW) {
+		"iid in time from nothing, too high": func(t testing.TB, w *sbrBW) {
 			hdr(w, 1, -1)
 			w.put(3, 0b001)
 			w.put(1, 1)
 			huff(t, w, psHuffIIDCoarse+1, 9)
 		},
-		"extension overflows": func(t *testing.T, w *sbrBW) {
+		"extension overflows": func(t testing.TB, w *sbrBW) {
 			ext = true
+			defer func() { ext = false }()
 			hdr(w, 1, -1)
 			w.put(3, 0b001)
 			w.put(1, 0)
@@ -393,8 +397,26 @@ func TestPSErrors(t *testing.T) {
 			band(t, w, psHuffOPD, 11, 0)
 			w.put(1, 0)
 		},
-		"ipd cut": func(t *testing.T, w *sbrBW) {
+		"opd cut": func(t testing.TB, w *sbrBW) { // 64 bits that end where the first OPD code should start
 			ext = true
+			defer func() { ext = false }()
+			hdr(w, 1, -1)
+			w.put(1, 1) // class 1, one envelope ending at the last slot
+			w.put(2, 0)
+			w.put(5, 31)
+			w.put(1, 0)
+			band(t, w, psHuffIIDCoarse, 20, 0)
+			w.put(4, 15)
+			w.put(8, 20)
+			w.put(2, 0)
+			w.put(1, 1)
+			w.put(1, 0)
+			band(t, w, psHuffIPD, 11, 0)
+			w.put(1, 0)
+		},
+		"ipd cut": func(t testing.TB, w *sbrBW) {
+			ext = true
+			defer func() { ext = false }()
 			hdr(w, 1, -1)
 			w.put(3, 0b001)
 			w.put(1, 0)
@@ -405,8 +427,11 @@ func TestPSErrors(t *testing.T) {
 			w.put(1, 1)
 			w.put(1, 0) // and the data ends
 		},
-	} {
-		ext = false
+	}
+}
+
+func TestPSErrors(t *testing.T) {
+	for name, build := range psErrorCases() {
 		b, n := psRaw(func(w *sbrBW) { build(t, w) })
 		p := &psState{}
 		p.parse(newAACBits(b), n)
@@ -506,5 +531,112 @@ func TestPSInSBR(t *testing.T) {
 	s = run(true, bad)
 	if !s.started || s.ps.start {
 		t.Fatalf("a PS fault turned SBR off or left PS on: started %v, PS %v", s.started, s.ps.start)
+	}
+}
+
+// ascBackwardPS builds an AAC-LC AudioSpecificConfig with the backward compatible SBR
+// extension and the PS extension with psPresentFlag ps.
+func ascBackwardPS(core, ch, ext, ps int) []byte {
+	return asc(2, core, ch, [3]uint{}, func(w *bitWriter) {
+		w.bits(0x2b7, 11)
+		w.bits(5, 5)
+		w.bits(1, 1)
+		w.bits(uint(ext), 4)
+		w.bits(0x548, 11)
+		w.bits(uint(ps), 1)
+	})
+}
+
+// TestAACStereoOutPolicy is the channel-count policy: a mono core whose configuration
+// signals SBR and does not say PS absent is announced as stereo from the first frame;
+// every other configuration keeps the channels of its core.
+func TestAACStereoOutPolicy(t *testing.T) {
+	for name, tc := range map[string]struct {
+		b      []byte
+		stereo bool
+		psOff  bool
+	}{
+		"explicit PS over a mono core":     {ascHE(true, 7, 1, 4, 2), true, false},
+		"explicit SBR over a mono core":    {ascHE(false, 7, 1, 4, 2), true, false},
+		"backward compatible SBR, mono":    {ascBackward(7, 1, 4, false), true, false},
+		"backward compatible SBR and PS":   {ascBackward(7, 1, 4, true), true, false},
+		"backward compatible, PS absent":   {ascBackwardPS(7, 1, 4, 0), false, true},
+		"backward compatible, PS present":  {ascBackwardPS(7, 1, 4, 1), true, false},
+		"explicit SBR over a stereo core":  {ascHE(false, 7, 2, 4, 2), false, false},
+		"backward compatible, stereo core": {ascBackward(7, 2, 4, false), false, false},
+		"AAC-LC mono, nothing signalled":   {asc(2, 7, 1, [3]uint{}, nil), false, false},
+		"an extension that says no SBR":    {asc(2, 7, 1, [3]uint{}, func(w *bitWriter) { w.bits(0x2b7, 11); w.bits(5, 5); w.bits(0, 1) }), false, false},
+		"AAC-LC stereo, nothing signalled": {asc(2, 7, 2, [3]uint{}, nil), false, false},
+		"AAC-LC 5.1, nothing signalled":    {asc(2, 7, 6, [3]uint{}, nil), false, false},
+		"explicit SBR over a 5.1 core":     {ascHE(false, 7, 6, 4, 2), false, false},
+		"PS extension alone, PS present":   {asc(2, 7, 1, [3]uint{}, func(w *bitWriter) { w.bits(0x548, 11); w.bits(1, 1) }), true, false},
+	} {
+		c, err := parseAudioSpecificConfig(tc.b)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		want := c.channels
+		if tc.stereo {
+			want = 2
+		}
+		if c.stereoOut() != tc.stereo || c.outChannels() != want || c.psOff != tc.psOff {
+			t.Errorf("%s: stereo %v (want %v), %d channels (want %d), PS stated absent %v (want %v)", name, c.stereoOut(), tc.stereo, c.outChannels(), want, c.psOff, tc.psOff)
+		}
+	}
+}
+
+// TestAACStereoOutDecoder: the decoder announces the policy's channel count and layout in
+// every frame, from the first; the second channel copies the first (PS is not decoded);
+// PS data is parsed only where it may be present.
+func TestAACStereoOutDecoder(t *testing.T) {
+	fx := aacHEFixtures[3] // he44-ps.aac: a mono core with PS in every frame
+	_, fr := aacADTSFrames(t, "testdata/aac/"+fx.name)
+	for name, tc := range map[string]struct {
+		cc    []byte
+		ch    int
+		parse bool
+	}{
+		"explicit PS":                  {ascHE(true, fx.rate, 1, fx.extRate, 2), 2, true},
+		"backward compatible, no flag": {ascBackward(fx.rate, 1, fx.extRate, false), 2, true},
+		"PS stated absent":             {ascBackwardPS(fx.rate, 1, fx.extRate, 0), 1, false},
+		"nothing signalled":            {nil, 1, false},
+	} {
+		trk := aacTrack(fx.rate, 1)
+		if tc.cc != nil {
+			trk.CodecConfig = tc.cc
+		}
+		c, err := newAAC(trk, AudioConfig{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := c.(*aacDecoder)
+		for i := 0; i < 3; i++ {
+			out, err := d.decode(fr[i])
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			a := out[0]
+			if a.Channels != tc.ch || a.Layout.Channels() != tc.ch || (tc.ch == 2 && a.Layout != LayoutStereo) {
+				t.Fatalf("%s: frame %d has %d channels, layout %#x", name, i, a.Channels, uint32(a.Layout))
+			}
+			if a.Samples() != 2048 && i > 0 || len(a.Data) != a.Samples()*tc.ch*4 {
+				t.Fatalf("%s: frame %d: %d samples, %d bytes", name, i, a.Samples(), len(a.Data))
+			}
+			if tc.ch == 2 {
+				for s := 0; s < a.Samples(); s++ {
+					if string(a.Data[8*s:8*s+4]) != string(a.Data[8*s+4:8*s+8]) {
+						t.Fatalf("%s: frame %d sample %d: the channels differ", name, i, s)
+					}
+				}
+			}
+		}
+		s := d.parser.sbrOf(aacIDSCE, 0)
+		if s.psOn != tc.parse || (s.ps.start != tc.parse) {
+			t.Errorf("%s: PS parsed %v (start %v), want %v", name, s.psOn, s.ps.start, tc.parse)
+		}
+		if tc.parse && (s.ps.numEnv < 1 || s.ps.slack > 7 || !s.ps.enableIID) {
+			t.Errorf("%s: the PS data was not read: %d envelopes, %d bits of fill", name, s.ps.numEnv, s.ps.slack)
+		}
 	}
 }

@@ -137,9 +137,9 @@ func aacEditSummary(tc container.TrackConfig) string {
 // number and never by name: channels, rate, samples, the SHA-256 of the output, the
 // track timescale, the edit list, the iTunSMPB tag. With AAC_REAL_HE_FFMPEG set to an
 // ffmpeg binary it also decodes each file with it and requires the same number of
-// samples, whatever the codec says (a PS stream's are stereo in ffmpeg and mono here, a
-// mono SBR stream's stereo in ffmpeg, the channels equal), and for streams without PS
-// the same values to 3e-6. Skipped when the directory is not set.
+// samples (a mono core with SBR is stereo in both: aacConfig.stereoOut, its second channel
+// a copy of the first until PS is applied), and for streams without PS the same values
+// to 3e-6. Skipped when the directory is not set.
 func TestAACRealHE(t *testing.T) {
 	dir := os.Getenv("AAC_REAL_HE_DIR")
 	if dir == "" {

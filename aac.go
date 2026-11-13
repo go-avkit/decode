@@ -17,7 +17,8 @@ import (
 // range -1 to 1, as ffmpeg's aac decoder gives.
 //
 // HE-AAC v1 (SBR over AAC-LC, aac_sbr*.go) decodes at twice the core rate; PS is
-// signalled but not decoded (the output is the SBR mono channel). Not decoded, and
+// parsed (aac_ps.go) but not applied: a mono core that may carry it is announced as
+// stereo (aacConfig.stereoOut) and its second channel copies the first. Not decoded, and
 // refused with ErrAudioUnsupported: AAC Main, LTP, SSR, 960-sample frames, the
 // downsampled SBR mode, coupling channels, and channel configurations that have no
 // fixed layout (11, 12, 14).

@@ -9,8 +9,8 @@ import (
 
 // AudioSpecificConfig and the ADTS header, from ISO/IEC 14496-3 as known to the
 // author (clause and table numbers not verified). AAC-LC (audio object type 2) is
-// decoded, with SBR over it (HE-AAC v1, at twice the rate; PS is signalled but not
-// decoded). Main, SSR, LTP, the downsampled SBR mode, and 960-sample frames are
+// decoded, with SBR over it (HE-AAC v1, at twice the rate; PS is parsed but not
+// applied, see stereoOut). Main, SSR, LTP, the downsampled SBR mode, and 960-sample frames are
 // refused with ErrAudioUnsupported.
 
 // aacRates are the sampling frequencies of sampling_frequency_index 0 to 12.
@@ -116,7 +116,7 @@ type aacConfig struct {
 	pce    *aacPCE
 	// sbr is set when the AudioSpecificConfig signals SBR (explicitly or backward
 	// compatibly): the output is at twice the rate. ps says Parametric Stereo is
-	// signalled too; it is not decoded, the SBR output is the core's mono channel.
+	// signalled too.
 	sbr, ps bool
 	// psOff is set when the extension signal states psPresentFlag 0: no PS, whatever
 	// the SBR data carries.

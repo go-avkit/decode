@@ -104,6 +104,11 @@ func (p *psState) fail() {
 // parse reads the ps_data of nbits bits that start at r's position and moves r to
 // their end. A fault is not returned: PS is turned off (fail) and the caller goes on.
 func (p *psState) parse(r *aacBits, nbits int) {
+	if nbits > 8*len(p.buf) { // the syntax cannot say it (an extension is at most 270 bytes)
+		r.skip(nbits)
+		p.fail()
+		return
+	}
 	n := (nbits + 7) / 8
 	for i := 0; i < n; i++ {
 		take := min(8, nbits-8*i)

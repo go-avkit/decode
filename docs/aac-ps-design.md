@@ -1,6 +1,7 @@
 # Parametric Stereo (HE-AAC v2): design
 
-Status: design note, no code. Refs go-avkit/avkit#89. Written 2026-11-13.
+Status: design note; PS1 (parser, tables, channel policy, census) is built, see
+"PS1 as built" below. Refs go-avkit/avkit#89. Written 2026-11-13.
 It continues [aac-design.md](aac-design.md) (plan item 8) and follows its rules:
 copyleft code is read to understand what is computed and in what order, never
 copied, translated or paraphrased; bare normative values may be held when
@@ -45,21 +46,20 @@ taken), the ISO/IEC 14496-3 text, the AES papers P1 cites ([4], [10]).
 
 These come first because they change the scope of the PRs below.
 
-1. **Channel count can change mid-stream (decide in PS1).** With implicit
-   signalling, PS can appear only in the frames, after a mono start. The
-   output would then go from 1 channel to 2. decode's output API does not
+1. **Channel count can change mid-stream (decided in PS1: see "PS1 as built").**
+   With implicit signalling, PS can appear only in the frames, after a mono start.
+   The output would then go from 1 channel to 2. decode's output API does not
    allow that: `Audio.Channels`, the channel layout and the slot map are fixed
-   for a track. Options to choose from in PS1: always announce stereo for an
-   implicit mono SBR stream (ffmpeg's choice), stay mono and drop the PS data,
-   or refuse. Nothing past PS1 starts without this decision.
+   for a track. Options were: always announce stereo for an implicit mono SBR
+   stream (ffmpeg's choice), stay mono and drop the PS data, or refuse.
 2. **decode#52's blocker applies to PS files.** The edit list is applied at
    the core rate, not the output rate. That affects the PS files too, so
    PS4's 801-file comparison against ffmpeg depends on its fix.
 3. **The library census comes before PS2/PS3 are scoped.** Count 20 vs 34
    bands, IPD/OPD use, frame classes and signalling (explicit, backward
-   compatible, implicit) over the 801 files (PS1 logs it). If the library uses
-   only one configuration, the others are carried by written and conformance
-   streams alone, and PS2/PS3 are sized and ordered accordingly.
+   compatible, implicit) over the 801 files (PS1 logs it: done, below). The
+   library uses one configuration, so the others are carried by written and
+   conformance streams alone, and PS2/PS3 are sized and ordered accordingly.
 
 ## Where PS sits in decode
 
@@ -87,7 +87,7 @@ Interfaces, as types to be written (names indicative):
 | `top` | `s.t.kx[1] + s.t.m[1]` | delay lines of bands at or above it are cleared each frame (ffmpeg `aacps.c:726-729`). |
 | output | two `[32][64]complex128` | channel 0 overwritten in place (L), R in the second channel's `sbrChanDSP.x`, synthesised by `dsp[1].syn` — the second channel's bank already exists for a CPE. |
 | before the first PS header, or after a PS error | — | R = L (ffmpeg copies `X`), output stereo. |
-| channel count | `aac_config.go` (decode#52) | PS signalled (explicit or backward compatible) → 2 channels from the first frame. The policy for implicit signalling (ffmpeg treats any implicit mono SBR stream as possible PS and outputs stereo, `testdata/aac/README` on he48-mono) is decided in PS1 (decision 1 above), informed by the 801 files' signalling census. |
+| channel count | `aac_config.go` (`stereoOut`, PS1) | a mono core with SBR signalled (explicitly or backward compatibly) and PS not stated absent → 2 channels from the first frame; second channel = first until PS is applied. Nothing signalled → the core's channels (decision 1, "PS1 as built"). |
 
 ## The pipeline, stage by stage
 
@@ -258,6 +258,87 @@ off, not a panic. Huffman codes are up to 20 bits long. State is fixed-size
 input. `FuzzAACHE` gets PS payloads in its committed corpus; the written streams
 seed it with every configuration. Concurrency: one `psState` per decoder,
 covered by `TestAACConcurrentDecoders` under `-race`.
+
+## PS1 as built
+
+What the PR contains: `aac_ps.go` (the parser, `psState`), `aac_ps_tables.go` (the ten
+Huffman codes as (symbol, length) pairs in codeword order and the two band maps, written
+by a throwaway generator from ffmpeg's `aacpsdata.c`, never typed), `aac_ps_params.go`
+(dB steps, ICC values, derived gains and angles, the decays), `buildListedHuff` in
+`aac_huff.go` (the SBR codes now use it too: for entries listed by increasing length it
+gives the canonical code), the hook in `parsePayload`, the channel policy, the writer
+(`aac_ps_writer_test.go`), tests, the `FuzzPSData` corpus, and the census test.
+`.provenance.yml` declares every table (normative or derived, with the decays as
+normative: their exponential forms were recognised after the fact). `copycheck`: 0
+findings. The decoder's samples are unchanged; only the channel count moved.
+
+**Parser oracle.** The data is copied (bit by bit) from the extension to a buffer of its
+own and parsed there, so it cannot read past its size. Over all 240163 PS frames of the
+801 library files the parse never fails and every frame ends within 7 bits of the end
+of its extension (the fill that rounds it up to a byte): a wrong code table, a wrong
+field order or a wrong width would desynchronise every file within a frame or two. The
+parameters themselves cannot be compared with ffmpeg's yet: ffmpeg does not print
+them, they show only through its stereo output, so that comparison is PS3's (the
+IID/ICC of `he44-ps.aac` against both ffmpeg builds). Written streams cover what the
+library does not: both resolutions, 10/20/34 bands, free borders, no envelope, a closing
+envelope, IPD/OPD with wrap, the extension loop and its escape, every refusal.
+
+**Where this parser differs from ffmpeg's** (none is observable in a well-formed
+stream): data is bounded by a copy rather than checked after the fact; a data length
+over 270 bytes is refused; the check of the repeated ICC row is dropped (an ICC index is
+valid at any resolution, and so is a cleared one) and the IID one uses the band count of
+the IID.
+
+**Channel policy (decision 1).** The output is stereo from the first frame when the
+configuration signals SBR over a mono core (object type 5 or 29, or the backward
+compatible extension) and does not state PS absent (`psPresentFlag` 0 in the `0x548`
+extension): `aacConfig.stereoOut`. This is ffmpeg's rule at configuration time
+(`aacdec.c:1006-1009`: SBR 1 with PS unstated turns PS on; `mpeg4audio.c:194-207`).
+The second channel is a copy of the first until PS is applied (PS4), as ffmpeg's is
+before the first PS header. A mono SBR stream without any PS (the 5 library files,
+object type 5) is stereo too, as it is in ffmpeg. A stream that signals **nothing**
+stays mono, and its PS data is not parsed: ffmpeg turns stereo on at the first frame if
+that frame carries SBR, which decode cannot, because `Audio.Channels`, the layout and
+the slot map are those of the track and the configuration is all it has when the track
+is announced. That differs from ffmpeg only for a mono AAC-LC track that carries SBR
+without any signal and whose first frame has it; none of the 832 mono files of the
+library is unsignalled (all 801 are object type 29, the other 5 object type 5), so no
+library file differs. (The sample rate does already change mid-stream for such streams,
+at the first frame with SBR data; the channel count does not.)
+
+**Library census** (the 832 mono AAC files under `~/Movies`, by file; frames summed
+over the 801 PS files; `TestAACPSCensus` with `AAC_REAL_HE_DIR`, numbers only):
+
+| What | Files | Frames |
+|------|-------|--------|
+| mono AAC files | 832 | |
+| carry PS data in every SBR frame | 801 | 240163 PS frames |
+| SBR but no PS data in any frame | 5 | |
+| signalling: explicit, object type 29 (PS) | 801 | |
+| signalling: explicit, object type 5, PS not stated | 5 | |
+| signalling: backward compatible, or none | 0 | |
+| header in the first frame | 801 | 83860 frames with a header (35 %) |
+| IID modes sent in a header | 721 use 1 and 4, 19 only 1, 7 only 4, 54 none (IID off) | |
+| IID in 31 steps (fine) | 728 | |
+| ICC mode | 801: mode 1 only | |
+| 20 bands (modes 1, 4); 10 bands (0, 3); 34 bands (2, 5) | 801; 0; 0 | |
+| switches between 20 and 34 bands | 0 | |
+| frame class | 801: class 0 (fixed) only | |
+| envelopes in a frame (class 0) | 0 and 1 and 2 and 4 in 306 files; 0, 1, 2 in 121; 0, 1, 4 in 185; 0, 1 in 189 | 0: 53839, 1: 183503, 2: 1115, 4: 1706 |
+| closing envelope added (last border short of the end, or none) | 801 | |
+| `enable_ext` in a header, so IPD/OPD | 0 | 0 |
+| IPD/OPD held without being sent | 0 | |
+| parser refusals, PS off after a fault | 0 | 0 |
+
+What this scopes. The library needs, and only needs: the **20-band** hybrid layout
+(PS2: the 34-band bank and the 10-band mapping carry no library file); **procedure A**
+(`icc_mode` 1 < 3, PS3: procedure B is for `icc_mode` ≥ 3); both IID resolutions (the
+fine one in 728 files); **fixed class** borders with 0, 1, 2 or 4 envelopes, plus the
+closing one, and the empty frame that repeats the last parameters (22 % of frames);
+IID off (54 files) with ICC on. It never uses free borders, IPD/OPD, the extension,
+34 bands or a switch. Those are carried by the written streams (ffmpeg's reading) and
+the ISO conformance streams alone, so they come after the library path in PS2 and PS3,
+and the library comparison in PS4 can be reached without them.
 
 ## PR split (each green, reviewed independently, before the next)
 

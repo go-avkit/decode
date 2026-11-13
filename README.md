@@ -148,8 +148,14 @@ decodes at twice the core rate**, whether the AudioSpecificConfig signals it (ob
 type 5, or the backward compatible extension) or the stream only carries it (the
 decoder switches at the first SBR data, as ffmpeg does): on the four HE-AAC fixtures
 it is within 3e-6 of ffmpeg 9.0.2's output sample by sample, and within a float32
-rounding plus 1e-6 of a float64 reference. Parametric Stereo (HE-AAC v2) is signalled
-but not decoded: the output is the SBR mono channel, where ffmpeg gives stereo. **Refused
+rounding plus 1e-6 of a float64 reference. Parametric Stereo (HE-AAC v2) is parsed but
+not yet applied (`docs/aac-ps-design.md`): **a mono core whose configuration signals SBR
+(object type 5 or 29, or the backward compatible extension) and does not say PS absent
+is announced as stereo from the first frame**, as ffmpeg's output is, because
+`Audio.Channels` and the layout are those of the track and cannot change mid-stream; its
+second channel is a copy of the first until PS is applied. A mono stream that signals
+no SBR at all stays mono even if it carries SBR (ffmpeg turns stereo on at the first
+frame that has it; none of the 832 mono files tried differs). **Refused
 with `ErrAudioUnsupported`: Main, LTP, SSR, 960-sample frames, SBR in its downsampled
 mode (output at the core rate), coupling channels, and channel configurations 11, 12
 and 14.** The target is the exact result,
