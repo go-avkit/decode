@@ -385,8 +385,13 @@ func FirstAudioTrack(r *container.Reader) (uint32, error) {
 // DecodeAudioTrack decodes every sample of one audio track of a demuxed file and
 // returns the PCM in presentation order, with the track's start and end trimmed as
 // its container states them (edit list, Opus pre-skip, DiscardPadding). The sample
-// count is what those edit list and gapless metadata define, measured in the output
-// rate. It equals the count ffmpeg delivers except where ffmpeg is known to differ:
+// count is meant to be what those edit list and gapless metadata define, measured in
+// the output rate, and is not yet in two cases, defects of this package: iTunSMPB is
+// ignored (go-avkit/decode#53) and Matroska priming and trimming are applied in
+// milliseconds (go-avkit/decode#54).
+//
+// It equals the count ffmpeg delivers except where ffmpeg is known to differ, which
+// are deliberate divergences:
 //   - go-avkit/decode#57: an implicitly signalled HE-AAC MP4 track whose timescale is
 //     the core rate, with an edit list that starts after 0. The start is in core-rate
 //     ticks and is converted to the doubled output rate (1000 ticks at 22050 Hz are

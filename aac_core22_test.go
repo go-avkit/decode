@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-avkit/avkit/container"
@@ -80,26 +81,51 @@ func TestAACEditStartAtCoreRate(t *testing.T) {
 func patchCoreRate(t *testing.T, mp4 []byte) []byte {
 	t.Helper()
 	b := bytes.Clone(mp4)
-	box := func(name string, off, size int) []byte {
-		i := bytes.Index(b, []byte(name))
-		if i < 0 || i+off+size > len(b) {
-			t.Fatalf("no %s box", name)
+	// box finds the box at path (e.g. "moov/trak/mdia/mdhd") by walking sizes and types,
+	// never by searching the bytes, and returns size bytes at off from the start of its
+	// type field (the first track's, where a container box repeats).
+	box := func(path string, off, size int) []byte {
+		lo, hi := 0, len(b)
+		for _, name := range strings.Split(path, "/") {
+			found := false
+			for p := lo; p+8 <= hi; {
+				n := int(binary.BigEndian.Uint32(b[p:]))
+				if n < 8 || p+n > hi {
+					t.Fatalf("bad box size %d at %d", n, p)
+				}
+				if string(b[p+4:p+8]) == name {
+					if name == path[strings.LastIndex(path, "/")+1:] {
+						if p+4+off+size > p+n {
+							t.Fatalf("%s box too short", name)
+						}
+						return b[p+4+off : p+4+off+size]
+					}
+					lo, hi, found = p+8, p+n, true
+					break
+				}
+				p += n
+			}
+			if !found {
+				t.Fatalf("no %s box in %s", name, path)
+			}
 		}
-		return b[i+off : i+off+size]
+		t.Fatalf("no box at %s", path)
+		return nil
 	}
 	put := func(p []byte, v uint32) { binary.BigEndian.PutUint32(p, v) }
 	// elst: type, version+flags, count, segment_duration, media_time, rate
-	e := box("elst", 12, 8)
+	e := box("moov/trak/edts/elst", 12, 8)
 	put(e, 57293120)
 	put(e[4:], 1000)
 	// mdhd: type, version+flags, creation, modification, timescale, duration
-	m := box("mdhd", 16, 8)
+	m := box("moov/trak/mdia/mdhd", 16, 8)
 	put(m, 22050)
 	put(m[4:], 47104)
 	// stts: type, version+flags, count, then (sample_count, sample_delta)
-	if binary.BigEndian.Uint32(box("stts", 8, 4)) != 1 {
+	const stts = "moov/trak/mdia/minf/stbl/stts"
+	if binary.BigEndian.Uint32(box(stts, 8, 4)) != 1 {
 		t.Fatal("stts has more than one entry")
 	}
-	put(box("stts", 16, 4), 1024)
+	put(box(stts, 16, 4), 1024)
 	return b
 }

@@ -131,8 +131,12 @@ Streaming: `decode.NewAudioTrack(trackConfig, cfg)`, then `DecodeSample(sample)`
 its container states it (edit list, Opus pre-skip; a bare `StartDelay` is a timestamp shift in ffmpeg and drops nothing) and an edit list's
 end cuts the last buffer, which is what ffmpeg does.
 
-The sample count is what the container's edit list and gapless metadata define, in
-the output rate. It equals ffmpeg's except where ffmpeg is known to differ, each case
+The sample count is meant to be what the container's edit list and gapless metadata
+define, in the output rate. Two open defects of this package fall short of that:
+iTunSMPB is ignored ([#53](https://github.com/go-avkit/decode/issues/53)) and
+Matroska priming and trimming are applied in milliseconds
+([#54](https://github.com/go-avkit/decode/issues/54)). Apart from them the count
+equals ffmpeg's except where ffmpeg is known to differ, deliberate divergences each
 with its issue:
 
 * [#57](https://github.com/go-avkit/decode/issues/57): an implicitly signalled
