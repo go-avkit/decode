@@ -3,75 +3,63 @@
 
 package decode
 
-import (
-	"math"
-
-	"github.com/go-fft/fft"
-)
+import "github.com/go-fft/fft"
 
 // The inverse MDCT of AAC-LC (clause of the standard not verified):
 //
-//	x[n] = (2/N) * sum over k < N/2 of X[k] cos(2*pi/N * (n + n0) * (k + 1/2))
+//	x[n] = (1/M) * sum over k < M of X[k] cos(pi/M * (n + 1/2 + M/2) * (k + 1/2)), n < 2M
 //
-// computed through a complex FFT of a quarter of the window length: pre-twiddle,
-// FFT, post-twiddle. The FFT is a go-fft plan on complex128, built once per window
-// size; the twiddle factors are float64 cos and sin, and the result is rounded to
-// float32 once, at the end: the error of the transform is then that single rounding
-// (half an ulp of the sample), not the accumulation of log2(N) float32 stages. The
-// output is scaled by 1/(N/2)/32768 inside the transform, so that a sample comes
-// out in the range -1 to 1 when the spectrum is in 16-bit units.
+// with M = 1024 coefficients (long) or 128 (short). Of the 2M samples the decoder
+// keeps M, and those M are, rearranged, a DCT-IV of the spectrum:
+//
+//	C[m] = sum over k < M of X[k] cos(pi/M * (m + 1/2) * (k + 1/2)),  m < M
+//
+// which is go-fft's DCT-IV (type 4) on a plan built once per size, in its mixed
+// form (DCTMixed, go-fft v0.30): float32 in and out, the arithmetic in float64, the
+// conversions fused into the pre- and post-twiddle passes. Each output is the
+// float64 result rounded to float32 once, so the error is that rounding (half an
+// ulp of the sample) on top of the float64 transform's, not the accumulation of
+// log2(M) float32 stages. A reversal and the scale 1/M/32768, which makes a sample
+// come out in the range -1 to 1 when the spectrum is in 16-bit units, finish it.
+// That scale over two (go-fft's DCT-IV is twice the sum) is a power of two for both
+// sizes, so applying it to the float32 is exact.
+//
+// With C = (s, t) in halves of M/2, the M samples are (t_r, s_r), r the reversal:
+// the IMDCT of the spectrum is (t, -t_r, -s_r, -s) and the overlap-add of the
+// decoder reads those two quarters.
 
-// aacMDCT is the inverse MDCT of n coefficients to n samples.
+// aacMDCT is the inverse MDCT of m coefficients to m samples (half of the block).
+// It is immutable and shared by every decoder.
 type aacMDCT struct {
-	n    int
-	plan *fft.Plan
-	pre  []complex128 // n/2 twiddles
-	post []complex128 // n/2 twiddles
+	m     int
+	plan  *fft.DCTPlan // DCT-IV of length m
+	scale float32      // 1/m/32768 over two, a power of two
 }
 
 // aacMDCTScratch is the working memory of one transform call. An aacMDCT is
 // immutable and shared by every decoder; each decoder owns the scratch it passes
 // in, so concurrent decoders do not touch each other's.
 type aacMDCTScratch struct {
-	c []complex128
+	out []float32 // m values
 }
 
 // newScratch returns working memory for this transform.
 func (m *aacMDCT) newScratch() *aacMDCTScratch {
-	return &aacMDCTScratch{c: make([]complex128, m.n/2)}
+	return &aacMDCTScratch{out: make([]float32, m.m)}
 }
 
-func newAACMDCT(n int) *aacMDCT {
-	h := n / 2
-	m := &aacMDCT{n: n, plan: fft.NewPlan(h), pre: make([]complex128, h), post: make([]complex128, h)}
-	scale := math.Sqrt(1.0 / float64(n) / 32768)
-	for i := 0; i < h; i++ {
-		alpha := math.Pi / 2 * (float64(i) + 1.0/8.0) / float64(h)
-		e := complex(math.Cos(alpha)*scale, math.Sin(alpha)*scale)
-		m.pre[i] = e * complex(float64(h), 0) // IFFT divides by h
-		m.post[i] = e
-	}
-	return m
+func newAACMDCT(m int) *aacMDCT {
+	return &aacMDCT{m: m, plan: fft.NewDCTPlan(m, 4), scale: float32(1.0 / float64(m) / 32768 / 2)}
 }
 
-// inverse writes the n samples of the spectrum src into dst, working in sc, which
+// inverse writes the m samples of the spectrum src into dst, working in sc, which
 // came from newScratch of this transform and is not shared between goroutines.
-func (m *aacMDCT) inverse(dst, src []float32, sc *aacMDCTScratch) {
-	h, q := m.n/2, m.n/4
-	z := sc.c
-	for i := range z {
-		z[i] = complex(float64(src[m.n-1-2*i]), float64(src[2*i])) * m.pre[i]
-	}
-	m.plan.IFFT(z, z)
-	for i := 0; i < q; i++ {
-		i0, i1 := q+i, q-i-1
-		s1 := complex(imag(z[i1]), real(z[i1]))
-		s0 := complex(imag(z[i0]), real(z[i0]))
-		e1, e0 := m.post[i1], m.post[i0]
-		z[i1] = complex(real(s1)*imag(e1)-imag(s1)*real(e1), real(s0)*real(e0)+imag(s0)*imag(e0))
-		z[i0] = complex(real(s0)*imag(e0)-imag(s0)*real(e0), real(s1)*real(e1)+imag(s1)*imag(e1))
-	}
+func (t *aacMDCT) inverse(dst, src []float32, sc *aacMDCTScratch) {
+	m, h := t.m, t.m/2
+	c := t.plan.DCTMixed(sc.out, src[:m], fft.NormBackward)
+	// (t_r, s_r) from C = (s, t)
 	for i := 0; i < h; i++ {
-		dst[2*i], dst[2*i+1] = float32(real(z[i])), float32(imag(z[i]))
+		dst[i] = c[m-1-i] * t.scale
+		dst[h+i] = c[h-1-i] * t.scale
 	}
 }
