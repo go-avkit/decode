@@ -3,8 +3,8 @@ module github.com/go-avkit/decode/tools
 go 1.27.3
 
 require (
-	github.com/Eyevinn/mp4ff v0.62.0
-	github.com/go-avkit/avkit v0.15.0
+	github.com/Eyevinn/mp4ff v0.62.1
+	github.com/go-avkit/avkit v0.16.0
 	github.com/go-avkit/decode v0.0.0
 	github.com/spf13/cobra v1.10.2
 )

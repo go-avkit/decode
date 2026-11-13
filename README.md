@@ -132,20 +132,29 @@ its container states it (edit list, Opus pre-skip; a bare `StartDelay` is a time
 end cuts the last buffer, which is what ffmpeg does.
 
 The sample count is meant to be what the container's edit list and gapless metadata
-define, in the output rate. Two open defects of this package fall short of that:
-iTunSMPB is ignored ([#53](https://github.com/go-avkit/decode/issues/53)) and
+define, in the output rate. One open defect of this package falls short of that:
 Matroska priming and trimming are applied in milliseconds
-([#54](https://github.com/go-avkit/decode/issues/54)). Apart from them the count
-equals ffmpeg's except where ffmpeg is known to differ, deliberate divergences each
-with its issue:
+([#54](https://github.com/go-avkit/decode/issues/54)). An MP4's `iTunSMPB`, which
+iTunes and `afconvert` write, is applied to AAC as ffmpeg does: the encoder delay
+replaces the start the edit list states (the packets the edit list drops whole still
+count against it), and the end padding cuts the track to its duration less the
+padding when that is longer than both it and the original sample count; the numbers
+are ticks of the track's timescale and double with an HE-AAC track at the core rate.
+`DecodeAudioTrack` applies it, `NewAudioTrack` does not. Apart from the Matroska
+defect the count equals ffmpeg's except where ffmpeg is known to differ, deliberate
+divergences each with its issue:
 
-* [#57](https://github.com/go-avkit/decode/issues/57): an implicitly signalled
-  HE-AAC MP4 track whose timescale is the core rate (22050 Hz) and whose edit list
-  starts after 0. 1000 ticks are 45.35 ms, 2000 samples at the 44100 Hz output; this
-  package drops 2000, ffmpeg 9.0.2 drops 1000 and gives 1000 more (the ends agree).
-  The fixture `testdata/aac/core22-he44-st.mp4` asserts 89520 samples where ffmpeg
-  gives 90520 (to be reported to ffmpeg). None of 817 real HE-AAC files measured
-  has this shape.
+* [#57](https://github.com/go-avkit/decode/issues/57): an HE-AAC MP4 track whose
+  timescale is the core rate (22050 Hz) and whose edit list starts after 0, with no
+  `iTunSMPB` delay to replace it. 1000 ticks are 45.35 ms, 2000 samples at the 44100 Hz
+  output; this package drops 2000, ffmpeg 9.0.2 drops 1000 of an implicitly signalled
+  track and gives 1000 more (the ends agree). The fixture
+  `testdata/aac/core22-he44-st.mp4` asserts 89520 samples where ffmpeg gives 90520 (to
+  be reported to ffmpeg). None of 817 real HE-AAC files measured has this shape.
+* `iTunSMPB` on the wrong stream: ffmpeg attaches the item to the last stream parsed
+  when it reads it, so in a file where another track follows the audio it trims no
+  audio. This package trims the first audio track, as the item says
+  (`TestGaplessItemOnTheWrongStream`: 9600 samples where ffmpeg gives 12288).
 * [#20](https://github.com/go-avkit/decode/issues/20): a fragmented MP4, whose edit
   list ffmpeg does not apply.
 
