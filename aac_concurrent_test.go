@@ -73,4 +73,41 @@ func TestAACConcurrentDecoders(t *testing.T) {
 	wg.Wait()
 	// the SBR signal path shares its plans the same way (aac_sbr_hf_test.go)
 	t.Run("SBR", TestSBRConcurrentChannels)
+	// and so does a real HE-AAC decode through the decoder: the four streams, with
+	// explicit signalling and without, decoded in goroutines
+	var he []aacTrackFixture
+	var heWant [][]byte
+	for _, fx := range aacHEFixtures {
+		for _, sig := range []string{"explicit", "implicit"} {
+			_, frames := aacADTSFrames(t, filepath.Join("testdata", "aac", fx.name))
+			f := aacTrackFixture{tc: aacHETrack(fx, sig)}
+			for _, fr := range frames[:12] {
+				f.samples = append(f.samples, container.Sample{Data: fr, Duration: 1024})
+			}
+			w, err := f.decode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			he, heWant = append(he, f), append(heWant, w)
+		}
+	}
+	var wg2 sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			for i, f := range he {
+				got, err := f.decode()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if !bytes.Equal(got, heWant[i]) {
+					t.Errorf("HE-AAC stream %d: a goroutine's output differs from the single-goroutine output", i)
+					return
+				}
+			}
+		}()
+	}
+	wg2.Wait()
 }

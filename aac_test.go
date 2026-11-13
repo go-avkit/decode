@@ -185,7 +185,8 @@ func TestAACDecoderRefusals(t *testing.T) {
 		text string
 	}{
 		"no configuration": {container.TrackConfig{Codec: "mp4a"}, AudioConfig{}, ErrAudioConfig, "AudioSpecificConfig"},
-		"HE-AAC":           {container.TrackConfig{Codec: "mp4a", CodecConfig: asc(5, 3, 2, [3]uint{}, nil)}, AudioConfig{}, ErrAudioUnsupported, "HE-AAC"},
+		"downsampled SBR":  {container.TrackConfig{Codec: "mp4a", CodecConfig: ascHE(false, 4, 2, 4, 2)}, AudioConfig{}, ErrAudioUnsupported, "downsampled"},
+		"SBR block limit":  {container.TrackConfig{Codec: "mp4a", CodecConfig: ascHE(false, 4, 2, 1, 2)}, AudioConfig{MaxBlockSamples: 1024}, ErrOverLimit, "2048"},
 		"configuration 11": {container.TrackConfig{Codec: "mp4a", CodecConfig: asc(2, 3, 11, [3]uint{}, nil)}, AudioConfig{}, ErrAudioUnsupported, "no fixed layout"},
 		"block limit":      {aacTrack(aacRate44, 2), AudioConfig{MaxBlockSamples: 512}, ErrOverLimit, "1024"},
 		"channel limit":    {aacTrack(aacRate44, 2), AudioConfig{MaxChannels: 1}, ErrOverLimit, "2 channels"},

@@ -175,6 +175,7 @@ func TestSBRWriteCorpus(t *testing.T) {
 		_, frames := aacADTSFrames(t, filepath.Join("testdata", "aac", fx.name))
 		for i, fr := range frames[:4] {
 			write("FuzzSBRFrame", fmt.Sprintf("%s-%d", fx.name, i), append([]byte{byte(rateIndexOf(fx.rate)), 2}, fr...))
+			write("FuzzAACHE", fmt.Sprintf("%s-%d", fx.name, i), append([]byte{byte(rateIndexOf(fx.rate)), byte(fx.channels - 1), 0}, fr...))
 		}
 	}
 	tb := sbrTestTables(t)

@@ -31,6 +31,65 @@ func asc(obj, rate, ch int, flags [3]uint, tail func(w *bitWriter)) []byte {
 	return w.bytes()
 }
 
+// ascHE builds an AudioSpecificConfig with explicit SBR (object type 5) or PS (29): the
+// core rate and channel configuration, the extension rate, the object type of the
+// core, and the GASpecificConfig flags.
+func ascHE(ps bool, core, ch, ext, inner int) []byte {
+	w := &bitWriter{}
+	obj := uint(5)
+	if ps {
+		obj = 29
+	}
+	w.bits(obj, 5)
+	w.bits(uint(core), 4)
+	w.bits(uint(ch), 4)
+	w.bits(uint(ext), 4)
+	w.bits(uint(inner), 5)
+	w.bits(0, 3)
+	return w.bytes()
+}
+
+// ascBackward builds an AAC-LC AudioSpecificConfig with the backward compatible SBR
+// extension (extension rate index ext), and the PS extension after it when ps.
+func ascBackward(core, ch, ext int, ps bool) []byte {
+	return asc(2, core, ch, [3]uint{}, func(w *bitWriter) {
+		w.bits(0x2b7, 11)
+		w.bits(5, 5)
+		w.bits(1, 1)
+		w.bits(uint(ext), 4)
+		if ps {
+			w.bits(0x548, 11)
+			w.bits(1, 1)
+		}
+	})
+}
+
+// TestAACConfigHE: the ways an AudioSpecificConfig signals SBR and PS, and the
+// output rate they make.
+func TestAACConfigHE(t *testing.T) {
+	for name, tc := range map[string]struct {
+		b             []byte
+		rate, out, ch int
+		ps            bool
+	}{
+		"explicit SBR":                {ascHE(false, 7, 2, 4, 2), 22050, 44100, 2, false},
+		"explicit PS over mono":       {ascHE(true, 7, 1, 4, 2), 22050, 44100, 1, true},
+		"backward compatible SBR":     {ascBackward(7, 2, 4, false), 22050, 44100, 2, false},
+		"backward compatible SBR, PS": {ascBackward(7, 1, 4, true), 22050, 44100, 1, true},
+		"PS extension alone":          {asc(2, 7, 1, [3]uint{}, func(w *bitWriter) { w.bits(0x548, 11); w.bits(1, 1) }), 22050, 44100, 1, true},
+		"explicit SBR at 8 kHz":       {ascHE(false, 11, 1, 8, 2), 8000, 16000, 1, false},
+		"explicit SBR at 48 kHz":      {ascHE(false, 3, 2, 0, 2), 48000, 96000, 2, false},
+	} {
+		c, err := parseAudioSpecificConfig(tc.b)
+		if err != nil || !c.sbr || c.rate != tc.rate || c.outRate() != tc.out || c.channels != tc.ch || c.ps != tc.ps {
+			t.Errorf("%s: %+v %v", name, c, err)
+		}
+	}
+	if c, _ := parseAudioSpecificConfig(asc(2, 7, 1, [3]uint{}, nil)); c.sbr || c.outRate() != 22050 {
+		t.Errorf("AAC-LC: %+v", c)
+	}
+}
+
 func TestAACConfigAccepted(t *testing.T) {
 	c, err := parseAudioSpecificConfig(asc(2, 4, 2, [3]uint{}, nil))
 	if err != nil || c.rate != 44100 || c.rateIndex != 4 || c.channels != 2 || c.config != 2 || c.pce != nil {
@@ -71,13 +130,19 @@ func TestAACConfigRefused(t *testing.T) {
 		kind error
 		text string
 	}{
-		"empty":         {nil, ErrAudioConfig, "truncated"},
-		"explicit SBR":  {asc(5, 4, 2, [3]uint{}, nil), ErrAudioUnsupported, "HE-AAC"},
-		"explicit PS":   {asc(29, 4, 2, [3]uint{}, nil), ErrAudioUnsupported, "HE-AAC"},
-		"Main":          {asc(1, 4, 2, [3]uint{}, nil), ErrAudioUnsupported, "object type 1"},
-		"LTP":           {asc(4, 4, 2, [3]uint{}, nil), ErrAudioUnsupported, "object type 4"},
-		"USAC (escape)": {asc(42, 4, 2, [3]uint{}, nil), ErrAudioUnsupported, "object type 42"},
-		"reserved rate": {asc(2, 13, 2, [3]uint{}, nil), ErrAudioConfig, "reserved"},
+		"empty":                {nil, ErrAudioConfig, "truncated"},
+		"downsampled SBR":      {ascHE(false, 4, 2, 4, 2), ErrAudioUnsupported, "downsampled"},
+		"SBR at the wrong ext": {ascHE(false, 7, 2, 7, 2), ErrAudioUnsupported, "downsampled"},
+		"SBR over 7350 Hz":     {asc(2, 12, 1, [3]uint{}, func(w *bitWriter) { w.bits(0x548, 11); w.bits(1, 1) }), ErrAudioUnsupported, "SBR over a core at 7350"},
+		"PS over stereo":       {ascHE(true, 7, 2, 4, 2), ErrAudioUnsupported, "Parametric Stereo over 2"},
+		"SBR over Main":        {ascHE(false, 7, 2, 4, 1), ErrAudioUnsupported, "object type 1"},
+		"cut after the object": {ascHE(false, 7, 2, 4, 2)[:3], ErrAudioConfig, "truncated"},
+		"cut in the extension": {ascHE(false, 7, 2, 4, 2)[:2], ErrAudioConfig, "truncated"},
+		"bad extension rate":   {ascHE(false, 7, 2, 13, 2), ErrAudioConfig, "reserved"},
+		"Main":                 {asc(1, 4, 2, [3]uint{}, nil), ErrAudioUnsupported, "object type 1"},
+		"LTP":                  {asc(4, 4, 2, [3]uint{}, nil), ErrAudioUnsupported, "object type 4"},
+		"USAC (escape)":        {asc(42, 4, 2, [3]uint{}, nil), ErrAudioUnsupported, "object type 42"},
+		"reserved rate":        {asc(2, 13, 2, [3]uint{}, nil), ErrAudioConfig, "reserved"},
 		"odd rate": {func() []byte {
 			w := &bitWriter{}
 			w.bits(2, 5)
@@ -86,16 +151,18 @@ func TestAACConfigRefused(t *testing.T) {
 			w.bits(2, 4)
 			return w.bytes()
 		}(), ErrAudioUnsupported, "12345 Hz"},
-		"960 frames":     {asc(2, 4, 2, [3]uint{1, 0, 0}, nil), ErrAudioUnsupported, "960"},
-		"core coder":     {asc(2, 4, 2, [3]uint{0, 1, 0}, nil), ErrAudioUnsupported, "core coder"},
-		"reserved chans": {asc(2, 4, 8, [3]uint{}, nil), ErrAudioConfig, "channel_configuration 8"},
-		"no channels":    {asc(2, 4, 15, [3]uint{}, nil), ErrAudioConfig, "channel_configuration 15"},
-		"bad PCE":        {asc(2, 4, 0, [3]uint{}, func(w *bitWriter) { w.bits(0xffff, 16) }), ErrAudioConfig, "program_config_element"},
-		"truncated":      {[]byte{0x12}, ErrAudioConfig, "truncated"},
-		"PCE of nothing": {asc(2, 4, 0, [3]uint{}, func(w *bitWriter) { w.bits(0, 32); w.bits(0, 24) }), ErrAudioConfig, "no channel"},
-		"implicit SBR":   {asc(2, 4, 2, [3]uint{}, func(w *bitWriter) { w.bits(0x2b7, 11); w.bits(5, 5); w.bits(1, 1) }), ErrAudioUnsupported, "backward compatible SBR"},
-		"implicit PS":    {asc(2, 4, 2, [3]uint{}, func(w *bitWriter) { w.bits(0x548, 11); w.bits(1, 1); w.bits(0, 4) }), ErrAudioUnsupported, "PS"},
-		"PCE then cut":   {asc(2, 4, 0, [3]uint{}, func(w *bitWriter) { pcePayload(w) })[:5], ErrAudioConfig, "program_config_element"},
+		"960 frames":                         {asc(2, 4, 2, [3]uint{1, 0, 0}, nil), ErrAudioUnsupported, "960"},
+		"core coder":                         {asc(2, 4, 2, [3]uint{0, 1, 0}, nil), ErrAudioUnsupported, "core coder"},
+		"reserved chans":                     {asc(2, 4, 8, [3]uint{}, nil), ErrAudioConfig, "channel_configuration 8"},
+		"no channels":                        {asc(2, 4, 15, [3]uint{}, nil), ErrAudioConfig, "channel_configuration 15"},
+		"bad PCE":                            {asc(2, 4, 0, [3]uint{}, func(w *bitWriter) { w.bits(0xffff, 16) }), ErrAudioConfig, "program_config_element"},
+		"truncated":                          {[]byte{0x12}, ErrAudioConfig, "truncated"},
+		"PCE of nothing":                     {asc(2, 4, 0, [3]uint{}, func(w *bitWriter) { w.bits(0, 32); w.bits(0, 24) }), ErrAudioConfig, "no channel"},
+		"backward compatible, downsampled":   {ascBackward(4, 2, 4, false), ErrAudioUnsupported, "downsampled"},
+		"backward compatible PS over stereo": {ascBackward(7, 2, 4, true), ErrAudioUnsupported, "Parametric Stereo over 2"},
+		"backward compatible, cut":           {asc(2, 7, 2, [3]uint{}, func(w *bitWriter) { w.bits(0x2b7, 11); w.bits(5, 5); w.bits(1, 1) })[:4], ErrAudioConfig, "truncated"},
+		"backward compatible, bad rate":      {asc(2, 7, 2, [3]uint{}, func(w *bitWriter) { w.bits(0x2b7, 11); w.bits(5, 5); w.bits(1, 1); w.bits(13, 4) }), ErrAudioConfig, "reserved"},
+		"PCE then cut":                       {asc(2, 4, 0, [3]uint{}, func(w *bitWriter) { pcePayload(w) })[:5], ErrAudioConfig, "program_config_element"},
 	} {
 		_, err := parseAudioSpecificConfig(tc.b)
 		wantErr(t, name, err, tc.kind, tc.text)

@@ -145,9 +145,23 @@ decision 2026-11-12: G1 is settled for SBR by declaring bare normative values in
 | `libavcodec/aac/aacdec.c:2024-2083` | SBR payload sits in a fill element of type 13 or 14 (with CRC), attached to the element before it | `aacParser.sbrFill` |
 
 Read for the SBR QMF and high frequency generation PR (part 2: `aac_sbr_qmf.go`,
-`aac_sbr_hf.go`, `aac_sbr_qmf_tables.go`), also read only. The decoder still refuses
-HE-AAC: the envelope adjustment (part 3) is not written, so nothing calls this code
-from `aacDecoder`.
+`aac_sbr_hf.go`, `aac_sbr_qmf_tables.go`), also read only. (Part 3 added the envelope
+adjustment and the decoder hook, below.)
+
+The decoder hook (`aac.go`, `aac_config.go`). Signalling: explicit (object type 5
+or 29: the first rate is the core's, the extension rate the output's, then the core's
+object type), backward compatible (`0x2b7` extension, extension rate, perhaps `0x548`),
+or none. The output is at twice the core rate; an extension rate that is not twice the
+core's (the downsampled mode, 32-band synthesis, output at the core rate) is refused,
+as are 960-sample frames: no stream of the four fixtures and none of the 822 HE-AAC
+files tried needs either (the files are all at 22.05 kHz core and 44.1 kHz output).
+Without signalling, the parser reads SBR data anyway and the decoder switches to the
+double rate at the first frame that carries any (as ffmpeg does), staying there: a
+later frame without SBR data is upsampled, not dropped. **PS** (object type 29, the
+`0x548` extension, or a mono core that carries it): not decoded, the output is the
+SBR mono channel. Of the 822 real HE-AAC files tried, 801 signal PS, so this is the
+common case in practice and the first thing to decide after the conformance streams:
+ffmpeg decodes those to stereo.
 
 | File:lines | What it tells us | Used for |
 |------------|------------------|----------|

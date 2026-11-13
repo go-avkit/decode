@@ -94,7 +94,51 @@ func FuzzAACDecode(f *testing.F) {
 			if err != nil {
 				return
 			}
-			if len(out) != 1 || out[0].Samples() != aacSamplesPerFrame || out[0].Channels != tc.Channels || out[0].Layout.Channels() != tc.Channels {
+			// 1024 samples, or 2048 once a frame has carried SBR data
+			if len(out) != 1 || (out[0].Samples() != aacSamplesPerFrame && out[0].Samples() != 2*aacSamplesPerFrame) || out[0].Channels != tc.Channels || out[0].Layout.Channels() != tc.Channels {
+				t.Fatalf("output %+v", out)
+			}
+		}
+	})
+}
+
+// FuzzAACHE decodes frames over an AudioSpecificConfig that signals SBR (and PS over
+// a mono core): the first byte picks the core rate, the second mono or stereo, the
+// third PS; the rest is a raw_data_block, decoded twice. Whatever it holds, the
+// output is 2048 samples per channel at twice the rate or an error.
+func FuzzAACHE(f *testing.F) {
+	for _, fx := range aacHEFixtures {
+		_, fr := aacADTSFrames(f, filepath.Join("testdata", "aac", fx.name))
+		for _, frame := range fr[:3] {
+			f.Add(append([]byte{byte(fx.rate), byte(aacChannelConfig(fx.config) - 1), 0}, frame...))
+		}
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) < 3 {
+			return
+		}
+		rate, ch := int(data[0])%len(aacRates), int(data[1])%2+1
+		ext := -1
+		for j, r := range aacRates {
+			if r == 2*aacRates[rate] {
+				ext = j
+			}
+		}
+		if ext < 0 {
+			return
+		}
+		tc := aacTrack(rate, ch)
+		tc.CodecConfig = ascHE(data[2]&1 != 0 && ch == 1, rate, ch, ext, 2)
+		c, err := newAAC(tc, AudioConfig{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			out, err := c.decode(data[3:])
+			if err != nil {
+				return
+			}
+			if len(out) != 1 || out[0].Samples() != 2*aacSamplesPerFrame || out[0].SampleRate != 2*aacRates[rate] || out[0].Channels != ch {
 				t.Fatalf("output %+v", out)
 			}
 		}

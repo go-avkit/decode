@@ -314,15 +314,23 @@ func sbrSinusoid(lv float64, ph, k int) complex128 {
 // core signal pcm, then for a frame that carries SBR data the high band generation
 // and adjustment, then synthesis into out (2048 samples each, at twice the rate).
 // A frame without SBR data is pure upsampling.
-func (s *sbrState) frame(nch int, pcm, out [2][]float32) {
-	if s.started {
+func (s *sbrState) frame(nch int, pcm, out [2][]float32) { s.process(nch, pcm, out, s.started) }
+
+// process is frame, with the choice of using the SBR data the state holds or not: a
+// frame whose fill element carried none is upsampled even when an earlier frame's
+// data is still in the state.
+func (s *sbrState) process(nch int, pcm, out [2][]float32, withSBR bool) {
+	// a state that a later fill element of the same frame turned off (two elements
+	// of one type and tag share a state) holds no valid tables
+	withSBR = withSBR && s.started
+	if withSBR {
 		s.dequantise(nch)
 	}
 	for ch := 0; ch < nch; ch++ {
 		d := s.channelDSP(ch)
 		d.analyse(pcm[ch])
 		kx, m, end := 32, 0, 0
-		if s.started {
+		if withSBR {
 			s.hfGenerate(ch)
 			s.adjust(ch)
 			kx, m, end = s.t.kx[1], s.t.m[1], int(s.ch[ch].tEnv[s.ch[ch].numEnv])
