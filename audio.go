@@ -384,8 +384,14 @@ func FirstAudioTrack(r *container.Reader) (uint32, error) {
 
 // DecodeAudioTrack decodes every sample of one audio track of a demuxed file and
 // returns the PCM in presentation order, with the track's start and end trimmed as
-// its container states them (edit list, Opus pre-skip, DiscardPadding):
-// the sample count is what ffmpeg delivers.
+// its container states them (edit list, Opus pre-skip, DiscardPadding). The sample
+// count is what those edit list and gapless metadata define, measured in the output
+// rate. It equals the count ffmpeg delivers except where ffmpeg is known to differ:
+//   - go-avkit/decode#57: an implicitly signalled HE-AAC MP4 track whose timescale is
+//     the core rate, with an edit list that starts after 0. The start is in core-rate
+//     ticks and is converted to the doubled output rate (1000 ticks at 22050 Hz are
+//     2000 samples at 44100 Hz); ffmpeg 9.0.2 drops 1000, so it delivers 1000 more.
+//   - go-avkit/decode#20: a fragmented MP4, whose edit list ffmpeg does not apply.
 func DecodeAudioTrack(r *container.Reader, trackID uint32, cfg AudioConfig) ([]Audio, error) {
 	tc, err := r.TrackConfig(trackID)
 	var samples []container.Sample
