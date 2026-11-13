@@ -8,8 +8,8 @@ require (
 	github.com/go-avkit/bitstream v0.4.0
 	github.com/go-avkit/h264 v0.9.0
 	github.com/go-dsp/signal v0.2.0
-	github.com/go-fft/fft v0.28.16
-	github.com/go-simd/floats v0.16.0
+	github.com/go-fft/fft v0.30.1
+	github.com/go-simd/floats v0.18.0
 	github.com/mewkiz/flac v1.0.14
 	github.com/pion/opus v0.1.0
 	github.com/tphakala/go-mp3 v0.3.0
