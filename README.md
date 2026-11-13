@@ -155,6 +155,9 @@ divergences each with its issue:
   when it reads it, so in a file where another track follows the audio it trims no
   audio. This package trims the first audio track, as the item says
   (`TestGaplessItemOnTheWrongStream`: 9600 samples where ffmpeg gives 12288).
+* `iTunSMPB` before any track: ffmpeg reads the item with no stream yet and ignores it
+  (a `udta` ahead of the `trak`); this package applies it wherever it is
+  (`TestGaplessItemBeforeTheTrack`: 9600 samples where ffmpeg gives 12288).
 * [#20](https://github.com/go-avkit/decode/issues/20): a fragmented MP4, whose edit
   list ffmpeg does not apply.
 
