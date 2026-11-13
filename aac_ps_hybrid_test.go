@@ -273,6 +273,53 @@ func TestPSHybridTaps(t *testing.T) {
 	}
 }
 
+// TestPSPrototypeResponse checks the frequency response G(w) = g[0] + 2 sum g[t] cos(wt)
+// of each prototype on a grid of 4001 points in [0, pi]. The values were MEASURED first
+// (2026-11-13) and are asserted with a margin: the stop band |w| >= 2pi/M stays under
+// 1.25 times the measured maximum, G(0) within 0.002 of its measured value, and the
+// two-band filter's edges G2(0) = 1.00406 and G2(pi) = -0.00406 within 0.001, with
+// G2(pi/2) = 1/2 exactly (derived). This catches a sign, a transposition or a shift of
+// the taps between columns. It does NOT catch a change in a last digit: that is
+// TestPSHybridTaps's job.
+func TestPSPrototypeResponse(t *testing.T) {
+	cases := [psNProto]struct{ g0, pi, stop float64 }{ // measured G(0), G(pi), stop-band maximum
+		psProtoM8:  {0.85517, 0.00196, 0.06598},
+		psProtoTwo: {1.00406, -0.00406, 0.00406},
+		psProtoM12: {0.78268, 0.05016, 0.09847},
+		psProtoM8b: {0.95866, -0.01703, 0.01746},
+		psProtoM4:  {0.98530, -0.06218, 0.07343},
+	}
+	for p, c := range cases {
+		g := psPrototype(p)
+		G := func(w float64) float64 {
+			s := g[0]
+			for k := 1; k <= psLook; k++ {
+				s += 2 * g[k] * math.Cos(w*float64(k))
+			}
+			return s
+		}
+		tol := 0.002
+		if p == psProtoTwo {
+			tol = 0.001
+		}
+		if math.Abs(G(0)-c.g0) > tol || math.Abs(G(math.Pi)-c.pi) > tol {
+			t.Errorf("prototype %d: G(0) = %.5f, G(pi) = %.5f, want %.5f, %.5f", p, G(0), G(math.Pi), c.g0, c.pi)
+		}
+		var worst float64
+		for i := 0; i <= 4000; i++ {
+			if w := math.Pi * float64(i) / 4000; w >= 2*math.Pi/float64(psProtoM[p]) {
+				worst = max(worst, math.Abs(G(w)))
+			}
+		}
+		if worst > 1.25*c.stop {
+			t.Errorf("prototype %d: stop band maximum %.5f over %.5f", p, worst, 1.25*c.stop)
+		}
+		if p == psProtoTwo && math.Abs(G(math.Pi/2)-0.5) > 1e-12 {
+			t.Errorf("two-band G(pi/2) = %v, want 1/2", G(math.Pi/2))
+		}
+	}
+}
+
 func TestPSTrig(t *testing.T) {
 	for _, m := range []int{4, 8, 12} {
 		for p := -3 * m; p < 3*m; p++ {

@@ -20,13 +20,14 @@ import (
 // through unchanged and undelayed (the output at slot l needs the input up to l+6). The
 // synthesis sums the rows of each split band back.
 //
-// The symmetry folds the sum: with s[t] = x[l+t] + x[l-t] and d[t] = x[l+t] - x[l-t],
+// The symmetry folds the sum: with p[t] = x[l+t] + x[l-t] and d[t] = x[l+t] - x[l-t],
 //
-//	y = g[0] x[l] + sum over t = 1..6 of g[t] (cos(theta t) s[t] - j sin(theta t) d[t]),
+//	y = g[0] x[l] + sum over t = 1..6 of g[t] (cos(theta t) p[t] - j sin(theta t) d[t]),
 //	theta = pi(2m+1)/M,
 //
 // and the outputs that a layout sums into one row (m and M-1-m, whose sines cancel)
-// become one filter with the summed coefficients. A row is therefore c0, c[t], s[t].
+// become one filter with the summed coefficients. A row is therefore c0, c[t] (the
+// cosine coefficients) and s[t] (the sine ones).
 
 // Sizes of the layouts.
 const (
@@ -76,7 +77,7 @@ func psPrototype(p int) (g [psLook + 1]float64) {
 	return g
 }
 
-// psHybRow is one split row: y = c0 x[l] + sum over t of c[t] s[t] + s[t] d[t] (see above),
+// psHybRow is one split row: y = c0 x[l] + sum over t of c[t] p[t] - j s[t] d[t] (see above),
 // from QMF band band, with centre frequency f in QMF band units.
 type psHybRow struct {
 	band int
@@ -142,7 +143,7 @@ func psFreq(k, m, out int) float64 {
 	return f + 2*math.Ceil((float64(k)-0.5-f)/2)
 }
 
-// psTrig returns cos and sin of pi*p/m for integer p, reduced to the first octant so
+// psTrig returns cos and sin of pi*p/m for integer p, reduced to the first quadrant (p up to m/2) so
 // that opposite angles give exactly opposite sines and the right angles are exact.
 func psTrig(p, m int) (c, s float64) {
 	p %= 2 * m

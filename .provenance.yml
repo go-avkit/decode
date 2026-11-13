@@ -255,12 +255,11 @@ values:
     symbol: psFreq
     source: the centre frequency of each hybrid row, 2(m+1/2)/M modulo 2 taken in [k-1/2, k+3/2), a summed pair taking the member in [k, k+1) (docs/aac-ps-hybrid.md section 3); it fixes the order of the 20-band rows and is checked against the typed tables 3 and 4
     rationale: a centre frequency follows from the modulation of the row, so it is computed.
-  - kind: normative-values
+  - kind: derived
     file: aac_ps_hybrid_test.go
     symbol: psTable4F24
-    standard: ISO/IEC 14496-3
-    clause: standard table number not verified; the centre frequency of each split row of the 34-band layout in 1/24 band units, as docs/aac-ps-hybrid.md table 4 states them. The specification derives them from the centre frequency rule (psFreq) and checked them against the fractional-delay centre frequencies ffmpeg n9.0.2 aacps_tablegen.h holds, which is why a table check matches it
-    rationale: the expected values of a test, typed from the specification, against which the computed centre frequencies are compared; nothing in the decoder reads them.
+    source: the centre frequency of each split row of the 34-band layout in 1/24 band units, 2(m+1/2)/M modulo 2 taken in [k-1/2, k+3/2) (docs/aac-ps-hybrid.md section 3 and table 4), written out by hand as the expected values of TestPSHybridLayouts; the specification checked them against the fractional-delay centre frequencies that ffmpeg n9.0.2 aacps_tablegen.h holds, which is why a table comparison matches it
+    rationale: a test holds the rule's results as literals so that the computed values (psFreq) are compared with an independent hand evaluation; nothing in the decoder reads them.
   - kind: normative-values
     file: aac_ps_hybrid_test.go
     symbol: psTable4PB
