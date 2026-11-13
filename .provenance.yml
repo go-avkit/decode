@@ -227,6 +227,46 @@ values:
     standard: ISO/IEC 14496-3
     clause: standard table number not verified; the decay of the transient detector's peak (0.76592833836465), as listed in docs/aac-ps-design.md, read there in ffmpeg n9.0.2 libavcodec/aacps.c:399-517 (not reopened for PS1). It equals exp(-4/15) to 14 digits; recognised after the fact, no source gives 4/15
     rationale: a constant of the transient detector the standard fixes.
+  # PS2, the hybrid filter bank (docs/aac-ps-hybrid.md): written from that specification
+  # alone; no reference implementation was opened for it.
+  - kind: normative-values
+    file: aac_ps_hybrid.go
+    symbol: psTaps
+    standard: ISO/IEC 14496-3
+    clause: standard table numbers not verified; the 26 taps g[1..6] of the five hybrid prototypes that no formula gives (20 bands, M = 8, 6 taps; the real two-band split of QMF 1 and 2, 3 taps, the odd ones; 34 bands, M = 12, 6 taps, M = 8, 6 taps, M = 4, 5 taps), as printed in docs/aac-ps-hybrid.md table 2.3, read there in ffmpeg n9.0.2 and FAAD2 ps_dec.c (not opened for PS2). The entries at the centre and zero taps are 0 placeholders that psPrototype overwrites
+    rationale: the prototype's pass band and stop band shape is not fixed by perfect reconstruction (Q4 of the specification, where no window or formula was identified), so a decoder can only hold the standard's values; TestPSHybridTaps compares them with the printed digits.
+  - kind: derived
+    file: aac_ps_hybrid.go
+    symbol: psPrototype
+    source: the centre tap g[0] = 1/M and the taps at the other multiples of M, which are 0 (4 for M = 4; 2, 4 and 6 for the two-band split, which acts as M = 2 with g[0] = 1/2), computed from the perfect reconstruction condition that the sum of the modulated filters is a unit impulse (H. Purnhagen, DAFx'04, eq. 12; docs/aac-ps-hybrid.md section 2.3); TestPSHybridTaps checks the computed values against the 14 printed digits
+    rationale: a value that follows from a condition the filter bank must meet is computed, not held.
+  - kind: derived
+    file: aac_ps_hybrid.go
+    symbol: psSpecs20
+    source: which outputs of the hybrid bank are summed into one row at 20 bands, from P1 Fig. 4 (QMF 0 with M = 8, outputs 2+5 and 3+4 summed; QMF 1 and 2, the M = 4 outputs summed in the pairs (0, 3) and (1, 2), which P1 notes gives real filters); docs/aac-ps-hybrid.md section 3. TestPSHybridLayouts checks the rows against table 3 and TestPSHybridReference against the 192-bit evaluation of eq. 11
+    rationale: the summed outputs are the paper's construction, and the modulation is computed from them.
+  - kind: derived
+    file: aac_ps_hybrid.go
+    symbol: psSpecs34
+    source: the 34-band layout, M = 12, 8, 4, 4, 4 for QMF 0 to 4 with no output summed (P1 section 3.2), rows in order of band and output (docs/aac-ps-hybrid.md section 4); TestPSHybridLayouts checks the rows against table 4
+    rationale: the split sizes are the paper's, and the modulation of each row is computed from them.
+  - kind: derived
+    file: aac_ps_hybrid.go
+    symbol: psFreq
+    source: the centre frequency of each hybrid row, 2(m+1/2)/M modulo 2 taken in [k-1/2, k+3/2), a summed pair taking the member in [k, k+1) (docs/aac-ps-hybrid.md section 3); it fixes the order of the 20-band rows and is checked against the typed tables 3 and 4
+    rationale: a centre frequency follows from the modulation of the row, so it is computed.
+  - kind: normative-values
+    file: aac_ps_hybrid_test.go
+    symbol: psTable4F24
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the centre frequency of each split row of the 34-band layout in 1/24 band units, as docs/aac-ps-hybrid.md table 4 states them. The specification derives them from the centre frequency rule (psFreq) and checked them against the fractional-delay centre frequencies ffmpeg n9.0.2 aacps_tablegen.h holds, which is why a table check matches it
+    rationale: the expected values of a test, typed from the specification, against which the computed centre frequencies are compared; nothing in the decoder reads them.
+  - kind: normative-values
+    file: aac_ps_hybrid_test.go
+    symbol: psTable4PB
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the parameter band of each split row of the 34-band layout, as docs/aac-ps-hybrid.md table 4 states them (the same values as the first 32 entries of aacPSBandOf34)
+    rationale: the expected values of a test, typed from the specification, against which the decoder's own map is compared.
 require_declared:
   min_numbers: 32
   paths: [aac]
