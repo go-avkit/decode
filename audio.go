@@ -395,34 +395,63 @@ func DecodeAudioTrack(r *container.Reader, trackID uint32, cfg AudioConfig) ([]A
 	if err != nil {
 		return nil, err
 	}
-	return decodeAudio(tc, samples, cfg)
+	return decodeAudioDur(tc, samples, cfg, mediaDuration(r, trackID))
+}
+
+// mediaDuration is the duration the track's media header states, in its timescale, or 0.
+func mediaDuration(r *container.Reader, trackID uint32) uint64 {
+	for _, tr := range r.File().Tracks {
+		if tr.ID == trackID {
+			return tr.Duration
+		}
+	}
+	return 0
 }
 
 // decodeAudio is DecodeAudioTrack for a track already read.
 func decodeAudio(tc container.TrackConfig, samples []container.Sample, cfg AudioConfig) ([]Audio, error) {
+	return decodeAudioDur(tc, samples, cfg, 0)
+}
+
+// decodeAudioDur is decodeAudio with the media duration the container states (0 for
+// none). An AAC track ends at the least of three things: what its edit list presents, the
+// media header's duration, and the sum of its samples' durations less the start the edit
+// list drops. The last of them is where the encoder says how much of its last frame is
+// padding (a last sample of 1922 where the others have 2048), and ffmpeg trims the last
+// packet to it; an edit list in a movie timescale of milliseconds cannot say it exactly.
+func decodeAudioDur(tc container.TrackConfig, samples []container.Sample, cfg AudioConfig, mediaDur uint64) ([]Audio, error) {
 	d, err := NewAudioTrack(tc, cfg)
 	if err != nil {
 		return nil, err
 	}
 	defer d.Close()
-	limit := presentedSamples(tc, d.codec.sampleRate())
-	fromEdit := limit >= 0
-	if limit < 0 {
-		limit = d.codec.end(tc, samples)
+	// limit is how many samples the track presents, at the rate r
+	limit := func(r int) int64 {
+		if tc.Codec == "mp4a" && tc.Timescale > 0 {
+			return mp4aEnd(tc, samples, mediaDur, r)
+		}
+		l := presentedSamples(tc, r)
+		if l < 0 {
+			l = d.codec.end(tc, samples)
+		}
+		return l
 	}
+
+	lim := limit(d.rate)
 	limRate := d.rate
 	var out []Audio
 	var total int64
 	emit := func(fs []Audio) error {
-		if d.rate != limRate && fromEdit {
-			// the codec's rate changed with its first frame: the length the edit list
-			// states is in samples of the new one
-			limit = presentedSamples(tc, d.rate)
+		if d.rate != limRate {
+			// the codec's rate changed with its first frame: the length is in samples of
+			// the new one
+			lim = limit(d.rate)
 		}
 		limRate = d.rate
 		for _, a := range fs {
-			if limit >= 0 && a.PTS+int64(a.Samples()) > limit {
-				keep := max(limit-a.PTS, 0)
+			if lim >= 0 && a.PTS+int64(a.Samples()) > lim {
+				keep := max(lim-a.PTS, 0)
+
 				a.Data = a.Data[:int(keep)*a.Channels*a.Format.Size()]
 				if keep == 0 {
 					continue
@@ -466,4 +495,59 @@ func presentedSamples(tc container.TrackConfig, rate int) int64 {
 		}
 	}
 	return rescale(total, int64(rate), int64(el.MovieTimescale))
+}
+
+// mp4aEnd is how many samples at the rate r an MP4 AAC track presents, or -1 for no
+// limit. It is the least of two ends, in the track's timescale, as ffmpeg's mov demuxer
+// makes them: the duration of the track (the media header's, or the edit list's total
+// duration, empty edits included, if that is less) and the end of its packets (the sum of
+// the samples' durations, or, with an edit list that has an end, up to and including the
+// first packet that reaches that end: a packet is kept whole), less the start the edit
+// list drops. The last packet's duration is where the encoder says how much of its frame
+// is padding (1922 where the others have 2048); an edit list in a movie timescale of
+// milliseconds cannot say that exactly, which is why it is not the end by itself.
+func mp4aEnd(tc container.TrackConfig, samples []container.Sample, mediaDur uint64, r int) int64 {
+	ts := int64(tc.Timescale)
+	var all, start, nonEmpty int64 // in track timescale units
+	started, open := false, false
+	if el := tc.EditList; el != nil && el.MovieTimescale != 0 {
+		for _, e := range el.Edits {
+			d := rescale(int64(min(e.SegmentDuration, math.MaxInt64)), ts, int64(el.MovieTimescale))
+			open = open || e.SegmentDuration == 0
+			all += d
+			if e.MediaTime != container.EmptyEdit {
+				if !started {
+					start, started = e.MediaTime, true
+				}
+				nonEmpty += d
+			}
+		}
+	}
+	var sum, cross int64
+	cross = -1
+	for _, s := range samples {
+		sum += int64(s.Duration)
+		if cross < 0 && started && !open && sum >= start+nonEmpty {
+			cross = sum
+		}
+	}
+	end := sum
+	if cross >= 0 {
+		end = cross
+	}
+	ends := []int64{rescale(end-start, int64(r), ts)}
+	dur := int64(min(mediaDur, math.MaxInt64))
+	if started && !open && all > 0 && (dur == 0 || all < dur) {
+		dur = all
+	}
+	if dur > 0 {
+		ends = append(ends, rescale(dur, int64(r), ts))
+	}
+	out := int64(-1)
+	for _, e := range ends {
+		if e > 0 && (out < 0 || e < out) {
+			out = e
+		}
+	}
+	return out
 }
