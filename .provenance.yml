@@ -215,12 +215,16 @@ values:
     symbol: psPhase
     source: the IPD and OPD index k stands for the angle k*pi/4 (eight steps of a circle); computed in code
     rationale: no table is held.
-  - kind: normative-values
+  - kind: derived
     file: aac_ps_params.go
     symbol: psLinkDecay
-    standard: ISO/IEC 14496-3
-    clause: standard table number not verified; the decay factors of the three all-pass links of the decorrelator (0.65143905753106, 0.56471812200776, 0.48954165955695), as listed in docs/aac-ps-design.md, read there in ffmpeg n9.0.2 libavcodec/aacpsdsp_template.c:29-211 (not reopened for PS1). They equal exp(-d/7) for d = 3, 4, 5 to 14 digits, but that form was recognised after the values were read and no source gives it, so it is not a derivation
-    rationale: constants of the decorrelator the standard fixes; the only values a decoder can hold are the standard's.
+    source: exp(-d/7) for the link delays d = 3, 4, 5 (FAAD2 ps_dec.c:112 states a(m) = exp(-d_48kHz(m)/7) in a comment; decision of the main session 2026-11-13, docs/aac-ps-mixing.md section 3.3 and Q4, to accept it as the definition); computed in code with math.Exp; the three values the references hold (0.65143905753106, 0.56471812200776, 0.48954165955695) agree with it to 4.4e-15, measured by TestPSLinkDecayAgreement
+    rationale: no table is held; the factors are computed from their formula.
+  - kind: derived
+    file: aac_ps_params.go
+    symbol: psLinkDelay
+    source: P1 section 4.1 (H. Purnhagen, DAFx'04), "a chain of three delay lines with the length of 3, 4, and 5 QMF samples"
+    rationale: stated in the paper.
   - kind: normative-values
     file: aac_ps_params.go
     symbol: psPeakDecay
@@ -266,6 +270,54 @@ values:
     standard: ISO/IEC 14496-3
     clause: standard table number not verified; the parameter band of each split row of the 34-band layout, as docs/aac-ps-hybrid.md table 4 states them (the same values as the first 32 entries of aacPSBandOf34)
     rationale: the expected values of a test, typed from the specification, against which the decoder's own map is compared.
+  # PS3, the decorrelator and the mixing (docs/aac-ps-mixing.md sections 1 to 5): written
+  # from that specification alone; no reference implementation was opened for it. The
+  # specification's own read log lists what its author opened.
+  - kind: normative-values
+    file: aac_ps_remap.go
+    symbol: psMap34to20
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; how the 34 parameter bands map to the 20 (weights over sources: 1/3 and 2/3 for the first four, pairs, four for band 18), docs/aac-ps-mixing.md section 4.2, held by ffmpeg n9.0.2 and FAAD2 alike; the index form truncates toward zero (Q6)
+    rationale: the map between band resolutions is fixed by the standard.
+  - kind: normative-values
+    file: aac_ps_remap.go
+    symbol: psMap20to34
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; how the 20 parameter bands map to the 34, docs/aac-ps-mixing.md section 4.2. The 10 to 20 map (each source band twice) is a formula and 10 to 34 is their composition, which TestPSMaps checks against the specification's written-out form
+    rationale: the same.
+  - kind: normative-values
+    file: aac_ps_mix.go
+    symbol: psSmooth
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the smoothing factor 0.25 and the transient impact factor 1.5 (psImpact) of the transient attenuation, docs/aac-ps-mixing.md section 3.5, held by both references; the peak decay is psPeakDecay
+    rationale: constants of the transient detector the standard fixes; TestPSMixAgainstReference holds them against an independent evaluation, which shares them.
+  - kind: normative-values
+    file: aac_ps_mix.go
+    symbol: psPreDelay
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the decorrelator's constants, docs/aac-ps-mixing.md sections 3.1 to 3.4: the all-pass pre-delay of 2 slots (psPreDelay), the delays 14 and 1 of the other rows (psLongDelay, psShortDelay), the QMF band boundaries 23 and 35 (psAllPassQMF, psLongEndQMF), the decay slope 0.05 (psDecaySlope), the fractional delays 0.39, 0.43, 0.75 and 0.347 slots in thousandths (psPreFracMil, psLinkFracMil)
+    rationale: constants of the decorrelator the standard fixes, held by ffmpeg and FAAD2 alike; the all-pass counts (30 and 50 rows) are derived from the 23 bands of P1 section 4.1.
+  - kind: derived
+    file: aac_ps_mix.go
+    symbol: psRotation
+    source: the phase rotation e^{-j pi delta f} of a fractional delay of delta slots at the centre frequency f of a row (P1 section 4.1; docs/aac-ps-mixing.md section 3.2 and PS2 section 1: band-unit frequency f turns by pi f per slot); the angle is reduced exactly in integers (delta in thousandths, f in 24ths) and TestPSAllPass compares the impulse response with a 192-bit evaluation
+    rationale: a rotation follows from the delay, so it is computed, not held.
+  - kind: derived
+    file: aac_ps_mix.go
+    symbol: psMixTable
+    source: the gains of the up-mix matrix, c_l = sqrt2 c / sqrt(1 + c^2), c_r = sqrt2 / sqrt(1 + c^2), alpha = arccos(ICC)/2, beta = alpha (c_r - c_l)/sqrt2 (P1 eq. 4 to 8, eq. 8 for beta), computed at start-up for every IID and ICC index; TestPSMixGains compares all 46 x 8 gains with a 192-bit evaluation (6.7e-16) and with the anchor table of the specification
+    rationale: the gains follow from the paper's formulas, so no table is held.
+  - kind: normative-values
+    file: aac_ps_mixref_test.go
+    symbol: psRefICC
+    standard: ISO/IEC 14496-3
+    clause: the eight ICC values as decimals (1, 0.937, 0.84118, 0.60092, 0.36764, 0, -0.589, -1), typed again from docs/aac-ps-mixing.md for the reference, which evaluates arccos on the exact decimals
+    rationale: the expected values of a test, against which the decoder's own table is compared.
+  - kind: derived
+    file: aac_ps_mixref_test.go
+    symbol: psRefCentre24
+    source: the centre frequencies of the split rows in 24ths of a QMF band, as listed in docs/aac-ps-mixing.md section 3.3 (the same values as PS2 tables 3 and 4), typed for the reference; TestPSRowClasses compares them with the decoder's
+    rationale: the expected values of a test.
 require_declared:
   min_numbers: 32
   paths: [aac]

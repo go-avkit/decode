@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("\x00\xcb>\x00\x00\x0f\x14/\xfe")
