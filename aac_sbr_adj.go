@@ -259,6 +259,9 @@ func (s *sbrState) adjust(ch int) {
 					}
 				}
 				s.refill[ch] = false
+				// and the noise table starts again at its first entry (the sinusoid
+				// phase is not reset): ffmpeg's output on S17 is 3e-4 off without it
+				a.noiseIdx = 0
 			}
 			for j := 0; j < m; j++ {
 				g, q := gain[j]*sbrSmooth[0], qm[j]*sbrSmooth[0]

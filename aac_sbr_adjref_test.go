@@ -233,6 +233,7 @@ func (r *refAdjChan) frame(s *sbrState, ch int, eo [sbrMaxEnv][]float64, qo [2][
 				r.gains = [][]float64{gs, gs, gs, gs}
 				r.noises = [][]float64{qs, qs, qs, qs}
 				r.refill = false
+				r.bands = 0 // the noise table starts again at a header reset, the sinusoid phase does not
 			}
 			for k := kx; k < kEnd; k++ {
 				g, q := gs[k], qs[k]
