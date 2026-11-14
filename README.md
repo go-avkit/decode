@@ -10,8 +10,8 @@ Video and audio decoders for [avkit](https://github.com/go-avkit/avkit), pure Go
 no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
 (ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10, 4:2:0. Audio: FLAC, MP3 and
 Opus, and AAC-LC and HE-AAC v1 (SBR) since v0.6.0; Parametric Stereo (HE-AAC v2,
-procedure A) is applied by default since the release after v0.6.0, where a stream
-needs procedure B or IPD/OPD it stays mono in both channels (see [Audio](#audio)). Waves D1 to D3 of
+procedure A) is applied by default since the release after v0.6.0 (
+the baseline profile: IPD/OPD ignored, see [Audio](#audio)). Waves D1 to D3 of
 [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89); see
 [Audio](#audio) for what each codec is checked against.
 
@@ -192,15 +192,14 @@ signals SBR (object type 5 or 29, or the backward compatible extension) and does
 PS absent is announced as stereo from the first frame**, as ffmpeg's output is, because
 `Audio.Channels` and the layout are those of the track and cannot change mid-stream; its
 second channel is the right channel PS makes from the mono signal, and a copy of the first
-channel while the stream sends no PS parameters. Procedure A of the stereo mixing is
-implemented; **procedure B (ICC mode 3 to 5) and IPD/OPD with a phase other than 0 are
-not**: a stream that needs either, from the frame where it does, is decoded as before
-PS was applied, L = R = the mono signal, for the rest of the stream (its PS state is
-frozen, not reset). On 801 mono PS files of the author's library the output has ffmpeg
-9.0.2's length and channel count, and is within 1.1e-5 of its samples (median 4.4e-7,
-99th percentile 2.7e-6: ffmpeg's float32 all-pass chain, whose own two builds are 9e-6
-apart on the worst file); on the written streams it is within 1e-6, on `he44-ps.aac`
-within 5e-5. A mono stream that signals
+channel while the stream sends no PS parameters. **The decoder implements the PS
+baseline profile**: procedure A mixing for every ICC mode (3 to 5 included) with IPD/OPD
+ignored; the full profile (procedure B, IPD/OPD) is later work. On 801 mono PS files of
+the author's library the output has ffmpeg 9.0.2's length and channel count, and is
+within 1.1e-5 of its samples (median 4.4e-7, 99th percentile 2.7e-6; the worst file's
+error is the same on L and R, so it is in the mono signal before the mixer, in ffmpeg's
+SIMD build: ours is 2.4e-6 from its C build there); on the written streams it is within
+1e-6, on `he44-ps.aac` within 5e-5. A mono stream that signals
 no SBR at all stays mono even if it carries SBR (ffmpeg turns stereo on at the first
 frame that has it; none of the 832 mono files tried differs). **Refused
 with `ErrAudioUnsupported`: Main, LTP, SSR, 960-sample frames, SBR in its downsampled
@@ -219,9 +218,9 @@ reports the counts as information. ISO/IEC 14496-26 conformance
 (`TestAACConformance`, 15 pinned vectors, a provisional 1 LSB bound): 12 pass at 0.002
 to 0.006 LSB; `al03` (window sequences out of order) and `al18`, `al19` (noise
 substitution: the generator is not normative) do not yet. The PS vectors `al_sbr_ps_00`
-to `06` (`TestAACConformancePS`, against ISO's `_ur` references): 00, 01, 02, 05 and 06
-pass at 0.033 LSB; 03 (procedure B) and 04 (IPD/OPD) do not, since they are the cases
-above, and 04 gives ISO's baseline reference `al_sbr_ps_04_bl` at 0.033 LSB. A program_config_element
+to `06` (`TestAACConformancePS`): 00, 01, 02, 05 and 06 against ISO's `_ur` references,
+03 (procedure B) and 04 (IPD/OPD) against the baseline references `_bl`, all seven at
+0.033 LSB. A program_config_element
 that names no layout decodes with its channels numbered in element order
 (`Audio.Layout` is zero).
 

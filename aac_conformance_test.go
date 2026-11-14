@@ -171,19 +171,13 @@ func TestAACConformance(t *testing.T) {
 	}
 }
 
-// aacConformancePSOpen lists the PS vectors (HE-AAC v2, al_sbr_ps_NN) this decoder does
-// not reproduce against ISO's full ("ur") reference, and why: the stream needs what is
-// not implemented, so the output is L = R = mono (docs/aac-ps-design.md, PS4 as built).
-var aacConformancePSOpen = map[string]string{
-	"al_sbr_ps_03": "procedure B (ICC mode 4)",
-	"al_sbr_ps_04": "IPD/OPD with phases (the output is the mono signal, which is also what ISO's baseline reference al_sbr_ps_04_bl holds)",
-}
-
 // TestAACConformancePS: the seven PS vectors of ISO/IEC 14496-26 (al_sbr_ps_00 to 06,
 // mono AAC-LC core at 16 kHz, SBR, PS, 32 kHz stereo out) against the reference
-// waveforms of their add-opt directory, "_ur" (the full decoder). The references hold
-// every sample (no leading frames are left out, unlike the AAC-LC ones). The bound is
-// the provisional one of TestAACConformance. The open ones are measured, not excused.
+// waveforms of their add-opt directory: "_ur" for 00, 01, 02, 05, 06, and "_bl" (the
+// baseline profile: procedure A for every ICC mode, IPD/OPD ignored, which is what this
+// decoder implements) for 03 and 04, whose streams use procedure B and IPD/OPD. The
+// references hold every sample (no leading frames are left out, unlike the AAC-LC ones).
+// The bound is the provisional one of TestAACConformance.
 func TestAACConformancePS(t *testing.T) {
 	dir := os.Getenv("AAC_CONFORMANCE_DIR")
 	if dir == "" {
@@ -213,10 +207,11 @@ func TestAACConformancePS(t *testing.T) {
 	}
 	for k := 0; k <= 6; k++ {
 		name := fmt.Sprintf("al_sbr_ps_%02d", k)
-		for _, kind := range []string{"ur", "bl"} {
-			if kind == "bl" && k != 4 {
-				continue // only the baseline reference of al_sbr_ps_04 is pinned (measured: the mono signal)
-			}
+		kind := "ur"
+		if k == 3 || k == 4 {
+			kind = "bl" // procedure B (03) and IPD/OPD (04): the baseline reference, which ignores them
+		}
+		{
 			mp4, wav := read("compressedMp4/"+name+".mp4"), read("referencesWav/add-opt/"+name+"_"+kind+".wav")
 			ref, rch, rrate, err := aacWAV(wav)
 			if err != nil {
@@ -258,16 +253,7 @@ func TestAACConformancePS(t *testing.T) {
 				}
 			}
 			t.Logf("%s_%s: %d ch %d Hz: %d samples, reference %d; max error %.3f LSB, %d samples over %g LSB", name, kind, ch, rate, len(got), len(ref), worst, over, aacConformanceLSB)
-			failed := len(got) != len(ref) || over != 0
-			if why, ok := aacConformancePSOpen[name]; ok && kind == "ur" {
-				if !failed {
-					t.Errorf("%s now passes: remove it from aacConformancePSOpen", name)
-				} else {
-					t.Logf("%s: open: %s", name, why)
-				}
-				continue
-			}
-			if failed {
+			if len(got) != len(ref) || over != 0 {
 				t.Errorf("%s_%s: %d samples against %d, %d beyond the provisional bound (max %.3f LSB)", name, kind, len(got), len(ref), over, worst)
 			}
 		}

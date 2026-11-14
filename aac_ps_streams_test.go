@@ -550,32 +550,31 @@ func TestPSStreamsAgainstFFmpeg(t *testing.T) {
 	}
 }
 
-// TestPSUnimplementedStreamsAreMono: a stream that needs what is not implemented, procedure
-// B (S18: ICC mode 4) or IPD/OPD with a phase (S16b20), keeps the behaviour of a decoder
-// without PS, L = R = mono, bit for bit: the same samples as with the test switch off. A
-// stream with IPD/OPD of all zero phases (S16a20), which is procedure A to the letter, is
-// applied. Procedure B and IPD/OPD are section 6 of docs/aac-ps-mixing.md.
-func TestPSUnimplementedStreamsAreMono(t *testing.T) {
+// TestPSBaselineProfile: the decoder implements the PS baseline profile, procedure A for
+// every ICC mode (3 to 5 included) with IPD/OPD ignored; the full profile (procedure B,
+// IPD/OPD, section 6 of docs/aac-ps-mixing.md) is later work.
+func TestPSBaselineProfile(t *testing.T) {
+	pcm := map[string][2][]float32{}
+	mono := map[string][]float32{}
 	for _, spec := range psStreamSpecs() {
-		want := map[string]bool{"S18": true, "S16b20": true, "S16a20": false, "S01": false}
-		refused, ok := want[spec.name]
-		if !ok {
+		if spec.name != "S18" && spec.name != "S16b20" && spec.name != "S16a20" {
 			continue
 		}
 		b := psBuildStream(t, spec)
 		cfg, fr := aacADTSFrames(t, psStreamFile(t, spec.name, b))
-		l, r, s := psDecodeFrames(t, cfg, fr, psStreamFrames)
-		l0, r0, _ := psDecodeFramesOff(t, cfg, fr, psStreamFrames, true)
-		_ = r0 // the switch off leaves the right buffer to the caller, which copies the left
-		if s.psRefused != refused {
-			t.Errorf("%s: refused %v, want %v", spec.name, s.psRefused, refused)
-		}
-		if refused && (!slices.Equal(l, l0) || !slices.Equal(r, l0)) {
-			t.Errorf("%s: L, R differ from the mono signal of the decoder without PS", spec.name)
-		}
-		if !refused && slices.Equal(l, l0) {
-			t.Errorf("%s: PS changed nothing", spec.name)
-		}
+		l, r, _ := psDecodeFrames(t, cfg, fr, psStreamFrames)
+		l0, _, _ := psDecodeFramesOff(t, cfg, fr, psStreamFrames, true)
+		pcm[spec.name], mono[spec.name] = [2][]float32{l, r}, l0
+	}
+	// procedure B (ICC mode 4) is mixed as procedure A: a stereo image, not the mono signal
+	s18 := pcm["S18"]
+	if slices.Equal(s18[0], s18[1]) || slices.Equal(s18[0], mono["S18"]) || slices.Equal(s18[1], mono["S18"]) {
+		t.Error("S18: the stream is not mixed to a stereo image")
+	}
+	// IPD/OPD are ignored: phases or none, the same samples
+	a, b := pcm["S16a20"], pcm["S16b20"]
+	if slices.Equal(a[0], a[1]) || !slices.Equal(a[0], b[0]) || !slices.Equal(a[1], b[1]) {
+		t.Error("S16b20: IPD/OPD with phases changed the output, or the image is mono")
 	}
 }
 

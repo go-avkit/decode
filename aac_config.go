@@ -130,8 +130,8 @@ type aacConfig struct {
 // the layout and the slot map are those of the track and cannot change mid-stream; a
 // stream that signals no SBR at all but carries it from its first frame, where ffmpeg
 // turns stereo on at that frame, stays mono here (docs/aac-ps-design.md, decision 1).
-// While a stream sends no PS parameters, or needs what is not implemented (procedure B,
-// IPD/OPD), the second channel is a copy of the first, as in ffmpeg before its first header.
+// While a stream sends no PS parameters the second channel is a copy of the first, as in
+// ffmpeg before its first header.
 func (c aacConfig) stereoOut() bool { return c.sbr && c.channels == 1 && !c.psOff }
 
 // outChannels is the channel count of the decoder's output.
