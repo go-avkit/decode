@@ -16,9 +16,11 @@ import (
 // operations of FFmpeg's decoder (docs/aac-design.md). Output is float32 in the
 // range -1 to 1, as ffmpeg's aac decoder gives.
 //
-// HE-AAC v1 (SBR over AAC-LC, aac_sbr*.go) decodes at twice the core rate; PS is
-// parsed (aac_ps.go) but not applied: a mono core that may carry it is announced as
-// stereo (aacConfig.stereoOut) and its second channel copies the first. Not decoded, and
+// HE-AAC v1 (SBR over AAC-LC, aac_sbr*.go) decodes at twice the core rate; PS (HE-AAC
+// v2, aac_ps*.go) is parsed and applied: a mono core that may carry it is announced as
+// stereo (aacConfig.stereoOut) and its second channel is PS's right channel, a copy of
+// the first while the stream sends no PS parameters; the baseline profile (procedure A,
+// IPD/OPD ignored). Not decoded, and
 // refused with ErrAudioUnsupported: AAC Main, LTP, SSR, 960-sample frames, the
 // downsampled SBR mode, coupling channels, and channel configurations that have no
 // fixed layout (11, 12, 14).
@@ -124,7 +126,7 @@ func newAAC(tc container.TrackConfig, cfg AudioConfig) (audioCodec, error) {
 	}
 	// A mono core that may carry Parametric Stereo is announced as stereo from the
 	// first frame (aacConfig.stereoOut); the slot of its channel is 0, the second
-	// channel is a copy of it until PS is decoded.
+	// channel is PS's right channel (a copy of it where PS is not applied).
 	d.nOut = ac.outChannels()
 	if ac.stereoOut() {
 		d.layout = LayoutStereo
@@ -266,12 +268,14 @@ func (d *aacDecoder) decodeInto(data, dst []byte) (int, error) {
 		seen |= 1 << uint(idx)
 		d.synth.element(&els[e], d.firsts[idx], [2][]float32{d.pcm[0][:], d.pcm[1][:]})
 		src := [2][]float32{d.pcm[0][:], d.pcm[1][:]}
+		psRight := false // the mono element's second channel is PS's right channel, src[1]
 		if d.sbrActive {
 			s := d.parser.sbrOf(els[e].id, els[e].tag)
 			if s == nil { // more elements than a frame holds: no state, no SBR for it
 				return 0, fmt.Errorf("%w: more than %d channel elements", ErrAudioSample, aacMaxElements)
 			}
 			src = [2][]float32{d.up[0][:], d.up[1][:]}
+			psRight = els[e].nch == 1 && s.psOn && !s.psOffTest
 			s.process(int(els[e].nch), [2][]float32{d.pcm[0][:], d.pcm[1][:]}, src, els[e].sbr != nil)
 		}
 		if els[e].nch == 2 && d.slot[idx][1] == d.slot[idx][0]+1 {
@@ -291,7 +295,9 @@ func (d *aacDecoder) decodeInto(data, dst []byte) (int, error) {
 			for i, v := range src[c][:samples] {
 				o := (i*nch + slot) * 4
 				binary.LittleEndian.PutUint32(dst[o:o+4], math.Float32bits(v))
-				if dup {
+				if psRight {
+					binary.LittleEndian.PutUint32(dst[o+4:o+8], math.Float32bits(src[1][i]))
+				} else if dup {
 					binary.LittleEndian.PutUint32(dst[o+4:o+8], math.Float32bits(v))
 				}
 			}

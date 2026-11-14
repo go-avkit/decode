@@ -340,7 +340,7 @@ func (s *sbrState) process(nch int, pcm, out [2][]float32, withSBR bool) {
 		}
 		d.assemble(&d.x, kx, m, end)
 		switch {
-		case s.psApplyTest && nch == 1:
+		case s.psOn && !s.psOffTest && nch == 1:
 			s.psApplyFrame(d, kx, m, withSBR, out)
 			continue
 		case s.psHybridTest && nch == 1:

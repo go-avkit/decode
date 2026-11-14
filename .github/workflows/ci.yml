@@ -141,7 +141,7 @@ jobs:
         working-directory: tools
         run: go run ./aacconf fetch "$RUNNER_TEMP/aacconf" ../testdata/aac-conformance.txt
       - name: decode them
-        run: AAC_CONFORMANCE_DIR="$RUNNER_TEMP/aacconf" go test -run 'TestAACConformance$' -v -count=1 .
+        run: AAC_CONFORMANCE_DIR="$RUNNER_TEMP/aacconf" go test -run 'TestAACConformance$|TestAACConformancePS$' -v -count=1 .
 
   vuln:
     runs-on: ubuntu-latest

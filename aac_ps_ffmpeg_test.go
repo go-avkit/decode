@@ -23,6 +23,12 @@ import (
 // signalling would.
 func psDecodeFrames(t testing.TB, cfg aacConfig, fr [][]byte, frames int) (l, r []float32, s *sbrState) {
 	t.Helper()
+	return psDecodeFramesOff(t, cfg, fr, frames, false)
+}
+
+// psDecodeFramesOff is psDecodeFrames with the test switch that turns PS off when off.
+func psDecodeFramesOff(t testing.TB, cfg aacConfig, fr [][]byte, frames int, off bool) (l, r []float32, s *sbrState) {
+	t.Helper()
 	cfg.sbr = true
 	p, err := newAACParser(cfg, DefaultMaxAudioChannels)
 	if err != nil {
@@ -38,7 +44,7 @@ func psDecodeFrames(t testing.TB, cfg aacConfig, fr [][]byte, frames int) (l, r 
 		var pcm [2][aacFrameLen]float32
 		synth.element(&els[0], 0, [2][]float32{pcm[0][:], pcm[1][:]})
 		s = p.sbrOf(els[0].id, els[0].tag)
-		s.psApplyTest = true
+		s.psOffTest = off
 		got := [2][]float32{make([]float32, sbrQMFSlots*sbrSynBands), make([]float32, sbrQMFSlots*sbrSynBands)}
 		s.process(1, [2][]float32{pcm[0][:], pcm[1][:]}, got, els[0].sbr != nil)
 		l, r = append(l, got[0]...), append(r, got[1]...)

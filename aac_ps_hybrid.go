@@ -319,7 +319,8 @@ func (d *sbrChanDSP) psLookAhead(kx int, look *[psLook][psSplitMax]complex128) {
 	}
 }
 
-// psApplyFrame is the PS path of a mono element's frame (behind sbrState.psApplyTest):
+// psApplyFrame is the PS path of a mono element's frame (taken when sbrState.psOn, unless
+// the test switch psOffTest says otherwise):
 // d.x, the mono 64-band signal of the frame with SBR top kx+m, becomes the left block
 // and the mixer's block the right one, and each goes through its synthesis bank into
 // out[0] and out[1]. A frame that does not apply PS (no SBR data, or PS not usable)

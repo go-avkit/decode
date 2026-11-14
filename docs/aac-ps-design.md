@@ -294,8 +294,8 @@ configuration signals SBR over a mono core (object type 5 or 29, or the backward
 compatible extension) and does not state PS absent (`psPresentFlag` 0 in the `0x548`
 extension): `aacConfig.stereoOut`. This is ffmpeg's rule at configuration time
 (`aacdec.c:1006-1009`: SBR 1 with PS unstated turns PS on; `mpeg4audio.c:194-207`).
-The second channel is a copy of the first until PS is applied (PS4), as ffmpeg's is
-before the first PS header. A mono SBR stream without any PS (the 5 library files,
+The second channel is a copy of the first until PS is applied (PS4, which did it), as
+ffmpeg's is before the first PS header. A mono SBR stream without any PS (the 5 library files,
 object type 5) is stereo too, as it is in ffmpeg. A stream that signals **nothing**
 stays mono, and its PS data is not parsed: ffmpeg turns stereo on at the first frame if
 that frame carries SBR, which decode cannot, because `Audio.Channels`, the layout and
@@ -362,7 +362,7 @@ and `aac_ps_remap.go` (the 10/20/34 parameter maps, index and value forms), writ
 opened, only the ffmpeg binary was run). `sbrState.psApplyTest` runs the path on a mono
 element: hybrid analysis, `psMixer.apply`, hybrid synthesis of the left rows in place and
 of the right rows into the mixer's block, then the two QMF banks; the decoder's default
-output is unchanged (PS4 turns it on). Procedure B and IPD/OPD (section 6) are parsed and
+output was unchanged until PS4 turned it on. Procedure B and IPD/OPD (section 6) are parsed and
 not applied. A frame that is not applied sends the mono block through both banks.
 
 Measured against ffmpeg 9.0.2 (see the pull request for the tables): the written streams
@@ -395,6 +395,53 @@ of the specification; Q14 and Q15 are new):
   our SBR did not restart the noise-floor table index when a header rebuilt the tables
   (fixed in its own pull request, which also bounds S17 and so confirms the clearing above
   the SBR top, Q10).
+
+## PS4 as built
+
+PS is applied by default. `sbrState.psApplyTest` is gone: the PS path (`psApplyFrame`) is
+taken for every mono element of a stream whose channel policy says PS may be carried
+(`sbrState.psOn`, from `aacConfig.stereoOut`), and `sbrState.psOffTest` is a test-only off
+switch that gives the decoder as it was before (out[1] is a copy of out[0], made by the
+caller). `aacDecoder` writes the element's second channel from `out[1]` instead of
+duplicating `out[0]`.
+
+**Baseline mixing.** Procedure A for every ICC mode (3 to 5 included), IPD/OPD parsed and
+ignored; 34-band streams keep 34 bands (a baseline decoder maps 34 to 20, so
+`al_sbr_ps_06` matches `_ur` but not `_bl`, 2226 LSB off). The full profile,
+procedure B and IPD/OPD (section 6 of `aac-ps-mixing.md`), is later work. (An earlier
+revision of this PR fell back to L = R = mono on such streams; that was wrong: a baseline
+decoder applies procedure A, and ISO's `_bl` references of `al_sbr_ps_03` and `04` confirm
+it at 0.033 LSB.) A fault of the parser still suspends PS until the next header (Q14).
+Tested by `TestPSBaselineProfile` (S18: ICC mode 4 gives a stereo image; S16b20: phases
+give the same samples as S16a20) and the decoder-level `TestAACStereoOutDecoder`.
+
+**Library check** (801 PS files of `~/Movies`, the whole file through `DecodeAudioTrack`
+against ffmpeg 9.0.2's PCM of the same MP4, `AAC_REAL_HE_DIR` and `AAC_REAL_HE_FFMPEG`
+in `TestAACRealHE`, which now compares the PS files too, to 2e-5): lengths and channel
+counts equal ffmpeg's on all 801; the largest absolute difference per file has maximum
+1.09e-5, 99th percentile 2.7e-6, median 4.4e-7; one file is above 1e-5 (frames 12 and 13).
+Its error is identical on L and R (correlation 0.9999, largest |errL - errR| 1.3e-7), so
+it sits in the mono signal before the mixer, in ffmpeg's SIMD build, not in the
+decorrelator: ours is 2.4e-6 from ffmpeg's C build (`-cpuflags 0`) there, and our PS
+stage is 2.3e-16 of the row peak from the double-double reference.
+
+**ISO conformance** (`TestAACConformancePS`, `tools/aacconf` pins in
+`testdata/aac-conformance.txt`): the HE-AAC v2 vectors of ISO/IEC 14496-26 are
+`al_sbr_ps_00` to `06` (MP4, 32 kHz stereo out), with references in the `add-opt`
+directory of `referencesWav`: `_ur` and `_bl` for each. (`al960_sbr_ps_*` are 960-sample
+frames, refused; `ssc_ps*` and `*_ldmps_*` are not HE-AAC v2.) Against `_ur`, within the
+provisional 1 LSB bound: 00, 01, 02, 05, 06 at 0.033 LSB (the 16-bit rounding of the
+reference). 03 (procedure B) and 04 (IPD/OPD) are asserted against their baseline
+references `_bl`, also at 0.033 LSB (`_bl` pinned for both). The sample count and channel
+count equal the reference's for all seven, with no leading frames dropped.
+
+**Speed.** `BenchmarkAACDecodeReuse` on a 620 s HE-AAC v2 file against `ffmpeg -threads 1
+-benchmark` utime, 5 interleaved rounds at 1-minute load 7.37 to 7.81: 1068 ms against
+614 ms, 1.74 times ffmpeg's: an open defect, go-avkit/decode#77. Profile: the QMF synthesis
+(now twice) 31 % cumulative, the analysis 14 %, the mixer and decorrelator about 14 % cumulative
+in `row` (plus the transient detector and matrices), SBR adjustment 8 %, FFT kernels 9 %.
+
+**S19b** (layout switches with no-data frames, 0.08 informational) is still measured only.
 
 ## PR split (each green, reviewed independently, before the next)
 

@@ -9,7 +9,7 @@ import "math"
 // docs/aac-ps-design.md, written from docs/aac-ps-mixing.md sections 1 to 5 alone (a
 // clean-room specification: no reference implementation was opened for this file).
 // Procedure B and IPD/OPD (section 6) are not applied: the parser reads them and this
-// file ignores them.
+// file ignores them, procedure A for every ICC mode (the PS baseline profile).
 //
 // For each applied frame, the mono hybrid rows s are turned into a decorrelated signal d
 // (an all-pass chain in the lowest 23 QMF bands, a plain delay above, both scaled by a

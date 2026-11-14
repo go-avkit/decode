@@ -40,7 +40,7 @@ func BenchmarkAACDecode(b *testing.B) {
 }
 
 // BenchmarkAACDecodeReuse is the decoder's own work on the file AAC_BENCH_FILE (an
-// MP4 with an AAC-LC track): every frame through decodeInto, one output buffer for
+// MP4 with an AAC track, HE-AAC v1 and v2 included): every frame through decodeInto, one output buffer for
 // all. It is what to put beside ffmpeg's `-benchmark` utime on the same file.
 func BenchmarkAACDecodeReuse(b *testing.B) {
 	path := os.Getenv("AAC_BENCH_FILE")
@@ -69,7 +69,7 @@ func BenchmarkAACDecodeReuse(b *testing.B) {
 		b.Fatal(err)
 	}
 	d := c.(*aacDecoder)
-	dst := make([]byte, aacSamplesPerFrame*d.cfg.channels*4)
+	dst := make([]byte, 2*aacSamplesPerFrame*d.nOut*4) // twice the frame for SBR; nOut is 2 for HE-AAC v2
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

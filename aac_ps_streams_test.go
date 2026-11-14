@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -546,6 +547,34 @@ func TestPSStreamsAgainstFFmpeg(t *testing.T) {
 				t.Errorf("%s: differs from ffmpeg by L %.2e, R %.2e (bound %.0e)", spec.name, l, r, psStreamBound)
 			}
 		})
+	}
+}
+
+// TestPSBaselineProfile: the decoder implements the PS baseline profile, procedure A for
+// every ICC mode (3 to 5 included) with IPD/OPD ignored; the full profile (procedure B,
+// IPD/OPD, section 6 of docs/aac-ps-mixing.md) is later work.
+func TestPSBaselineProfile(t *testing.T) {
+	pcm := map[string][2][]float32{}
+	mono := map[string][]float32{}
+	for _, spec := range psStreamSpecs() {
+		if spec.name != "S18" && spec.name != "S16b20" && spec.name != "S16a20" {
+			continue
+		}
+		b := psBuildStream(t, spec)
+		cfg, fr := aacADTSFrames(t, psStreamFile(t, spec.name, b))
+		l, r, _ := psDecodeFrames(t, cfg, fr, psStreamFrames)
+		l0, _, _ := psDecodeFramesOff(t, cfg, fr, psStreamFrames, true)
+		pcm[spec.name], mono[spec.name] = [2][]float32{l, r}, l0
+	}
+	// procedure B (ICC mode 4) is mixed as procedure A: a stereo image, not the mono signal
+	s18 := pcm["S18"]
+	if slices.Equal(s18[0], s18[1]) || slices.Equal(s18[0], mono["S18"]) || slices.Equal(s18[1], mono["S18"]) {
+		t.Error("S18: the stream is not mixed to a stereo image")
+	}
+	// IPD/OPD are ignored: phases or none, the same samples
+	a, b := pcm["S16a20"], pcm["S16b20"]
+	if slices.Equal(a[0], a[1]) || !slices.Equal(a[0], b[0]) || !slices.Equal(a[1], b[1]) {
+		t.Error("S16b20: IPD/OPD with phases changed the output, or the image is mono")
 	}
 }
 

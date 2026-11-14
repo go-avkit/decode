@@ -587,7 +587,7 @@ func TestAACStereoOutPolicy(t *testing.T) {
 }
 
 // TestAACStereoOutDecoder: the decoder announces the policy's channel count and layout in
-// every frame, from the first; the second channel copies the first (PS is not decoded);
+// every frame, from the first; the second channel is PS's right channel (a copy of the first where PS is not carried);
 // PS data is parsed only where it may be present.
 func TestAACStereoOutDecoder(t *testing.T) {
 	fx := aacHEFixtures[3] // he44-ps.aac: a mono core with PS in every frame
@@ -611,6 +611,7 @@ func TestAACStereoOutDecoder(t *testing.T) {
 			t.Fatal(err)
 		}
 		d := c.(*aacDecoder)
+		differ := false
 		for i := 0; i < 3; i++ {
 			out, err := d.decode(fr[i])
 			if err != nil {
@@ -626,10 +627,15 @@ func TestAACStereoOutDecoder(t *testing.T) {
 			if tc.ch == 2 {
 				for s := 0; s < a.Samples(); s++ {
 					if string(a.Data[8*s:8*s+4]) != string(a.Data[8*s+4:8*s+8]) {
-						t.Fatalf("%s: frame %d sample %d: the channels differ", name, i, s)
+						differ = true
 					}
 				}
 			}
+		}
+		// PS is applied (PS4): the right channel is not a copy of the left once the
+		// stream has parameters; without them (PS absent, nothing signalled) it is mono
+		if differ != tc.parse {
+			t.Errorf("%s: the channels differ %v, want %v", name, differ, tc.parse)
 		}
 		s := d.parser.sbrOf(aacIDSCE, 0)
 		if s.psOn != tc.parse || (s.ps.start != tc.parse) {
