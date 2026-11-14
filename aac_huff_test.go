@@ -4,6 +4,7 @@
 package decode
 
 import (
+	"math/bits"
 	"strings"
 	"testing"
 )
@@ -114,5 +115,50 @@ func TestBuildAACCodebooksRefusals(t *testing.T) {
 	bits[4] = []uint8{1, 2}
 	if _, _, err := buildAACCodebooks(spec, bits, []uint32{0, 1}, []uint8{1, 1}); err == nil || !strings.Contains(err.Error(), "spectrum codebook 5") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TestAACSpecNSign walks every table index of every spectrum codebook down the
+// code tree, the way a stream would, and compares what band reads from the table
+// with the tree: the symbol and length of a codeword that fits the table, and the
+// count of sign bits aacSpecNSign gives (the nonzero values of the symbol for the
+// unsigned codebooks 3, 4 and 7 to 11, 0 for the others and for an index whose
+// codeword is longer than the table).
+func TestAACSpecNSign(t *testing.T) {
+	spec, _, err := aacCodebooks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cb, h := range spec {
+		unsigned := cb+1 >= 3 && cb+1 != 5 && cb+1 != 6
+		for ix := 0; ix < 1<<aacLUTBits; ix++ {
+			cur, l, sym := 0, 0, -1
+			for l < aacLUTBits && sym < 0 {
+				c := h.node[cur][ix>>(aacLUTBits-1-l)&1]
+				l++
+				if c < 0 {
+					sym = int(-c - 1)
+				} else {
+					cur = int(c)
+				}
+			}
+			e := h.lut[ix]
+			want := 0
+			if sym < 0 {
+				if e != 0 {
+					t.Fatalf("codebook %d index %d: the tree needs more than %d bits, the table has %#x", cb+1, ix, aacLUTBits, e)
+				}
+			} else {
+				if int(e>>8) != sym || int(e&0xff) != l {
+					t.Fatalf("codebook %d index %d: table symbol %d length %d, tree %d length %d", cb+1, ix, e>>8, e&0xff, sym, l)
+				}
+				if unsigned {
+					want = bits.OnesCount8(aacTupleNZ[cb][sym])
+				}
+			}
+			if got := int(aacSpecNSign[cb][ix]); got != want {
+				t.Fatalf("codebook %d index %d: aacSpecNSign %d, want %d", cb+1, ix, got, want)
+			}
+		}
 	}
 }
