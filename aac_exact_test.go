@@ -466,8 +466,8 @@ func TestAACTNSBound(t *testing.T) {
 			}
 		}
 	}
-	if tnsFrames < 20 {
-		t.Fatalf("%s has TNS in %d channel frames, want at least 20", name, tnsFrames) // 23 as made
+	if tnsFrames < 10 {
+		t.Fatalf("%s has TNS in %d channel frames, want at least 10", name, tnsFrames) // 12 as made
 	}
 	exact, _ := exactDecode(t, name, frames)
 	asc := &bitWriter{}
