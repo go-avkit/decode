@@ -5,6 +5,7 @@ package decode
 
 import (
 	"github.com/go-fft/fft"
+	"github.com/go-simd/floats"
 )
 
 // The SBR QMF banks (HE-AAC v1): the 32-band complex analysis bank that takes the
@@ -153,14 +154,13 @@ func (y *sbrSynthesis) process(out []float32, x *[sbrQMFSlots][sbrSynBands]compl
 		}
 		// ten products of 64 values: block n of the window against the 64 values of
 		// v that the definition's g takes at 128n (+64 for odd n)
+		// The even blocks are rows 256 apart of v against rows 128 apart of the window,
+		// and so are the odd blocks 192 on: two fused multiply-add kernels that keep the
+		// 64 sums in registers across their five rows, the even blocks first.
 		var acc [sbrSynBands]float64
-		for n := 0; n < 10; n++ {
-			win := (*[sbrSynBands]float64)(sbrQMFWindow[64*n:])
-			vn := (*[sbrSynBands]float64)(y.buf[y.off+128*n+64*(n&1):])
-			for q := range acc {
-				acc[q] += win[q] * vn[q]
-			}
-		}
+		b := y.buf[y.off:]
+		floats.MulAddRows(acc[:], sbrQMFWindow[:], 128, b, 256, 5)
+		floats.MulAddRows(acc[:], sbrQMFWindow[64:], 128, b[192:], 256, 5)
 		o := (*[sbrSynBands]float32)(out[l*sbrSynBands:])
 		for q, s := range acc {
 			o[q] = float32(s)
