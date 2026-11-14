@@ -265,10 +265,20 @@ func psStreamSpecs() []psStreamSpec {
 	add("S16a20", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame { return ipdFrame(i, false, 0) }))
 	add("S16a34", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame { return ipdFrame(i, true, 0) }))
 	add("S16b20", "stationary", false, psRepeat(psStreamFrames, func(i int) psStreamFrame { return ipdFrame(i, false, 1+i%7) }))
-	// S17 is measured, not bounded: after the header that lowers stop_freq the SBR output
-	// itself (PS off, the mono path) differs from ffmpeg's by 3e-4, so the clearing above
-	// the top cannot be told apart from that (reported in the pull request as an SBR finding)
-	add("S17", "stationary", false, psRepeat(psStreamFrames, func(i int) psStreamFrame {
+	// S17: a header that lowers stop_freq (and so the SBR top) in mid-stream, which shows
+	// the clearing above the top (Q10); S17b raises it again. Both rest on the SBR restart
+	// of the noise table at a header (its own pull request).
+	add("S17b", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		f := frame20(i, i == 0, 1, psConstF(0), psConstF(7))
+		switch i {
+		case 0:
+			f.sbrHdr = &sbrHdr{start: 7, stop: 8}
+		case 6:
+			f.sbrHdr = &sbrHdr{start: 7, stop: 9}
+		}
+		return f
+	}))
+	add("S17", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
 		f := frame20(i, i == 0, 1, psConstF(0), psConstF(7))
 		switch i {
 		case 0:
@@ -446,6 +456,7 @@ var psStreamHashes = map[string]string{
 	"S16a34": "260ebe7f8fd99edf",
 	"S16b20": "27e790a9cf35fa9b",
 	"S17":    "bbc6c96a1c572fec",
+	"S17b":   "6c861bad4af1c55c",
 	"S18":    "0d0148771894035c",
 	"S19a":   "6477df9b99078106",
 	"S19b":   "b0e571bc968d14e1",
