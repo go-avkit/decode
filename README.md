@@ -9,9 +9,9 @@ Part of [go-avkit](https://go-avkit.github.io): [documentation](https://go-avkit
 Video and audio decoders for [avkit](https://github.com/go-avkit/avkit), pure Go,
 no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
 (ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10, 4:2:0. Audio: FLAC, MP3 and
-Opus, and AAC-LC and HE-AAC v1 (SBR), the last two on `main` and not yet in a
-release; Parametric Stereo (HE-AAC v2) is in the tree but switched off, so it is
-not a supported output. Waves D1 to D3 of
+Opus, and, since v0.6.0, AAC-LC and HE-AAC v1 (SBR); Parametric Stereo
+(HE-AAC v2) is parsed and implemented but switched off by default, so it is not
+a supported output. Waves D1 to D3 of
 [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89); see
 [Audio](#audio) for what each codec is checked against.
 
@@ -186,8 +186,9 @@ decodes at twice the core rate**, whether the AudioSpecificConfig signals it (ob
 type 5, or the backward compatible extension) or the stream only carries it (the
 decoder switches at the first SBR data, as ffmpeg does): on the four HE-AAC fixtures
 it is within 3e-6 of ffmpeg 9.0.2's output sample by sample, and within a float32
-rounding plus 1e-6 of a float64 reference. Parametric Stereo (HE-AAC v2) is parsed but
-not yet applied (`docs/aac-ps-design.md`): **a mono core whose configuration signals SBR
+rounding plus 1e-6 of a float64 reference. Parametric Stereo (HE-AAC v2) is parsed and
+implemented but OFF by default, so HE-AAC v2 is not a supported output
+(`docs/aac-ps-design.md`): **a mono core whose configuration signals SBR
 (object type 5 or 29, or the backward compatible extension) and does not say PS absent
 is announced as stereo from the first frame**, as ffmpeg's output is, because
 `Audio.Channels` and the layout are those of the track and cannot change mid-stream; its
@@ -211,7 +212,24 @@ reports the counts as information. ISO/IEC 14496-26 conformance
 to 0.006 LSB; `al03` (window sequences out of order) and `al18`, `al19` (noise
 substitution: the generator is not normative) do not yet. A program_config_element
 that names no layout decodes with its channels numbered in element order
-(`Audio.Layout` is zero). Speed against ffmpeg is not measured yet.
+(`Audio.Layout` is zero).
+
+**AAC is available since v0.6.0** (AAC-LC, HE-AAC v1, and the gapless handling
+above: `iTunSMPB` and edit lists). Speed, measured for the release
+([#35](https://github.com/go-avkit/decode/issues/35)): `BenchmarkAACDecodeReuse`
+(`-cpu 1`, decode only, 3 allocations per op, all setup) against the median
+`utime` of ffmpeg 9.0.2 `-threads 1 -benchmark`, **a whole process** that also
+opens the file and demuxes, so it is not a like-for-like decode time. Go 1.27.4,
+Apple M4 Max, single core, 10-minute inputs (a 60 s clip looped ten times by
+stream copy), 5 interleaved rounds at 1-minute load 6.02 to 6.46 (two earlier
+rounds started above load 8 and were discarded):
+
+| input | decode median (min to max) | ffmpeg `utime` median | decode / ffmpeg |
+|---|---|---|---|
+| 5.1, 48 kHz | 793.4 ms (789.7 to 802.0) | 821 ms | 0.966 |
+| stereo, 48 kHz | 309.0 ms (305.7 to 312.6) | 472 ms | 0.655 |
+
+Mono was not measured (no input at hand). The measured binary is `a36c9fc`.
 
 Opus (RFC 6716: SILK, CELT and hybrid, mono and stereo, mapping family 0): the
 pre-skip of the header is dropped, the output gain it states applied, and an Ogg
@@ -433,7 +451,7 @@ mid-GOP table ([decode#10](https://github.com/go-avkit/decode/issues/10)): the
 IDR and 45 pictures after it at 720p took 257 ms as imported from go.264 and take
 179 ms in h264 v0.8.0, against about 58 ms for `ffmpeg -threads 1` once its
 process start is taken off. The measurement is on arm64; an amd64 one is still needed.
-Audio decoders are not measured yet. The numbers and the profiles are in the
+Only AAC's speed is measured (table in Audio above); FLAC, MP3 and Opus are not. The numbers and the profiles are in the
 comment on #2.
 
 ## Development
