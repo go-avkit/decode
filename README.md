@@ -4,7 +4,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/go-avkit/decode.svg)](https://pkg.go.dev/github.com/go-avkit/decode)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
-Part of [go-avkit](https://go-avkit.github.io): [documentation](https://go-avkit.github.io/docs/latest/decode/).
+Part of [go-avkit](https://go-avkit.github.io): [documentation](https://go-avkit.github.io/docs/).
 
 Video and audio decoders for [avkit](https://github.com/go-avkit/avkit), pure Go,
 no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
