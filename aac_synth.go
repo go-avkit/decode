@@ -42,19 +42,12 @@ var aacFuse = true
 
 func fma32(a, b, c float32) float32 { return float32(math.FMA(float64(a), float64(b), float64(c))) }
 
-// addmul is c + a*b and submul is c - a*b.
+// addmul is c + a*b.
 func addmul(c, a, b float32) float32 {
 	if aacFuse {
 		return fma32(a, b, c)
 	}
 	return c + mul(a, b)
-}
-
-func submul(c, a, b float32) float32 {
-	if aacFuse {
-		return fma32(-a, b, c)
-	}
-	return c - mul(a, b)
 }
 
 // aacNoiseSeed starts the noise generator of perceptual noise substitution at the
@@ -293,9 +286,29 @@ func (s *aacSynth) tns(coef *[aacFrameLen]float32, ch *aacChannel) {
 				start = end - 1
 			}
 			start += w * aacShortLen
+			// The products of two float32 are exact in float64, so the taps are
+			// summed there in four independent chains (the chain of one rounded FMA
+			// per tap was the latency of this loop) and rounded to float32 once, with
+			// the sample.
+			var l64 [aacTNSMaxLong]float64
+			for k := 0; k < order; k++ {
+				l64[k] = float64(lpc[k])
+			}
 			for i := 0; i < size; i, start = i+1, start+inc {
-				for k := 1; k <= min(i, order); k++ {
-					coef[start] = submul(coef[start], coef[start-k*inc], lpc[k-1])
+				n := min(i, order)
+				var a0, a1, a2, a3 float64
+				k := 1
+				for ; k+3 <= n; k += 4 {
+					a0 += float64(coef[start-k*inc]) * l64[k-1]
+					a1 += float64(coef[start-(k+1)*inc]) * l64[k]
+					a2 += float64(coef[start-(k+2)*inc]) * l64[k+1]
+					a3 += float64(coef[start-(k+3)*inc]) * l64[k+2]
+				}
+				for ; k <= n; k++ {
+					a0 += float64(coef[start-k*inc]) * l64[k-1]
+				}
+				if n > 0 {
+					coef[start] = float32(float64(coef[start]) - ((a0 + a1) + (a2 + a3)))
 				}
 			}
 		}
