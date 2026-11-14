@@ -281,21 +281,26 @@ func (m *psMixer) envelopeGains(p *psState, e, nb int, h *[psMaxBands]psGain) {
 	}
 }
 
+// bandPowers writes into pw the power of each parameter band of the slot s: the sum of
+// |s[k]|² over its rows, added in row order, as a row by row loop does, but a run of
+// rows of one band keeps its sum in a register.
+func (dl *psDecLayout) bandPowers(pw *[psMaxBands]float64, s *[psMaxRows]complex128) {
+	clear(pw[:dl.nb])
+	for _, r := range dl.runs {
+		sum := pw[r.band]
+		for _, v := range s[r.start:r.end] {
+			sum += real(v)*real(v) + imag(v)*imag(v)
+		}
+		pw[r.band] = sum
+	}
+}
+
 // transient computes the attenuation gain of every parameter band and slot into m.tg
 // (section 3.5) from the power of all rows of the band.
 func (m *psMixer) transient(rows *[sbrQMFSlots][psMaxRows]complex128, dl *psDecLayout) {
 	var pw [psMaxBands]float64
 	for n := range rows {
-		clear(pw[:dl.nb])
-		// the rows are added in order, as row by row, but a run of rows of one band
-		// keeps its sum in a register
-		for _, r := range dl.runs {
-			s := pw[r.band]
-			for _, v := range rows[n][r.start:r.end] {
-				s += real(v)*real(v) + imag(v)*imag(v)
-			}
-			pw[r.band] = s
-		}
+		dl.bandPowers(&pw, &rows[n])
 		for b := 0; b < dl.nb; b++ {
 			pk := max(psPeakDecay*m.peak[b], pw[b])
 			m.peak[b] = pk
