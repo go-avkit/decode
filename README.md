@@ -1,11 +1,19 @@
 # decode
 
 [![ci](https://github.com/go-avkit/decode/actions/workflows/ci.yml/badge.svg)](https://github.com/go-avkit/decode/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/go-avkit/decode.svg)](https://pkg.go.dev/github.com/go-avkit/decode)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
-Video decoders for [avkit](https://github.com/go-avkit/avkit), pure Go, no cgo.
-The first codec is **H.264** (ITU-T H.264 | ISO/IEC 14496-10), the second
-**HEVC / H.265** (ITU-T H.265 | ISO/IEC 23008-2): Main and Main 10, 4:2:0.
-Waves D1 and D2 of [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89).
+Part of [go-avkit](https://go-avkit.github.io): [documentation](https://go-avkit.github.io/docs/).
+
+Video and audio decoders for [avkit](https://github.com/go-avkit/avkit), pure Go,
+no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
+(ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10, 4:2:0. Audio: FLAC, MP3 and
+Opus, and AAC-LC and HE-AAC v1 (SBR), the last two on `main` and not yet in a
+release; Parametric Stereo (HE-AAC v2) is in the tree but switched off, so it is
+not a supported output. Waves D1 to D3 of
+[go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89); see
+[Audio](#audio) for what each codec is checked against.
 
 ```go
 r, _ := container.NewReader(file)                   // MP4, Matroska, ...
