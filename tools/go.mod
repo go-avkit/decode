@@ -19,7 +19,7 @@ require (
 	github.com/go-dsp/signal v0.2.0 // indirect
 	github.com/go-fft/fft v0.30.1 // indirect
 	github.com/go-numerics/special v0.4.0 // indirect
-	github.com/go-simd/floats v0.18.0 // indirect
+	github.com/go-simd/floats v0.21.1-0.20261114224650-880a625a93dd // indirect
 	github.com/icza/bitio v1.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mewkiz/flac v1.0.14 // indirect
