@@ -103,7 +103,7 @@ func TestAACParseFixtures(t *testing.T) {
 				t.Fatalf("%s frame %d: %d channels in the elements, want %d", fx.name, i, n, fx.channels)
 			}
 		}
-		t.Logf("%s: %d frames parsed to their last byte", fx.name, len(frames))
+		t.Logf("%s: %d frames parsed to their last byte, %d channel frames with TNS so far", fx.name, len(frames), tools[2])
 	}
 	t.Logf("tools met: short windows %d, pulses %d, TNS %d, noise bands %d, intensity bands %d, M/S elements %d", tools[0], tools[1], tools[2], tools[3], tools[4], tools[5])
 }

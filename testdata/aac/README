@@ -9,6 +9,12 @@ Each is ADTS (`-f adts`), one second long.
   surround51.aac    six sines and noise, 5.1, 48000 Hz, -b:a 256k
   mono8.aac         440 Hz sine plus noise, mono, 8000 Hz, -b:a 16k
 
+  tns44.aac         1.2 seconds of decaying plucks, stereo, 44100 Hz, TNS in 12 channel
+                    frames (the other fixtures use it in one), for TestAACTNSBound:
+                    T='0.6*sin(2*PI*220*t)*exp(-40*mod(t\,0.04))+0.4*sin(2*PI*2500*t)*exp(-120*mod(t\,0.04))+0.02*random(0)|0.6*sin(2*PI*330*t)*exp(-40*mod(t\,0.05))+0.3*sin(2*PI*3500*t)*exp(-100*mod(t\,0.05))+0.02*random(1)'
+                    ffmpeg -f lavfi -i "aevalsrc=exprs=$T:d=1.2:s=44100:c=stereo" -c:a aac -b:a 64k -aac_tns 1 -f adts tns44.aac
+                    ref/tns44.f32: ffmpeg -cpuflags 0 -i tns44.aac -f f32le ref/tns44.f32 (macOS build only)
+
 The transients in st44 make the encoder use eight short windows; -aac_pns and
 -aac_is make it use noise substitution and intensity stereo; M/S, TNS and pulses
 appear as the encoder finds them useful (aac_fixture_test.go logs the counts).

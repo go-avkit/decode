@@ -436,3 +436,67 @@ func TestAACAccuracy(t *testing.T) {
 		}
 	}
 }
+
+// TestAACTNSBound: the TNS filter, on a stream that uses it in many frames (the
+// other fixtures use it in one: testdata/aac/README says how tns44.aac was made). Two
+// bounds. Against the exact result, this decoder is at least as accurate, in largest
+// and RMS error, as ffmpeg's decode of the same stream. Against ffmpeg's output the
+// distance is at most 1e-6 per sample, as in TestAACDecodeTrack.
+func TestAACTNSBound(t *testing.T) {
+	const name = "tns44"
+	ref := readF32(t, filepath.Join("testdata", "aac", "ref", name+".f32"))
+	cfg, fr := aacADTSFrames(t, filepath.Join("testdata", "aac", name+".aac"))
+	frames := len(ref) / (aacFrameLen * cfg.channels)
+	// the stream must keep using TNS: a fixture that no longer does proves nothing
+	p, err := newAACParser(cfg, DefaultMaxAudioChannels)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tnsFrames := 0
+	for _, f := range fr {
+		els, err := p.parseFrame(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range els {
+			for c := 0; c < int(e.nch); c++ {
+				if e.ch[c].tns.present {
+					tnsFrames++
+				}
+			}
+		}
+	}
+	if tnsFrames < 10 {
+		t.Fatalf("%s has TNS in %d channel frames, want at least 10", name, tnsFrames) // 12 as made
+	}
+	exact, _ := exactDecode(t, name, frames)
+	asc := &bitWriter{}
+	asc.bits(2, 5)
+	asc.bits(uint(cfg.rateIndex), 4)
+	asc.bits(uint(cfg.config), 4)
+	asc.bits(0, 3)
+	c, _ := newAAC(container.TrackConfig{CodecConfig: asc.bytes()}, AudioConfig{})
+	var ours []float32
+	for fi := 0; fi < frames; fi++ {
+		o, err := c.decode(fr[fi])
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < len(o[0].Data)/4; i++ {
+			ours = append(ours, math.Float32frombits(binary.LittleEndian.Uint32(o[0].Data[i*4:])))
+		}
+	}
+	us, ff := f32Errors(ours, exact), f32Errors(ref[:len(exact)], exact)
+	t.Logf("%s: TNS in %d channel frames; vs exact: this decoder max %.3e rms %.3e, ffmpeg max %.3e rms %.3e", name, tnsFrames, us.max, us.rms, ff.max, ff.rms)
+	if us.max > ff.max || us.rms > ff.rms {
+		t.Errorf("%s: this decoder (max %.3e, rms %.3e) is less accurate than ffmpeg (max %.3e, rms %.3e)", name, us.max, us.rms, ff.max, ff.rms)
+	}
+	var apart float64
+	for i, v := range ours {
+		apart = math.Max(apart, math.Abs(float64(v)-float64(ref[i])))
+	}
+	t.Logf("%s: largest distance to ffmpeg's output %.3e", name, apart)
+	if apart > 1e-6 {
+		t.Errorf("%s: %.3e from ffmpeg's output, bound 1e-6", name, apart)
+	}
+}
