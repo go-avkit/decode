@@ -153,16 +153,24 @@ func (y *sbrSynthesis) process(out []float32, x *[sbrQMFSlots][sbrSynBands]compl
 		}
 		// ten products of 64 values: block n of the window against the 64 values of
 		// v that the definition's g takes at 128n (+64 for odd n)
-		var acc [sbrSynBands]float64
-		for n := 0; n < 10; n++ {
-			win := (*[sbrSynBands]float64)(sbrQMFWindow[64*n:])
-			vn := (*[sbrSynBands]float64)(y.buf[y.off+128*n+64*(n&1):])
-			for q := range acc {
-				acc[q] += win[q] * vn[q]
-			}
-		}
+		// each output keeps its running sum in a register across the ten blocks
+		// (the same order and fused multiply-adds as summing block by block)
+		b := y.buf[y.off:]
+		v0, v1, v2, v3, v4 := (*[sbrSynBands]float64)(b[0:]), (*[sbrSynBands]float64)(b[192:]), (*[sbrSynBands]float64)(b[256:]), (*[sbrSynBands]float64)(b[448:]), (*[sbrSynBands]float64)(b[512:])
+		v5, v6, v7, v8, v9 := (*[sbrSynBands]float64)(b[704:]), (*[sbrSynBands]float64)(b[768:]), (*[sbrSynBands]float64)(b[960:]), (*[sbrSynBands]float64)(b[1024:]), (*[sbrSynBands]float64)(b[1216:])
+		w := &sbrQMFWindow
 		o := (*[sbrSynBands]float32)(out[l*sbrSynBands:])
-		for q, s := range acc {
+		for q := range o {
+			s := w[q] * v0[q]
+			s += w[64+q] * v1[q]
+			s += w[128+q] * v2[q]
+			s += w[192+q] * v3[q]
+			s += w[256+q] * v4[q]
+			s += w[320+q] * v5[q]
+			s += w[384+q] * v6[q]
+			s += w[448+q] * v7[q]
+			s += w[512+q] * v8[q]
+			s += w[576+q] * v9[q]
 			o[q] = float32(s)
 		}
 	}
