@@ -290,7 +290,7 @@ once ffmpeg's order is known.
 | Inverse quantisation `|x|^(4/3) · 2^(sf/4)` | S6 `esc_iquant_scaling`; S9 | complete | formula, 8191 limit | float32 table of `n^(4/3)` and `2^(k/4)` built the way S9 builds them (round from double) | exact if both tables round identically: checked table against table |
 | M/S, intensity | S6 `ms_synt`, `intensity_right` | complete | band rules, books 14/15 | float32 add/sub, scale | exact |
 | PNS | S6 `pns_*`, `gen_rand_vector`; S9 LCG and seed | complete vs ffmpeg | energy rule, correlated PNS | the same LCG and seed, the same call order | exact vs ffmpeg; vs conformance only energy per band (G5) |
-| TNS | S6 `tns_*`; S9 | complete | coefficient decoding, direction, order | float32 lattice filter | exact if the filter loop order matches (read in S9 before PR 4) |
+| TNS | S6 `tns_*`; S9 | complete | coefficient decoding, direction, order | all-pole filter from the lattice coefficients; the taps of a coefficient summed in float64 (the products of two float32 are exact there, four independent chains) and rounded to float32 once | not bit-exact to a float32 chain, by design: within the accuracy bound of `TestAACAccuracy` against the extended-precision result, and closer to it overall than the chain of rounded FMAs it replaced |
 | LTP | S6 `long_term_prediction` | complete in PV | — | **skipped** first | — |
 | Main prediction | none in PV | missing | — | **not supported** | — |
 | IMDCT 2048/256 | S6 `imdct_fxp`; S9 tx | complete | — | pre-twiddle, `len/2` split-radix complex FFT, post-twiddle, twiddles from double `cos/sin` rounded to float32 | exact only by reproducing the same split-radix factorisation and butterfly order; realistic but the hardest part. Fallback: ≤ a few float32 ulp |

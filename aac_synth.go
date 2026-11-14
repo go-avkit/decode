@@ -33,9 +33,10 @@ func mul(a, b float32) float32 { return float32(a * b) }
 // It no longer covers the windowing step: the overlap-add is
 // floats.Float32OverlapWindow, which fuses the second product of each sum on arm64
 // and amd64 (NEON and AVX2+FMA) and rounds every product on other platforms,
-// whatever aacFuse says. The oracle tests that set it false (TestAACOracle,
-// TestAACOraclePlatform) therefore measure the unfused arithmetic of everything
-// but the windowing; they only log counts and assert nothing about them, and the
+// whatever aacFuse says. Nor does it cover TNS: the filter sums its taps in float64
+// (the products of two float32 are exact there) and rounds once, fused or not. The
+// oracle tests that set it false (TestAACOracle, TestAACOraclePlatform) therefore
+// measure the unfused arithmetic of everything but the windowing and TNS; they only log counts and assert nothing about them, and the
 // gates that decide are the accuracy bound (TestAACAccuracy) and the conformance
 // test.
 var aacFuse = true
