@@ -11,7 +11,7 @@ no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
 (ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10, 4:2:0. Audio: FLAC, MP3 and
 Opus, and AAC-LC and HE-AAC v1 (SBR) since v0.6.0; Parametric Stereo (HE-AAC v2,
 procedure A) is applied by default since the release after v0.6.0 (
-the baseline profile: IPD/OPD ignored, see [Audio](#audio)). Waves D1 to D3 of
+baseline mixing: IPD/OPD ignored, see [Audio](#audio)). Waves D1 to D3 of
 [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89); see
 [Audio](#audio) for what each codec is checked against.
 
@@ -192,9 +192,11 @@ signals SBR (object type 5 or 29, or the backward compatible extension) and does
 PS absent is announced as stereo from the first frame**, as ffmpeg's output is, because
 `Audio.Channels` and the layout are those of the track and cannot change mid-stream; its
 second channel is the right channel PS makes from the mono signal, and a copy of the first
-channel while the stream sends no PS parameters. **The decoder implements the PS
-baseline profile**: procedure A mixing for every ICC mode (3 to 5 included) with IPD/OPD
-ignored; the full profile (procedure B, IPD/OPD) is later work. On 801 mono PS files of
+channel while the stream sends no PS parameters. **The decoder does baseline
+mixing**: procedure A for every ICC mode (3 to 5 included), IPD/OPD ignored, and 34-band
+streams keep 34 bands (a baseline decoder maps them to 20, so `al_sbr_ps_06` matches its
+`_ur` reference but not `_bl`, 2226 LSB off); the full profile (procedure B, IPD/OPD) is
+later work. On 801 mono PS files of
 the author's library the output has ffmpeg 9.0.2's length and channel count, and is
 within 1.1e-5 of its samples (median 4.4e-7, 99th percentile 2.7e-6; the worst file's
 error is the same on L and R, so it is in the mono signal before the mixer, in ffmpeg's

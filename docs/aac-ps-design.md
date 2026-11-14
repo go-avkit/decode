@@ -405,8 +405,9 @@ switch that gives the decoder as it was before (out[1] is a copy of out[0], made
 caller). `aacDecoder` writes the element's second channel from `out[1]` instead of
 duplicating `out[0]`.
 
-**Profile: PS baseline.** The decoder implements the baseline profile: procedure A mixing
-for every ICC mode (3 to 5 included), IPD/OPD parsed and ignored. The full profile,
+**Baseline mixing.** Procedure A for every ICC mode (3 to 5 included), IPD/OPD parsed and
+ignored; 34-band streams keep 34 bands (a baseline decoder maps 34 to 20, so
+`al_sbr_ps_06` matches `_ur` but not `_bl`, 2226 LSB off). The full profile,
 procedure B and IPD/OPD (section 6 of `aac-ps-mixing.md`), is later work. (An earlier
 revision of this PR fell back to L = R = mono on such streams; that was wrong: a baseline
 decoder applies procedure A, and ISO's `_bl` references of `al_sbr_ps_03` and `04` confirm
