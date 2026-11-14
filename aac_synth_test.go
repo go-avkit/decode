@@ -52,7 +52,8 @@ func TestAACMDCTMatchesDefinition(t *testing.T) {
 				down += math.Cos(a*id) * float64(src[j])
 				up += math.Cos(a*iu) * float64(src[j])
 			}
-			worst = max(worst, math.Abs(float64(dst[i])-down*scale), math.Abs(float64(dst[i+half])+up*scale))
+			// inverse negates the spectrum (the sign of the reference's inverse quantiser)
+			worst = max(worst, math.Abs(float64(dst[i])+down*scale), math.Abs(float64(dst[i+half])-up*scale))
 			peak = max(peak, math.Abs(down*scale), math.Abs(up*scale))
 		}
 		// The transform is float64 and rounds to float32 once: the error is half an

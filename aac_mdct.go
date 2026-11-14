@@ -52,14 +52,23 @@ func newAACMDCT(m int) *aacMDCT {
 	return &aacMDCT{m: m, plan: fft.NewDCTPlan(m, 4), scale: float32(1.0 / float64(m) / 32768 / 2)}
 }
 
-// inverse writes the m samples of the spectrum src into dst, working in sc, which
-// came from newScratch of this transform and is not shared between goroutines.
+// inverse writes the m samples of the spectrum -src into dst (the sign of the
+// reference decoder's inverse quantiser, which applies its scalefactor gains with a
+// negative sign; the transform is linear, so it is applied to the output, in the
+// pass that reverses and scales it, not as a pass of its own over the spectrum).
+// It is written 0 - x, not -x: that makes -0 of +0, and silence would come out as
+// -0. It works in sc, which came from newScratch of this transform and is not shared
+// between goroutines.
 func (t *aacMDCT) inverse(dst, src []float32, sc *aacMDCTScratch) {
 	m, h := t.m, t.m/2
 	c := t.plan.DCTMixed(sc.out, src[:m], fft.NormBackward)
-	// (t_r, s_r) from C = (s, t)
-	for i := 0; i < h; i++ {
-		dst[i] = c[m-1-i] * t.scale
-		dst[h+i] = c[h-1-i] * t.scale
+	// (t_r, s_r) from C = (s, t), negated (below), in one pass over the output with
+	// the slices cut to h so that no index needs a bounds check
+	lo, hi := dst[:h], dst[h:m]
+	cs, ct := c[:h], c[h:m]
+	k := t.scale
+	for i := range lo {
+		lo[i] = 0 - ct[h-1-i]*k
+		hi[i] = 0 - cs[h-1-i]*k
 	}
 }

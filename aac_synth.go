@@ -314,11 +314,8 @@ func fmulWindow(dst, a, b, win []float32, n int) {
 // this one, and keeps the second half for the next frame.
 func (s *aacSynth) imdctWindow(st *aacChanSynth, ch *aacChannel, coef *[aacFrameLen]float32, out []float32) {
 	ics := &ch.ics
-	// The spectrum of the transform has the sign of the reference's inverse
-	// quantiser: scalefactor gains are applied with a negative sign there.
-	for i := range coef {
-		coef[i] = 0 - coef[i] // not -coef[i]: that makes -0 of +0, and silence would come out as -0
-	}
+	// The transform takes the spectrum with the sign of the reference's inverse
+	// quantiser (aacMDCT.inverse negates it).
 	lwPrev, swPrev, sw := aacSineLong[:], aacSineShort[:], aacSineShort[:]
 	if st.prevShape != 0 {
 		lwPrev, swPrev = aacKBDLong[:], aacKBDShort[:]
