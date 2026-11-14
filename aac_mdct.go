@@ -68,7 +68,9 @@ func (t *aacMDCT) inverse(dst, src []float32, sc *aacMDCTScratch) {
 	cs, ct := c[:h], c[h:m]
 	k := t.scale
 	for i := range lo {
-		lo[i] = 0 - ct[h-1-i]*k
-		hi[i] = 0 - cs[h-1-i]*k
+		// float32(...) keeps the product rounded alone: a compiler that fuses 0 - x*k
+		// into a negated multiply (loong64 does) makes -0 of +0
+		lo[i] = 0 - float32(ct[h-1-i]*k)
+		hi[i] = 0 - float32(cs[h-1-i]*k)
 	}
 }
