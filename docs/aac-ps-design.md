@@ -378,17 +378,23 @@ of the specification; Q14 and Q15 are new):
 - Q6: the index average truncates toward zero (S14c).
 - Q8: the first frame fades in from the all-zero matrix (the first two frames of
   `he44-ps.aac` agree to 4e-12).
-- Q14: an ps_data that does not parse restarts PS from nothing: the matrix, the
-  decorrelator, the transient detector and the hybrid history are all cleared, and the next
-  header fades in again (S6; `psApplyFrame`). The specification says frames that are not
-  applied change nothing, which holds for a frame without ps_data and not for a fault.
-- Q15: after the first frame, SBR frames without ps_data (S19a) differ from ffmpeg for three
-  frames by up to 0.1 (a startup effect; from the fourth frame on the held matrix agrees to
-  1e-7). Unexplained; no library file has such frames.
+- Q14: an ps_data that does not parse suspends PS until the next header: both channels are
+  the mono signal and all PS state (decorrelator, transient detector, matrices, hybrid
+  history) is frozen and continues when PS resumes. The matrix the resumed frame starts
+  from is the one at the envelope slot named by the faulty frame's envelope count when
+  parsing got as far as reading it (S06b; an earlier first reading, a full reset, agreed
+  with S06 only by coincidence). Followed from ffmpeg's output; ISO conformance to arbitrate.
+- Q15: the starting matrix of each applied frame is the one stored at the envelope slot
+  numbered by the envelope count of the frame parsed before the last one (`psMixer.store`,
+  `psState.numEnvOld`). With one frame parsed that count is 0, so a frame without ps_data
+  starts from slot 0 and fades in again. A frame without ps_data uses the parameters and
+  borders of the last parsed one (S19a, S19c). Followed from ffmpeg's output.
 - The property of section 7.1 P3 about a step: a pure step keeps G = 1 (the peak follows
   the power); the duck follows a pulse, which is what the test uses.
-- S17 (a header that lowers `stop_freq`) differs from ffmpeg by 3e-4 with PS off as well: an
-  SBR matter, not PS; the clearing above the SBR top (Q10) cannot be told apart from it.
+- S17 (a header that lowers `stop_freq`) differed from ffmpeg by 3e-4 with PS off as well:
+  our SBR did not restart the noise-floor table index when a header rebuilt the tables
+  (fixed in its own pull request, which also bounds S17 and so confirms the clearing above
+  the SBR top, Q10).
 
 ## PR split (each green, reviewed independently, before the next)
 

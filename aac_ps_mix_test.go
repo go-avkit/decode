@@ -121,7 +121,18 @@ func TestPSMixAgainstReference(t *testing.T) {
 			m := new(psMixer)
 			ref := newPSRefMix(false)
 			var worst, worstRel float64
+			var last *psState
 			for fi, st := range steps {
+				// as the parser leaves the state: the count of the frame before in numEnvOld,
+				// and a frame without ps_data keeps the last parsed frame's parameters
+				if st.fresh {
+					if last != nil {
+						st.p.numEnvOld = last.numEnv
+					}
+					last = st.p
+				} else {
+					st.p = last
+				}
 				h := new(psHybrid)
 				dl := psDecLayouts[0]
 				if st.p.is34 {
@@ -129,8 +140,8 @@ func TestPSMixAgainstReference(t *testing.T) {
 				}
 				h.rows = psNoiseRows(rng, dl.rows, 300, st.burst)
 				s := h.rows
-				m.apply(h, st.p, st.fresh, st.top)
-				out := ref.frame(st.p, st.fresh, st.top, &s)
+				m.apply(h, st.p, st.top)
+				out := ref.frame(st.p, st.top, &s)
 				for k := 0; k < dl.rows; k++ {
 					var peak float64
 					hist := ref.s[k]
@@ -510,8 +521,7 @@ func TestPSInterpolation(t *testing.T) {
 	icc := func(e, b int) int { return []int{1, 2, 4}[e] }
 	p := psTestState(false, 1, 1, 3, []int{-1, 15, 15, 31}, iid, icc)
 	m := new(psMixer)
-	first := psMixGain(0, 0, false)
-	m.matrices(p, true, 20)
+	m.matrices(p, 20)
 	h1, h2, h3 := psMixGain(-5, 1, false), psMixGain(3, 2, false), psMixGain(6, 4, false)
 	for b := 0; b < 20; b++ {
 		if m.gain[15][b] != h1 {
@@ -531,24 +541,31 @@ func TestPSInterpolation(t *testing.T) {
 			}
 		}
 	}
-	_ = first
-	if m.cur[3] != h3 {
-		t.Errorf("the carried matrix is %v, want %v", m.cur[3], h3)
+	if m.store[3][3] != h3 || m.store[1][3] != h1 || m.store[0][3] != (psGain{}) {
+		t.Errorf("the matrices kept by envelope: %v %v %v", m.store[0][3], m.store[1][3], m.store[3][3])
 	}
-	// a frame whose parameters are the carried matrix keeps it
+	// a frame after one of 3 envelopes starts from the matrix of its envelope 3
 	same := psTestState(false, 1, 1, 1, []int{-1, 31}, func(e, b int) int { return 6 }, func(e, b int) int { return 4 })
-	m.matrices(same, true, 20)
+	same.numEnvOld = 3
+	m.matrices(same, 20)
 	for n := range m.gain {
 		if m.gain[n][7] != h3 {
 			t.Fatalf("constant matrix: slot %d is %v", n, m.gain[n][7])
 		}
 	}
-	// a frame without data holds the matrix too
-	m.matrices(same, false, 20)
-	for n := range m.gain {
-		if m.gain[n][7] != h3 {
-			t.Fatalf("no data: slot %d is %v", n, m.gain[n][7])
-		}
+	// Q15: a frame whose predecessor count is 0 starts from slot 0 again, which holds the
+	// start of the last frame (here the matrix of its envelope 3), not the last envelope
+	same.numEnvOld = 0
+	m.matrices(same, 20)
+	if m.gain[31][7] != h3 || m.gain[0][7] != h3 {
+		t.Errorf("from slot 0: %v %v", m.gain[0][7], m.gain[31][7])
+	}
+	// and the first frame's slot 0 is zero: the fade in
+	m = new(psMixer)
+	same.numEnvOld = 0
+	m.matrices(same, 20)
+	if m.gain[31][7] != h3 || m.gain[0][7][psGLs] >= h3[psGLs]/2 {
+		t.Errorf("first frame: %v then %v", m.gain[0][7], m.gain[31][7])
 	}
 }
 
@@ -562,7 +579,8 @@ func TestPSMixTiming(t *testing.T) {
 		if f == 1 {
 			h.rows[5][12] = 1000 // an all-pass row
 		}
-		m.apply(h, p, true, 64)
+		p.numEnvOld = p.numEnv
+		m.apply(h, p, 64)
 		if f == 0 {
 			continue
 		}
@@ -611,7 +629,7 @@ func TestPSMixOutputStatistics(t *testing.T) {
 		for f := 0; f < 400; f++ {
 			h := new(psHybrid)
 			h.rows = psNoiseRows(rng, 71, 100, 0)
-			m.apply(h, p, true, 64)
+			m.apply(h, p, 64)
 			if f < 4 {
 				continue
 			}
@@ -648,7 +666,7 @@ func TestPSMixDoesNotAllocate(t *testing.T) {
 		var x [sbrQMFSlots][sbrSynBands]complex128
 		if a := testing.AllocsPerRun(20, func() {
 			h.rows = rows
-			m.apply(h, p, true, 60)
+			m.apply(h, p, 60)
 			h.synthesise(&x, is34)
 			psSynthesise(&m.rr, &m.xr, is34)
 		}); a != 0 {
@@ -674,7 +692,7 @@ func BenchmarkPSMix(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				h.rows = rows
-				m.apply(h, p, true, 55)
+				m.apply(h, p, 55)
 				h.synthesise(&x, is34)
 				psSynthesise(&m.rr, &m.xr, is34)
 			}

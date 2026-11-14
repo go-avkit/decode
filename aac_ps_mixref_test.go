@@ -249,7 +249,7 @@ type psRefMix struct {
 	peak    [psMaxBands]*big.Float
 	avg     [psMaxBands]*big.Float
 	dev     [psMaxBands]*big.Float
-	cur     [psMaxBands][4]*big.Float
+	store   [psMaxEnv + 1][psMaxBands][4]*big.Float // the matrices of the last frame by envelope
 	imp     map[[2]int][]cdd
 	gains   map[[3]int][4]*big.Float
 }
@@ -257,9 +257,11 @@ type psRefMix struct {
 func newPSRefMix(eq7 bool) *psRefMix {
 	r := &psRefMix{eq7: eq7, imp: map[[2]int][]cdd{}, gains: map[[3]int][4]*big.Float{}}
 	r.resetTransient()
-	for b := range r.cur {
-		for i := range r.cur[b] {
-			r.cur[b][i] = bnew()
+	for e := range r.store {
+		for b := range r.store[e] {
+			for i := range r.store[e][b] {
+				r.store[e][b][i] = bnew()
+			}
 		}
 	}
 	return r
@@ -290,9 +292,9 @@ func (r *psRefMix) gain(iid, icc int, fine bool) [4]*big.Float {
 // psRefOut is one frame of the reference's output: the left and right rows.
 type psRefOut struct{ l, r [sbrQMFSlots][psMaxRows]cdd }
 
-// frame processes one applied frame: s are its mono rows, p the parameters (fresh says
-// it carried ps_data), top the SBR top.
-func (r *psRefMix) frame(p *psState, fresh bool, top int, s *[sbrQMFSlots][psMaxRows]complex128) *psRefOut {
+// frame processes one applied frame: s are its mono rows, p the parameters in force
+// (those of the last parsed frame when this one had no ps_data), top the SBR top.
+func (r *psRefMix) frame(p *psState, top int, s *[sbrQMFSlots][psMaxRows]complex128) *psRefOut {
 	dl := psDecLayouts[0]
 	q1, nSplit := 3, 10
 	if p.is34 {
@@ -309,29 +311,29 @@ func (r *psRefMix) frame(p *psState, fresh bool, top int, s *[sbrQMFSlots][psMax
 		if !p.is34 {
 			to = 20
 		}
-		var next [psMaxBands][4]*big.Float
-		for i := 0; i < 4; i++ {
-			for b := 0; b < to; b++ {
-				e := psMap20to34[b]
-				if !p.is34 {
-					e = psMap34to20[b]
-				}
-				sum := bnew()
-				for j := range e.src {
-					if e.w[j] != 0 {
-						sum = badd(sum, bmul(bi(int64(e.w[j])), r.cur[e.src[j]][i]))
+		for en := range r.store {
+			var next [psMaxBands][4]*big.Float
+			for i := 0; i < 4; i++ {
+				for b := 0; b < to; b++ {
+					e := psMap20to34[b]
+					if !p.is34 {
+						e = psMap34to20[b]
 					}
+					sum := bnew()
+					for j := range e.src {
+						if e.w[j] != 0 {
+							sum = badd(sum, bmul(bi(int64(e.w[j])), r.store[en][e.src[j]][i]))
+						}
+					}
+					next[b][i] = bquo(sum, bi(int64(e.div)))
 				}
-				next[b][i] = bquo(sum, bi(int64(e.div)))
 			}
-		}
-		for b := 0; b < to; b++ {
-			r.cur[b] = next[b]
-		}
-		for b := to; b < psMaxBands; b++ {
-			for i := range r.cur[b] {
-				r.cur[b][i] = bnew()
+			for b := to; b < psMaxBands; b++ {
+				for i := range next[b] {
+					next[b][i] = bnew()
+				}
 			}
+			r.store[en] = next
 		}
 	}
 	r.started, r.is34 = true, p.is34
@@ -350,25 +352,22 @@ func (r *psRefMix) frame(p *psState, fresh bool, top int, s *[sbrQMFSlots][psMax
 	}
 	// the matrices of every slot, as big floats
 	numEnv, border := p.numEnv, p.border
-	if !fresh {
-		numEnv, border = 1, [psMaxEnv + 1]int8{-1, 31}
-	}
 	var gain [sbrQMFSlots][psMaxBands][4]dd
-	prev := r.cur
+	prev := r.store[p.numEnvOld]
+	r.store[0] = prev
 	for e := 1; e <= numEnv; e++ {
 		next := prev
-		if fresh {
-			var iid, icc [psMaxBands]int8
-			if p.enableIID {
-				psRemapBands(iid[:], p.iid[e-1][:], p.nrIID, nb)
-			}
-			if p.enableICC {
-				psRemapBands(icc[:], p.icc[e-1][:], p.nrICC, nb)
-			}
-			for b := 0; b < nb; b++ {
-				next[b] = r.gain(int(iid[b]), int(icc[b]), p.iidQuant)
-			}
+		var iid, icc [psMaxBands]int8
+		if p.enableIID {
+			psRemapBands(iid[:], p.iid[e-1][:], p.nrIID, nb)
 		}
+		if p.enableICC {
+			psRemapBands(icc[:], p.icc[e-1][:], p.nrICC, nb)
+		}
+		for b := 0; b < nb; b++ {
+			next[b] = r.gain(int(iid[b]), int(icc[b]), p.iidQuant)
+		}
+		r.store[e] = next
 		b0, b1 := int(border[e-1]), int(border[e])
 		for n := b0 + 1; n <= b1; n++ {
 			frac := bquo(bi(int64(n-b0)), bi(int64(b1-b0)))
@@ -381,7 +380,6 @@ func (r *psRefMix) frame(p *psState, fresh bool, top int, s *[sbrQMFSlots][psMax
 		}
 		prev = next
 	}
-	r.cur = prev
 	// the transient gain
 	var tg [sbrQMFSlots][psMaxBands]dd
 	lam, mu, kap := bdec("0.76592833836465"), bdec("0.25"), bdec("1.5")

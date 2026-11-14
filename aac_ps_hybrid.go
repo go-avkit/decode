@@ -336,18 +336,13 @@ func (s *sbrState) psApplyFrame(d *sbrChanDSP, kx, m int, withSBR bool, out [2][
 		var look [psLook][psSplitMax]complex128
 		d.psLookAhead(kx, &look)
 		s.hyb.analyse(&d.x, &look, s.ps.is34)
-		mx.apply(s.hyb, &s.ps, s.psSeen && s.psOn, kx+m)
+		mx.apply(s.hyb, &s.ps, kx+m)
 		s.hyb.synthesise(&d.x, s.ps.is34)
 		psSynthesise(&mx.rr, &mx.xr, s.ps.is34)
 	} else {
-		if withSBR && s.psSeen && s.psOn {
-			// ps_data that did not parse: PS starts again from nothing at the next header
-			// (what ffmpeg's output shows, S06; Q14)
-			*mx = psMixer{syn: mx.syn}
-			if s.hyb != nil {
-				s.hyb.hist = [psSplitMax][psLook]complex128{}
-			}
-		}
+		// PS is suspended (a fault until the next header, or no SBR data): both channels are
+		// the mono signal and the state of PS, the decorrelator, the transient detector, the
+		// matrices and the hybrid history, is frozen until it resumes (Q14)
 		mx.xr = d.x
 	}
 	d.syn.process(out[0], &d.x)

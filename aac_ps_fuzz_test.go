@@ -203,7 +203,7 @@ func FuzzPSApply(f *testing.F) {
 				}
 			}
 			top := int(data[len(data)-1]) % 65
-			m.apply(h, &p, fi != 1, top)
+			m.apply(h, &p, top)
 			// the history of the all-pass chain adds up to 12.2 times the peak, and each
 			// output is two gains of at most sqrt(2) over mono and decorrelated rows
 			bound := 2 * 1.5 * 13 * math.Max(peak, 1) * float64(fi+1)

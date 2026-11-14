@@ -159,7 +159,11 @@ type psMixer struct {
 	started bool
 	is34    bool // layout of the last applied frame
 
-	cur [psMaxBands]psGain // the matrix in force at the end of the last applied frame
+	// store[e] is the matrix of envelope e of the last applied frame, store[0] the one the
+	// frame started from. The next frame starts from store[numEnvOld], the envelope count
+	// of the frame parsed before the last one (what ffmpeg's output shows: S06b, S19; the
+	// ISO conformance streams are to arbitrate, Q14 and Q15).
+	store [psMaxEnv + 1][psMaxBands]psGain
 
 	// transient detector, per parameter band
 	peak, avg, dev [psMaxBands]float64
@@ -193,13 +197,15 @@ func (m *psMixer) switchTo(is34 bool) {
 		from, to = 34, 20
 	}
 	var src, dst [psMaxBands]float64
-	for i := range psNGains {
-		for b := 0; b < from; b++ {
-			src[b] = m.cur[b][i]
-		}
-		psRemapBands(dst[:], src[:], from, to)
-		for b := 0; b < to; b++ {
-			m.cur[b][i] = dst[b]
+	for e := range m.store {
+		for i := range psNGains {
+			for b := 0; b < from; b++ {
+				src[b] = m.store[e][b][i]
+			}
+			psRemapBands(dst[:], src[:], from, to)
+			for b := 0; b < to; b++ {
+				m.store[e][b][i] = dst[b]
+			}
 		}
 	}
 	m.reset()
@@ -222,20 +228,16 @@ func (m *psMixer) clearAbove(dl *psDecLayout, top int) {
 }
 
 // matrices computes the gains of every slot of the frame (section 4.3) into m.gain and
-// keeps the matrix of the last envelope. A frame without ps_data holds the carried
-// matrix over its single closing envelope.
-func (m *psMixer) matrices(p *psState, fresh bool, nb int) {
-	numEnv := 1
-	border := [psMaxEnv + 1]int8{-1, sbrQMFSlots - 1}
-	if fresh {
-		numEnv, border = p.numEnv, p.border
-	}
-	prev := m.cur
+// keeps the matrix of every envelope. The frame starts from store[numEnvOld]. A frame
+// without ps_data uses the parameters and borders of the last parsed one.
+func (m *psMixer) matrices(p *psState, nb int) {
+	numEnv, border := p.numEnv, p.border
+	prev := m.store[p.numEnvOld]
+	m.store[0] = prev
 	for e := 1; e <= numEnv; e++ {
-		next := prev
-		if fresh {
-			m.envelopeGains(p, e-1, nb, &next)
-		}
+		var next [psMaxBands]psGain
+		m.envelopeGains(p, e-1, nb, &next)
+		m.store[e] = next
 		b0, b1 := int(border[e-1]), int(border[e])
 		for n := b0 + 1; n <= b1; n++ {
 			f := float64(n-b0) / float64(b1-b0)
@@ -251,7 +253,6 @@ func (m *psMixer) matrices(p *psState, fresh bool, nb int) {
 		}
 		prev = next
 	}
-	m.cur = prev
 }
 
 // envelopeGains fills h with the gains of envelope e: its indices mapped to the nb
@@ -293,9 +294,8 @@ func (m *psMixer) transient(rows *[sbrQMFSlots][psMaxRows]complex128, dl *psDecL
 }
 
 // apply turns the mono hybrid rows of h into the left rows (in place) and the right rows
-// (m.rr), for an applied frame. fresh says the frame carried ps_data, top is the SBR top
-// kx+M.
-func (m *psMixer) apply(h *psHybrid, p *psState, fresh bool, top int) {
+// (m.rr), for an applied frame; top is the SBR top kx+M.
+func (m *psMixer) apply(h *psHybrid, p *psState, top int) {
 	dl := psDecLayouts[0]
 	if p.is34 {
 		dl = psDecLayouts[1]
@@ -307,7 +307,7 @@ func (m *psMixer) apply(h *psHybrid, p *psState, fresh bool, top int) {
 		m.switchTo(p.is34)
 	}
 	m.clearAbove(dl, top)
-	m.matrices(p, fresh, dl.nb)
+	m.matrices(p, dl.nb)
 	m.transient(&h.rows, dl)
 	for k := 0; k < dl.rows; k++ {
 		m.row(h, dl, k)

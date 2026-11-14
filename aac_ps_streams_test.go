@@ -35,7 +35,6 @@ type psStreamSpec struct {
 	name    string
 	core    string
 	bounded bool // the bound applies; else the difference is measured and logged
-	skip    int  // frames at the start that the bound does not cover (measured and logged)
 	frames  []psStreamFrame
 }
 
@@ -146,6 +145,18 @@ func psStreamSpecs() []psStreamSpec {
 			return frame20(i, true, 1, psConstF(0), psConstF(0))
 		}
 		return frame20(i, i == 0, 1, psConstF(0), psConstF(0))
+	}))
+	// S06b: a fault in the middle of frames of two envelopes with a decorrelated signal:
+	// PS is suspended with all its state frozen and resumes from where it stopped, the
+	// matrix carried being the slot the faulty frame's envelope count names (Q14)
+	add("S06b", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		switch i {
+		case 5:
+			return psStreamFrame{corrupt: true}
+		case 6:
+			return frame20(i, true, 2, shift(mixed, i, 2), func(e, b int) int { return 2 + (e+b)%3 })
+		}
+		return frame20(i, i == 0, 2, shift(mixed, i, 2), func(e, b int) int { return 2 + (e+b)%3 })
 	}))
 	add("S07", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
 		return frame20(i, i == 0, 1, psConstF(0), psConstF(7))
@@ -274,8 +285,16 @@ func psStreamSpecs() []psStreamSpec {
 		}
 		return psStreamFrame{ps: psFixed(h, 20, 20, 4, shift(comboC, i, 4), shift(comboCC, i, 4))}
 	}))
-	// S19a: SBR frames with no ps_data between frames of one layout and one envelope each:
-	// the carried matrix is the same in every reading, so ffmpeg is the oracle.
+	// S19c: the first two frames both carry ps_data, then frames without
+	add("S19c", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		if i >= 2 && i != 4 && i != 6 && i != 9 {
+			return psStreamFrame{}
+		}
+		return frame20(i, i == 0, 1, shift(mixed, i, 2), icc2)
+	}))
+	// S19a: SBR frames with no ps_data between frames of one layout and one envelope each
+	// (Q15: a frame without data starts from the slot numbered by the count of the frame
+	// parsed before the last one, so the frames after the first fade in again).
 	add("S19a", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
 		if i%3 != 0 {
 			return psStreamFrame{}
@@ -291,13 +310,6 @@ func psStreamSpecs() []psStreamSpec {
 		}
 		return frame20(i, i == 0 || i == 4, 1, shift(mixed, i, 2), icc2)
 	}))
-	// S19a: ffmpeg's output over the first frames after the first one differs from every
-	// reading of the specification (Q15); from the fourth frame on it is the held matrix
-	for i := range specs {
-		if specs[i].name == "S19a" {
-			specs[i].skip = 4
-		}
-	}
 	return specs
 }
 
@@ -415,6 +427,8 @@ var psStreamHashes = map[string]string{
 	"S04":    "c7003c91e3f7d323",
 	"S05":    "2f903acd63e4f966",
 	"S06":    "85306fd8671f00f6",
+	"S06b":   "765b037160821748",
+	"S19c":   "ef044a523e1129a7",
 	"S07":    "0f81bdb178a9b0fc",
 	"S08":    "81b2d58d8079858d",
 	"S09c":   "52da94721a4283e3",
@@ -486,7 +500,7 @@ func TestPSRecordStreams(t *testing.T) {
 // psStreamCompare decodes the stream of spec with PS applied and compares it with the
 // recording of ffmpeg's: the largest absolute difference per channel over the common
 // samples.
-func psStreamCompare(t testing.TB, spec psStreamSpec) (maxL, maxR, early float64, n int) {
+func psStreamCompare(t testing.TB, spec psStreamSpec) (maxL, maxR float64, n int) {
 	t.Helper()
 	b := psBuildStream(t, spec)
 	if want, ok := psStreamHashes[spec.name]; !ok || want != psSHA(b) {
@@ -498,14 +512,10 @@ func psStreamCompare(t testing.TB, spec psStreamSpec) (maxL, maxR, early float64
 		t.Fatalf("%s: %d samples, ffmpeg gives %d", spec.name, len(l), len(fl))
 	}
 	for i := range l {
-		dl, dr := math.Abs(float64(l[i])-float64(fl[i])), math.Abs(float64(r[i])-float64(fr[i]))
-		if i < spec.skip*2048 {
-			early = math.Max(early, math.Max(dl, dr))
-			continue
-		}
-		maxL, maxR = math.Max(maxL, dl), math.Max(maxR, dr)
+		maxL = math.Max(maxL, math.Abs(float64(l[i])-float64(fl[i])))
+		maxR = math.Max(maxR, math.Abs(float64(r[i])-float64(fr[i])))
 	}
-	return maxL, maxR, early, len(l)
+	return maxL, maxR, len(l)
 }
 
 // psStreamBound is the bound against ffmpeg on the written streams: the SBR bound, which
@@ -519,8 +529,8 @@ const psStreamBound = 1e-6
 func TestPSStreamsAgainstFFmpeg(t *testing.T) {
 	for _, spec := range psStreamSpecs() {
 		t.Run(spec.name, func(t *testing.T) {
-			l, r, early, n := psStreamCompare(t, spec)
-			t.Logf("%s: %d samples per channel, largest difference L %.2e R %.2e (first %d frames, not covered: %.2e)", spec.name, n, l, r, spec.skip, early)
+			l, r, n := psStreamCompare(t, spec)
+			t.Logf("%s: %d samples per channel, largest difference L %.2e R %.2e", spec.name, n, l, r)
 			if spec.bounded && (l > psStreamBound || r > psStreamBound) {
 				t.Errorf("%s: differs from ffmpeg by L %.2e, R %.2e (bound %.0e)", spec.name, l, r, psStreamBound)
 			}
