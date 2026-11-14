@@ -354,6 +354,48 @@ history is not updated while PS is off (here it is only updated by frames that g
 the bank). The comparison with ffmpeg's PCM (streams S1 to S6) needs the mixing of PS3 and
 the writer's PS payloads, and is left to PS3.
 
+## PS3 as built
+
+`aac_ps_mix.go` (decorrelator, transient attenuation, interpolation, procedure A mixing)
+and `aac_ps_remap.go` (the 10/20/34 parameter maps, index and value forms), written from
+`docs/aac-ps-mixing.md` sections 1 to 5 alone (clean room: no reference implementation was
+opened, only the ffmpeg binary was run). `sbrState.psApplyTest` runs the path on a mono
+element: hybrid analysis, `psMixer.apply`, hybrid synthesis of the left rows in place and
+of the right rows into the mixer's block, then the two QMF banks; the decoder's default
+output is unchanged (PS4 turns it on). Procedure B and IPD/OPD (section 6) are parsed and
+not applied. A frame that is not applied sends the mono block through both banks.
+
+Measured against ffmpeg 9.0.2 (see the pull request for the tables): the written streams
+S1 to S19 agree to 2.4e-7 where the specification applies (bound asserted: 1e-6), `he44-ps.aac`
+and 8 library files to 1.1e-6 except in the blocks of `he44-ps.aac` whose channels are
+25 dB apart, where ffmpeg's own two builds differ by 2.4e-5. The independent
+double-double and 192-bit reference agrees to 1e-15 of the row's peak (bound 2^-44).
+
+What the PCM decided, beyond the specification (the questions are numbered as in section 8
+of the specification; Q14 and Q15 are new):
+
+- Q1: ffmpeg uses eq. 8 (the decoder does; eq. 7 differs from it by up to 1.07 in a gain).
+- Q6: the index average truncates toward zero (S14c).
+- Q8: the first frame fades in from the all-zero matrix (the first two frames of
+  `he44-ps.aac` agree to 4e-12).
+- Q14: an ps_data that does not parse suspends PS until the next header: both channels are
+  the mono signal and all PS state (decorrelator, transient detector, matrices, hybrid
+  history) is frozen and continues when PS resumes. The matrix the resumed frame starts
+  from is the one at the envelope slot named by the faulty frame's envelope count when
+  parsing got as far as reading it (S06b; an earlier first reading, a full reset, agreed
+  with S06 only by coincidence). Followed from ffmpeg's output; ISO conformance to arbitrate.
+- Q15: the starting matrix of each applied frame is the one stored at the envelope slot
+  numbered by the envelope count of the frame parsed before the last one (`psMixer.store`,
+  `psState.numEnvOld`). With one frame parsed that count is 0, so a frame without ps_data
+  starts from slot 0 and fades in again. A frame without ps_data uses the parameters and
+  borders of the last parsed one (S19a, S19c). Followed from ffmpeg's output.
+- The property of section 7.1 P3 about a step: a pure step keeps G = 1 (the peak follows
+  the power); the duck follows a pulse, which is what the test uses.
+- S17 (a header that lowers `stop_freq`) differed from ffmpeg by 3e-4 with PS off as well:
+  our SBR did not restart the noise-floor table index when a header rebuilt the tables
+  (fixed in its own pull request, which also bounds S17 and so confirms the clearing above
+  the SBR top, Q10).
+
 ## PR split (each green, reviewed independently, before the next)
 
 1. **PS1: bitstream and tables.** `aac_ps.go` (parse, state, fix-up envelope,

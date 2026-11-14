@@ -5,6 +5,7 @@ package decode
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -112,10 +113,6 @@ func TestPSWriteCorpus(t *testing.T) {
 	if dir == "" {
 		t.Skip("PS_WRITE_CORPUS is not set")
 	}
-	d := filepath.Join(dir, "FuzzPSData")
-	if err := os.MkdirAll(d, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	seeds := psFuzzSeeds(t)
 	// the PS data of the first frames of the real stream, cut out of the state that
 	// parsed them
@@ -134,20 +131,93 @@ func TestPSWriteCorpus(t *testing.T) {
 		nbits := s.extBits - 2
 		seeds[fmt.Sprintf("real-%s-%d", fx.name, i)] = append([]byte{byte((8 - nbits%8) % 8)}, s.ps.buf[:(nbits+7)/8]...)
 	}
-	for name, data := range seeds {
-		body := fmt.Sprintf("go test fuzz v1\n[]byte(%q)\n", data)
-		if err := os.WriteFile(filepath.Join(d, name), []byte(body), 0o644); err != nil {
+	for _, target := range []string{"FuzzPSData", "FuzzPSApply"} {
+		d := filepath.Join(dir, target)
+		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
+		}
+		for name, data := range seeds {
+			body := fmt.Sprintf("go test fuzz v1\n[]byte(%q)\n", data)
+			if err := os.WriteFile(filepath.Join(d, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }
 
-// TestPSFuzzCorpusIsCommitted: the corpus holds the seeds.
+// TestPSFuzzCorpusIsCommitted: the corpora hold the seeds.
 func TestPSFuzzCorpusIsCommitted(t *testing.T) {
-	entries, err := os.ReadDir(filepath.Join("testdata", "fuzz", "FuzzPSData"))
-	if err != nil || len(entries) < len(psFuzzSeeds(t)) {
-		t.Errorf("FuzzPSData: corpus of %d entries (%v), want %d: set PS_WRITE_CORPUS=testdata/fuzz and run TestPSWriteCorpus", len(entries), err, len(psFuzzSeeds(t)))
+	for _, target := range []string{"FuzzPSData", "FuzzPSApply"} {
+		entries, err := os.ReadDir(filepath.Join("testdata", "fuzz", target))
+		if err != nil || len(entries) < len(psFuzzSeeds(t)) {
+			t.Errorf("%s: corpus of %d entries (%v), want %d: set PS_WRITE_CORPUS=testdata/fuzz and run TestPSWriteCorpus", target, len(entries), err, len(psFuzzSeeds(t)))
+		}
 	}
+}
+
+// FuzzPSApply is the PS path under the test switch: the data is parsed as in FuzzPSData
+// and, while PS is usable, the frame's mono rows (noise from the data, with a loud burst)
+// go through the decorrelator and the mixing, three frames in a row so that the state a
+// frame leaves is read back, with an SBR top and a layout that the data chooses. Whatever
+// the bits say there is no panic, every output is finite, and no output exceeds a bound
+// that follows from the gains (at most sqrt(2) on the mono rows, the same on the
+// decorrelated ones, which the all-pass chain amplifies by at most the l1 norm 12.2).
+func FuzzPSApply(f *testing.F) {
+	for _, s := range psFuzzSeeds(f) {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) < 2 || len(data) > 400 {
+			return
+		}
+		nbits := max(8*(len(data)-1)-int(data[0]&7), 0)
+		rng := uint64(len(data))
+		for _, b := range data {
+			rng = rng*6364136223846793005 + uint64(b) + 1442695040888963407
+		}
+		next := func() float64 {
+			rng = rng*6364136223846793005 + 1442695040888963407
+			return float64(int64(rng>>11))/float64(1<<52) - 1
+		}
+		var p psState
+		m := new(psMixer)
+		for fi := 0; fi < 3; fi++ {
+			p.parse(newAACBits(data[1:]), nbits)
+			if !p.start {
+				continue
+			}
+			dl := psDecLayouts[0]
+			if p.is34 {
+				dl = psDecLayouts[1]
+			}
+			h := new(psHybrid)
+			peak := 0.0
+			for n := range h.rows {
+				g := 100.0
+				if n%11 == 0 {
+					g = 4000
+				}
+				for k := 0; k < dl.rows; k++ {
+					h.rows[n][k] = complex(g*next(), g*next())
+					peak = math.Max(peak, math.Abs(real(h.rows[n][k]))+math.Abs(imag(h.rows[n][k])))
+				}
+			}
+			top := int(data[len(data)-1]) % 65
+			m.apply(h, &p, top)
+			// the history of the all-pass chain adds up to 12.2 times the peak, and each
+			// output is two gains of at most sqrt(2) over mono and decorrelated rows
+			bound := 2 * 1.5 * 13 * math.Max(peak, 1) * float64(fi+1)
+			for n := range h.rows {
+				for k := 0; k < dl.rows; k++ {
+					for _, v := range []complex128{h.rows[n][k], m.rr[n][k]} {
+						if math.IsNaN(real(v)) || math.IsNaN(imag(v)) || math.Abs(real(v)) > bound || math.Abs(imag(v)) > bound {
+							t.Fatalf("frame %d slot %d row %d: %v (bound %g)", fi, n, k, v, bound)
+						}
+					}
+				}
+			}
+		}
+	})
 }
 
 // TestPSParseTooLong: a length no extension can have is refused and skipped.

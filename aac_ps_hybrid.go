@@ -284,10 +284,15 @@ func (h *psHybrid) analyse(x *[sbrQMFSlots][sbrSynBands]complex128, look *[psLoo
 // synthesise sums the rows of each split band of h.rows back into the 64-band signal x,
 // and copies the others: no filter, gain or delay.
 func (h *psHybrid) synthesise(x *[sbrQMFSlots][sbrSynBands]complex128, is34 bool) {
+	psSynthesise(&h.rows, x, is34)
+}
+
+// psSynthesise is the synthesis of any block of rows (the left or the right channel).
+func psSynthesise(rows *[sbrQMFSlots][psMaxRows]complex128, x *[sbrQMFSlots][sbrSynBands]complex128, is34 bool) {
 	ly := psLayoutOf(is34)
 	n := ly.start[ly.nSplit]
 	for l := range x {
-		r := &h.rows[l]
+		r := &rows[l]
 		for k := 0; k < ly.nSplit; k++ {
 			var sum complex128
 			for _, v := range r[ly.start[k]:ly.start[k+1]] {
@@ -312,6 +317,36 @@ func (d *sbrChanDSP) psLookAhead(kx int, look *[psLook][psSplitMax]complex128) {
 			}
 		}
 	}
+}
+
+// psApplyFrame is the PS path of a mono element's frame (behind sbrState.psApplyTest):
+// d.x, the mono 64-band signal of the frame with SBR top kx+m, becomes the left block
+// and the mixer's block the right one, and each goes through its synthesis bank into
+// out[0] and out[1]. A frame that does not apply PS (no SBR data, or PS not usable)
+// sends the mono block through both banks, whose histories advance in every frame.
+func (s *sbrState) psApplyFrame(d *sbrChanDSP, kx, m int, withSBR bool, out [2][]float32) {
+	if s.mix == nil {
+		s.mix = new(psMixer)
+	}
+	mx := s.mix
+	if withSBR && s.ps.start {
+		if s.hyb == nil {
+			s.hyb = new(psHybrid)
+		}
+		var look [psLook][psSplitMax]complex128
+		d.psLookAhead(kx, &look)
+		s.hyb.analyse(&d.x, &look, s.ps.is34)
+		mx.apply(s.hyb, &s.ps, kx+m)
+		s.hyb.synthesise(&d.x, s.ps.is34)
+		psSynthesise(&mx.rr, &mx.xr, s.ps.is34)
+	} else {
+		// PS is suspended (a fault until the next header, or no SBR data): both channels are
+		// the mono signal and the state of PS, the decorrelator, the transient detector, the
+		// matrices and the hybrid history, is frozen until it resumes (Q14)
+		mx.xr = d.x
+	}
+	d.syn.process(out[0], &d.x)
+	mx.syn.process(out[1], &mx.xr)
 }
 
 // psRoundTrip runs the frame of d.x through the hybrid analysis and synthesis. The PS

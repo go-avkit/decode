@@ -56,12 +56,16 @@ var psPhase = func() (a [8]float64) {
 	return a
 }()
 
-// psLinkDecay are the three decay factors of the decorrelator's all-pass links and
-// psPeakDecay the decay of the transient detector's peak: normative values. (They
-// equal exp(-d/7) for the link delays d = 3, 4, 5 and exp(-4/15) to 14 digits; no
-// source states those exponentials, which were recognised after the values were read,
-// so they are not a derivation.)
+// psLinkDelay are the delays in slots of the decorrelator's three all-pass links
+// (P1 §4.1: "a chain of three delay lines with the length of 3, 4, and 5 QMF samples").
+// psLinkDecay are their decay factors exp(-d/7), derived (decision of the main session
+// 2026-11-13: the formula is accepted as the definition, and it reproduces the three
+// values the references hold, 0.65143905753106, 0.56471812200776 and 0.48954165955695,
+// to 4.4e-15; TestPSLinkDecayAgreement measures that). psPeakDecay is the decay of the
+// transient detector's peak, a normative value (it equals exp(-4/15) to 1.3e-15, but no
+// source states that).
 var (
-	psLinkDecay = [3]float64{0.65143905753106, 0.56471812200776, 0.48954165955695}
+	psLinkDelay = [3]int{3, 4, 5}
+	psLinkDecay = [3]float64{math.Exp(-3.0 / 7), math.Exp(-4.0 / 7), math.Exp(-5.0 / 7)}
 	psPeakDecay = 0.76592833836465
 )
