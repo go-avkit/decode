@@ -102,8 +102,12 @@ type psDecLayout struct {
 	nb               int
 	qmf              [psMaxRows]uint8
 	band             []uint8
+	runs             []psBandRun // the rows grouped by consecutive equal band, in row order
 	ap               [psMaxAllPass]psAllPass
 }
+
+// psBandRun is rows [start, end) of one parameter band.
+type psBandRun struct{ start, end, band uint8 }
 
 var psDecLayouts = [2]*psDecLayout{newPSDecLayout(false), newPSDecLayout(true)}
 
@@ -149,6 +153,13 @@ func newPSDecLayout(is34 bool) *psDecLayout {
 			ap.c[m] = psLinkDecay[m] * gamma
 			ap.cq[m] = complex(ap.c[m], 0) * ap.q[m]
 		}
+	}
+	for r := 0; r < dl.rows; r++ {
+		if r > 0 && dl.band[r] == dl.band[r-1] {
+			dl.runs[len(dl.runs)-1].end++
+			continue
+		}
+		dl.runs = append(dl.runs, psBandRun{uint8(r), uint8(r + 1), dl.band[r]})
 	}
 	return dl
 }
@@ -276,8 +287,14 @@ func (m *psMixer) transient(rows *[sbrQMFSlots][psMaxRows]complex128, dl *psDecL
 	var pw [psMaxBands]float64
 	for n := range rows {
 		clear(pw[:dl.nb])
-		for k, v := range rows[n][:dl.rows] {
-			pw[dl.band[k]] += real(v)*real(v) + imag(v)*imag(v)
+		// the rows are added in order, as row by row, but a run of rows of one band
+		// keeps its sum in a register
+		for _, r := range dl.runs {
+			s := pw[r.band]
+			for _, v := range rows[n][r.start:r.end] {
+				s += real(v)*real(v) + imag(v)*imag(v)
+			}
+			pw[r.band] = s
 		}
 		for b := 0; b < dl.nb; b++ {
 			pk := max(psPeakDecay*m.peak[b], pw[b])
@@ -333,30 +350,28 @@ func (m *psMixer) row(h *psHybrid, dl *psDecLayout, k int) {
 				w[j][psLinkDelay[j]+n] = cur
 				x = ap.q[j]*old - complex(ap.c[j]*real(cur), ap.c[j]*imag(cur))
 			}
-			m.mixSlot(h, k, n, b, x)
+			h.rows[n][k], m.rr[n][k] = psMixPair(in[psHist+n], x, &m.gain[n][b], m.tg[n][b])
 		}
 		for j := range w {
 			copy(w[j][:psLinkDelay[j]], w[j][sbrQMFSlots:])
 		}
 	case k < dl.nLong:
 		for n := range h.rows {
-			m.mixSlot(h, k, n, b, in[psHist+n-psLongDelay])
+			h.rows[n][k], m.rr[n][k] = psMixPair(in[psHist+n], in[psHist+n-psLongDelay], &m.gain[n][b], m.tg[n][b])
 		}
 	default:
 		for n := range h.rows {
-			m.mixSlot(h, k, n, b, in[psHist+n-psShortDelay])
+			h.rows[n][k], m.rr[n][k] = psMixPair(in[psHist+n], in[psHist+n-psShortDelay], &m.gain[n][b], m.tg[n][b])
 		}
 	}
 	copy(in[:psHist], in[sbrQMFSlots:])
 }
 
-// mixSlot applies the transient gain to the decorrelated sample x and writes the left
-// and right samples of row k at slot n.
-func (m *psMixer) mixSlot(h *psHybrid, k, n int, b uint8, x complex128) {
-	s := h.rows[n][k]
-	g := &m.gain[n][b]
-	t := m.tg[n][b]
+// psMixPair applies the transient gain t to the decorrelated sample x and returns the
+// left and right samples for the direct sample s and the gains g. It is small enough
+// to be inlined into the loops of row.
+func psMixPair(s, x complex128, g *psGain, t float64) (l, r complex128) {
 	dr, di := t*real(x), t*imag(x)
-	h.rows[n][k] = complex(g[psGLs]*real(s)+g[psGLd]*dr, g[psGLs]*imag(s)+g[psGLd]*di)
-	m.rr[n][k] = complex(g[psGRs]*real(s)+g[psGRd]*dr, g[psGRs]*imag(s)+g[psGRd]*di)
+	return complex(g[psGLs]*real(s)+g[psGLd]*dr, g[psGLs]*imag(s)+g[psGLd]*di),
+		complex(g[psGRs]*real(s)+g[psGRd]*dr, g[psGRs]*imag(s)+g[psGRd]*di)
 }
