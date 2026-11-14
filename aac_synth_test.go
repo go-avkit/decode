@@ -335,3 +335,30 @@ func TestAACTNSMap(t *testing.T) {
 		}
 	}
 }
+
+// TestAACMDCTSilenceIsPlusZero: a spectrum of zeros, of either sign, comes out as
+// samples whose BITS are +0. The transform negates its output (0 - x, not -x): -x
+// would make -0 of every +0, and a silent frame would be written as -0, which
+// ffmpeg does not.
+func TestAACMDCTSilenceIsPlusZero(t *testing.T) {
+	for _, n := range []int{1024, 128} {
+		m := newAACMDCT(n)
+		sc := m.newScratch()
+		for _, z := range []float32{0, float32(math.Copysign(0, -1))} {
+			src := make([]float32, n)
+			for i := range src {
+				src[i] = z
+			}
+			dst := make([]float32, n)
+			for i := range dst {
+				dst[i] = 1
+			}
+			m.inverse(dst, src, sc)
+			for i, v := range dst {
+				if math.Float32bits(v) != 0 {
+					t.Fatalf("n=%d, zeros of bits %#x: sample %d has bits %#x, want +0", n, math.Float32bits(z), i, math.Float32bits(v))
+				}
+			}
+		}
+	}
+}
