@@ -599,10 +599,19 @@ func psChain(n, kx int) (in, back []psQFrame, rows [][sbrQMFSlots][psMaxRows]com
 		}
 		d.analyse(pcm)
 		d.assemble(&d.x, kx, 0, 0)
-		in = append(in, d.x)
+		// The frames are copied through slices, not by value: on s390x the Go compiler
+		// (1.27.4) lowers a by-value copy of more than 1 KiB to a loop whose end
+		// pointer, src+size, is a pointer-typed value. d.x and hyb.rows are the last
+		// fields of their heap objects, so that pointer is one past the end of the
+		// object, and the compiler keeps it in a stack slot across psRoundTrip, where
+		// the garbage collector finds it: "found bad pointer in Go heap" (decode#74).
+		in = append(in, psQFrame{})
+		copy(in[len(in)-1][:], d.x[:])
 		s.psRoundTrip(d, kx)
-		back = append(back, d.x)
-		rows = append(rows, s.hyb.rows)
+		back = append(back, psQFrame{})
+		copy(back[len(back)-1][:], d.x[:])
+		rows = append(rows, [sbrQMFSlots][psMaxRows]complex128{})
+		copy(rows[len(rows)-1][:], s.hyb.rows[:])
 	}
 	return in, back, rows
 }
