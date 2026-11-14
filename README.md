@@ -9,9 +9,9 @@ Part of [go-avkit](https://go-avkit.github.io): [documentation](https://go-avkit
 Video and audio decoders for [avkit](https://github.com/go-avkit/avkit), pure Go,
 no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
 (ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10, 4:2:0. Audio: FLAC, MP3 and
-Opus, and, since v0.6.0, AAC-LC and HE-AAC v1 (SBR); Parametric Stereo
-(HE-AAC v2) is parsed and implemented but switched off by default, so it is not
-a supported output. Waves D1 to D3 of
+Opus, and AAC-LC and HE-AAC v1 (SBR) since v0.6.0; Parametric Stereo (HE-AAC v2,
+procedure A) is applied by default since the release after v0.6.0, where a stream
+needs procedure B or IPD/OPD it stays mono in both channels (see [Audio](#audio)). Waves D1 to D3 of
 [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89); see
 [Audio](#audio) for what each codec is checked against.
 
@@ -174,7 +174,7 @@ divergences each with its issue:
 | FLAC (`fLaC`) | [`mewkiz/flac`](https://github.com/mewkiz/flac) v1.0.14 | Unlicense (public domain) | `s16le` up to 16 bits, `s32le` (left-justified) up to 24 | bit-exact, 13 fixtures |
 | MP3 (`mp3`) | [`tphakala/go-mp3`](https://github.com/tphakala/go-mp3) v0.3.0 | MIT (a port of minimp3, CC0) | `f32le` | max error 1.07e-6, SNR at least 127.9 dB, 10 fixtures, sample counts equal |
 | Opus (`Opus`) | [`pion/opus`](https://github.com/pion/opus) v0.1.0 | MIT | `f32le`, 48 kHz | opus_compare passes on all 12 RFC 8251 vectors, stereo and mono, quality 66.3 to 99.8 % |
-| AAC-LC and HE-AAC v1 (`mp4a`) | in this package, from ISO/IEC 14496-3 | BSD-3-Clause | `f32le` | error against the exact result about half of ffmpeg's on 5 fixtures; HE-AAC within 3e-6 of ffmpeg on 4; 12 of 15 ISO conformance vectors, see below |
+| AAC-LC, HE-AAC v1 and v2 (`mp4a`) | in this package, from ISO/IEC 14496-3 | BSD-3-Clause | `f32le` | error against the exact result about half of ffmpeg's on 5 fixtures; HE-AAC within 3e-6 of ffmpeg on 4; PS within 1.1e-5 of ffmpeg on 801 library files; 12 of 15 AAC-LC and 5 of 7 PS ISO conformance vectors, see below |
 
 AAC-LC (mono to 7.1 by channel configuration 1 to 7, 8 kHz to 96 kHz; M/S and
 intensity stereo, perceptual noise substitution, TNS, pulses, short windows): written
@@ -186,13 +186,21 @@ decodes at twice the core rate**, whether the AudioSpecificConfig signals it (ob
 type 5, or the backward compatible extension) or the stream only carries it (the
 decoder switches at the first SBR data, as ffmpeg does): on the four HE-AAC fixtures
 it is within 3e-6 of ffmpeg 9.0.2's output sample by sample, and within a float32
-rounding plus 1e-6 of a float64 reference. Parametric Stereo (HE-AAC v2) is parsed and
-implemented but OFF by default, so HE-AAC v2 is not a supported output
-(`docs/aac-ps-design.md`): **a mono core whose configuration signals SBR
-(object type 5 or 29, or the backward compatible extension) and does not say PS absent
-is announced as stereo from the first frame**, as ffmpeg's output is, because
+rounding plus 1e-6 of a float64 reference. **Parametric Stereo (HE-AAC v2) is applied
+by default** (`docs/aac-ps-design.md`, "PS4 as built"): **a mono core whose configuration
+signals SBR (object type 5 or 29, or the backward compatible extension) and does not say
+PS absent is announced as stereo from the first frame**, as ffmpeg's output is, because
 `Audio.Channels` and the layout are those of the track and cannot change mid-stream; its
-second channel is a copy of the first until PS is applied. A mono stream that signals
+second channel is the right channel PS makes from the mono signal, and a copy of the first
+channel while the stream sends no PS parameters. Procedure A of the stereo mixing is
+implemented; **procedure B (ICC mode 3 to 5) and IPD/OPD with a phase other than 0 are
+not**: a stream that needs either, from the frame where it does, is decoded as before
+PS was applied, L = R = the mono signal, for the rest of the stream (its PS state is
+frozen, not reset). On 801 mono PS files of the author's library the output has ffmpeg
+9.0.2's length and channel count, and is within 1.1e-5 of its samples (median 4.4e-7,
+99th percentile 2.7e-6: ffmpeg's float32 all-pass chain, whose own two builds are 9e-6
+apart on the worst file); on the written streams it is within 1e-6, on `he44-ps.aac`
+within 5e-5. A mono stream that signals
 no SBR at all stays mono even if it carries SBR (ffmpeg turns stereo on at the first
 frame that has it; none of the 832 mono files tried differs). **Refused
 with `ErrAudioUnsupported`: Main, LTP, SSR, 960-sample frames, SBR in its downsampled
@@ -210,7 +218,10 @@ clang and gcc builds differ in fused multiply-adds and in `sinf`); `TestAACOracl
 reports the counts as information. ISO/IEC 14496-26 conformance
 (`TestAACConformance`, 15 pinned vectors, a provisional 1 LSB bound): 12 pass at 0.002
 to 0.006 LSB; `al03` (window sequences out of order) and `al18`, `al19` (noise
-substitution: the generator is not normative) do not yet. A program_config_element
+substitution: the generator is not normative) do not yet. The PS vectors `al_sbr_ps_00`
+to `06` (`TestAACConformancePS`, against ISO's `_ur` references): 00, 01, 02, 05 and 06
+pass at 0.033 LSB; 03 (procedure B) and 04 (IPD/OPD) do not, since they are the cases
+above, and 04 gives ISO's baseline reference `al_sbr_ps_04_bl` at 0.033 LSB. A program_config_element
 that names no layout decodes with its channels numbered in element order
 (`Audio.Layout` is zero).
 
@@ -230,6 +241,12 @@ rounds started above load 8 and were discarded):
 | stereo, 48 kHz | 309.0 ms (305.7 to 312.6) | 472 ms | 0.655 |
 
 Mono was not measured (no input at hand). The measured binary is `a36c9fc`.
+
+HE-AAC v2 (PS applied), same method, a 620 s file, 5 interleaved rounds at 1-minute load
+7.37 to 7.81: decode 1068 ms, ffmpeg `utime` 614 ms, **1.74 times ffmpeg's**, an open
+defect ([#77](https://github.com/go-avkit/decode/issues/77); the SBR share is
+[#47](https://github.com/go-avkit/decode/issues/47)): the second synthesis bank and the
+decorrelator and mixer are about 45 % of the time.
 
 Opus (RFC 6716: SILK, CELT and hybrid, mono and stereo, mapping family 0): the
 pre-skip of the header is dropped, the output gain it states applied, and an Ogg

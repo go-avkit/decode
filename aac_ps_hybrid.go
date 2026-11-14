@@ -319,7 +319,28 @@ func (d *sbrChanDSP) psLookAhead(kx int, look *[psLook][psSplitMax]complex128) {
 	}
 }
 
-// psApplyFrame is the PS path of a mono element's frame (behind sbrState.psApplyTest):
+// needsUnimplemented says that the parameters in force ask for what is not implemented:
+// procedure B (an ICC mode of 3 to 5) or IPD and OPD in force with a phase other than 0
+// (an all-zero phase rotates by nothing, so such a stream is procedure A to the letter).
+func (p *psState) needsUnimplemented() bool {
+	if p.enableICC && p.iccMode >= 3 {
+		return true
+	}
+	if !p.enableIPDOPD {
+		return false
+	}
+	for e := range p.ipd {
+		for b := 0; b < p.nrIPDOPD; b++ {
+			if p.ipd[e][b] != 0 || p.opd[e][b] != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// psApplyFrame is the PS path of a mono element's frame (taken when sbrState.psOn, unless
+// the test switch psOffTest says otherwise):
 // d.x, the mono 64-band signal of the frame with SBR top kx+m, becomes the left block
 // and the mixer's block the right one, and each goes through its synthesis bank into
 // out[0] and out[1]. A frame that does not apply PS (no SBR data, or PS not usable)
@@ -329,7 +350,12 @@ func (s *sbrState) psApplyFrame(d *sbrChanDSP, kx, m int, withSBR bool, out [2][
 		s.mix = new(psMixer)
 	}
 	mx := s.mix
-	if withSBR && s.ps.start {
+	if withSBR && s.ps.start && !s.psRefused && s.ps.needsUnimplemented() {
+		// procedure B or IPD/OPD (docs/aac-ps-mixing.md section 6): not implemented, so the
+		// stream stays what it was before PS was applied, L = R = mono, from here on
+		s.psRefused = true
+	}
+	if withSBR && s.ps.start && !s.psRefused {
 		if s.hyb == nil {
 			s.hyb = new(psHybrid)
 		}

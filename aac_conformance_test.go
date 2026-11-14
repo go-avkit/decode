@@ -90,7 +90,7 @@ func TestAACConformance(t *testing.T) {
 	for sc.Scan() {
 		if fs := strings.Fields(sc.Text()); len(fs) == 2 && !strings.HasPrefix(fs[0], "#") {
 			pins[fs[1]] = fs[0]
-			if strings.HasPrefix(fs[1], "compressedMp4/") {
+			if strings.HasPrefix(fs[1], "compressedMp4/") && !strings.HasPrefix(fs[1], "compressedMp4/al_sbr_ps_") {
 				names = append(names, strings.TrimSuffix(strings.TrimPrefix(fs[1], "compressedMp4/"), ".mp4"))
 			}
 		}
@@ -167,6 +167,109 @@ func TestAACConformance(t *testing.T) {
 		}
 		if failed {
 			t.Errorf("%s: %d samples against %d, %d beyond the provisional bound (max %.3f LSB)", name, len(got), len(ref), over, worst)
+		}
+	}
+}
+
+// aacConformancePSOpen lists the PS vectors (HE-AAC v2, al_sbr_ps_NN) this decoder does
+// not reproduce against ISO's full ("ur") reference, and why: the stream needs what is
+// not implemented, so the output is L = R = mono (docs/aac-ps-design.md, PS4 as built).
+var aacConformancePSOpen = map[string]string{
+	"al_sbr_ps_03": "procedure B (ICC mode 4)",
+	"al_sbr_ps_04": "IPD/OPD with phases (the output is the mono signal, which is also what ISO's baseline reference al_sbr_ps_04_bl holds)",
+}
+
+// TestAACConformancePS: the seven PS vectors of ISO/IEC 14496-26 (al_sbr_ps_00 to 06,
+// mono AAC-LC core at 16 kHz, SBR, PS, 32 kHz stereo out) against the reference
+// waveforms of their add-opt directory, "_ur" (the full decoder). The references hold
+// every sample (no leading frames are left out, unlike the AAC-LC ones). The bound is
+// the provisional one of TestAACConformance. The open ones are measured, not excused.
+func TestAACConformancePS(t *testing.T) {
+	dir := os.Getenv("AAC_CONFORMANCE_DIR")
+	if dir == "" {
+		t.Skip("AAC_CONFORMANCE_DIR is not set")
+	}
+	pins := map[string]string{}
+	f, err := os.Open(filepath.Join("testdata", "aac-conformance.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if fs := strings.Fields(sc.Text()); len(fs) == 2 && !strings.HasPrefix(fs[0], "#") {
+			pins[fs[1]] = fs[0]
+		}
+	}
+	f.Close()
+	read := func(rel string) []byte {
+		b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h := sha256.Sum256(b); hex.EncodeToString(h[:]) != pins[rel] {
+			t.Fatalf("%s: SHA-256 %x, the pin is %s", rel, h, pins[rel])
+		}
+		return b
+	}
+	for k := 0; k <= 6; k++ {
+		name := fmt.Sprintf("al_sbr_ps_%02d", k)
+		for _, kind := range []string{"ur", "bl"} {
+			if kind == "bl" && k != 4 {
+				continue // only the baseline reference of al_sbr_ps_04 is pinned (measured: the mono signal)
+			}
+			mp4, wav := read("compressedMp4/"+name+".mp4"), read("referencesWav/add-opt/"+name+"_"+kind+".wav")
+			ref, rch, rrate, err := aacWAV(wav)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			r, err := container.NewReader(mp4)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			id, err := FirstAudioTrack(r)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			bufs, err := DecodeAudioTrack(r, id, AudioConfig{})
+			if err != nil {
+				t.Errorf("%s: %v", name, err)
+				continue
+			}
+			var got []float32
+			ch, rate := 0, 0
+			for _, a := range bufs {
+				ch, rate = a.Channels, a.SampleRate
+				for i := 0; i < len(a.Data)/4; i++ {
+					got = append(got, math.Float32frombits(binary.LittleEndian.Uint32(a.Data[i*4:])))
+				}
+			}
+			if ch != rch || rate != rrate {
+				t.Errorf("%s: %d channels at %d Hz, the reference has %d at %d", name, ch, rate, rch, rrate)
+				continue
+			}
+			n := min(len(got), len(ref))
+			var worst float64
+			over := 0
+			for i := 0; i < n; i++ {
+				d := math.Abs(float64(got[i])-ref[i]) * 32768
+				worst = math.Max(worst, d)
+				if d > aacConformanceLSB {
+					over++
+				}
+			}
+			t.Logf("%s_%s: %d ch %d Hz: %d samples, reference %d; max error %.3f LSB, %d samples over %g LSB", name, kind, ch, rate, len(got), len(ref), worst, over, aacConformanceLSB)
+			failed := len(got) != len(ref) || over != 0
+			if why, ok := aacConformancePSOpen[name]; ok && kind == "ur" {
+				if !failed {
+					t.Errorf("%s now passes: remove it from aacConformancePSOpen", name)
+				} else {
+					t.Logf("%s: open: %s", name, why)
+				}
+				continue
+			}
+			if failed {
+				t.Errorf("%s_%s: %d samples against %d, %d beyond the provisional bound (max %.3f LSB)", name, kind, len(got), len(ref), over, worst)
+			}
 		}
 	}
 }

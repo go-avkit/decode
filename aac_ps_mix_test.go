@@ -730,7 +730,7 @@ func BenchmarkPSDecode(b *testing.B) {
 					var pcm [2][aacFrameLen]float32
 					synth.element(&els[0], 0, [2][]float32{pcm[0][:], pcm[1][:]})
 					s := p.sbrOf(els[0].id, els[0].tag)
-					s.psApplyTest = apply
+					s.psOffTest = !apply
 					s.process(1, [2][]float32{pcm[0][:], pcm[1][:]}, out, els[0].sbr != nil)
 				}
 			}

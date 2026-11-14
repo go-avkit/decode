@@ -79,11 +79,12 @@ type sbrState struct {
 	coupling     bool
 	psSeen       bool // a PS extension was found in the payload
 	psHybridTest bool // test switch: a mono element's frame goes through the hybrid analysis and synthesis (PS2); PS is not applied to the output yet
-	psApplyTest  bool // test switch: PS is applied to a mono element's frame, and out[1] is the right channel (PS3; PS4 turns it on)
-	psOn         bool // PS may be carried (the channel policy, aacConfig.stereoOut): its extension is parsed into ps
+	psOffTest    bool // test switch: PS is not applied, out[1] is a copy of out[0] (what the decoder did before PS4)
+	psRefused    bool // the stream needs what is not implemented (procedure B, IPD/OPD): PS is not applied for the rest of it
+	psOn         bool // PS may be carried (the channel policy, aacConfig.stereoOut): its extension is parsed into ps and applied
 	ps           psState
-	hyb          *psHybrid // the PS hybrid bank, made when psHybridTest or psApplyTest first needs it
-	mix          *psMixer  // the PS decorrelator, mixer and right synthesis bank, made when psApplyTest first needs it
+	hyb          *psHybrid // the PS hybrid bank, made when psHybridTest or PS first needs it
+	mix          *psMixer  // the PS decorrelator, mixer and right synthesis bank, made when PS first needs it
 	extBits      int       // bits of bs_extension_data in the last frame, 0 for none
 	ch           [2]sbrChannel
 	dsp          [2]*sbrChanDSP      // signal state of the channels (aac_sbr_hf.go)

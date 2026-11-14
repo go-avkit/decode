@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -546,6 +547,35 @@ func TestPSStreamsAgainstFFmpeg(t *testing.T) {
 				t.Errorf("%s: differs from ffmpeg by L %.2e, R %.2e (bound %.0e)", spec.name, l, r, psStreamBound)
 			}
 		})
+	}
+}
+
+// TestPSUnimplementedStreamsAreMono: a stream that needs what is not implemented, procedure
+// B (S18: ICC mode 4) or IPD/OPD with a phase (S16b20), keeps the behaviour of a decoder
+// without PS, L = R = mono, bit for bit: the same samples as with the test switch off. A
+// stream with IPD/OPD of all zero phases (S16a20), which is procedure A to the letter, is
+// applied. Procedure B and IPD/OPD are section 6 of docs/aac-ps-mixing.md.
+func TestPSUnimplementedStreamsAreMono(t *testing.T) {
+	for _, spec := range psStreamSpecs() {
+		want := map[string]bool{"S18": true, "S16b20": true, "S16a20": false, "S01": false}
+		refused, ok := want[spec.name]
+		if !ok {
+			continue
+		}
+		b := psBuildStream(t, spec)
+		cfg, fr := aacADTSFrames(t, psStreamFile(t, spec.name, b))
+		l, r, s := psDecodeFrames(t, cfg, fr, psStreamFrames)
+		l0, r0, _ := psDecodeFramesOff(t, cfg, fr, psStreamFrames, true)
+		_ = r0 // the switch off leaves the right buffer to the caller, which copies the left
+		if s.psRefused != refused {
+			t.Errorf("%s: refused %v, want %v", spec.name, s.psRefused, refused)
+		}
+		if refused && (!slices.Equal(l, l0) || !slices.Equal(r, l0)) {
+			t.Errorf("%s: L, R differ from the mono signal of the decoder without PS", spec.name)
+		}
+		if !refused && slices.Equal(l, l0) {
+			t.Errorf("%s: PS changed nothing", spec.name)
+		}
 	}
 }
 

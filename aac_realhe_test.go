@@ -138,8 +138,7 @@ func aacEditSummary(tc container.TrackConfig) string {
 // track timescale, the edit list, the iTunSMPB tag. With AAC_REAL_HE_FFMPEG set to an
 // ffmpeg binary it also decodes each file with it and requires the same number of
 // samples (a mono core with SBR is stereo in both: aacConfig.stereoOut, its second channel
-// a copy of the first until PS is applied), and for streams without PS the same values
-// to 3e-6. Skipped when the directory is not set.
+// the right channel PS makes), and the same values to 3e-6, or to 2e-5 for a PS stream. Skipped when the directory is not set.
 func TestAACRealHE(t *testing.T) {
 	dir := os.Getenv("AAC_REAL_HE_DIR")
 	if dir == "" {
@@ -221,9 +220,6 @@ func TestAACRealHE(t *testing.T) {
 			t.Errorf("HE-AAC file %d (PS %v): ffmpeg gives %d samples, this decoder %d (%d more); largest difference with the starts aligned %.2e, with the ends aligned %.2e", n, ac.ps, fs, mine, mine-fs, atStart, atEnd)
 			return
 		}
-		if ac.ps {
-			return // same length; the values differ by the stereo image PS makes
-		}
 		var worst float64
 		for i := 0; i < mine; i++ {
 			for c := 0; c < ch; c++ {
@@ -233,8 +229,15 @@ func TestAACRealHE(t *testing.T) {
 			}
 		}
 		t.Logf("HE-AAC file %d: largest difference to ffmpeg %.2e", n, worst)
-		if worst > 3e-6 {
-			t.Errorf("HE-AAC file %d differs from ffmpeg by %.2e", n, worst)
+		// a PS stream (applied since PS4) carries ffmpeg's float32 all-pass chain: on the
+		// 801 files of the author's library the largest difference is 1.1e-5, where
+		// ffmpeg's own two builds are 9e-6 apart
+		bound := 3e-6
+		if ac.ps {
+			bound = 2e-5
+		}
+		if worst > bound {
+			t.Errorf("HE-AAC file %d differs from ffmpeg by %.2e (bound %.0e)", n, worst, bound)
 		}
 	})
 	t.Logf("%d HE-AAC files", n)

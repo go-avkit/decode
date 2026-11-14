@@ -78,7 +78,8 @@ func aacHEDecode(t testing.TB, fx aacHEFixture, signalling string, frames int) (
 // first SBR data then turns it on), 2048 samples per frame from the first; the output
 // agrees with the exact float64 path to within a float32 rounding plus 1e-6 of the
 // peak, and with ffmpeg 9.0.2's (macOS clang and linux gcc) to 3e-6 sample by sample.
-// A PS stream decodes as its SBR mono channel (ffmpeg's is stereo: not compared).
+// A PS stream (explicit) decodes as ffmpeg's stereo, to psHE44Bound; one that signals
+// nothing stays its SBR mono channel.
 func TestAACDecodeHE(t *testing.T) {
 	for _, fx := range aacHEFixtures {
 		frames := sbrRefFrames(16, 6)
@@ -102,12 +103,27 @@ func TestAACDecodeHE(t *testing.T) {
 			wantCh := aacChannelConfig(fx.config)
 			if fx.config == 1 && sig != "implicit" {
 				wantCh = 2
-				if !slices.Equal(got[0], got[1]) {
+				if !fx.ps && !slices.Equal(got[0], got[1]) {
 					t.Errorf("%s, %s: the second channel is not a copy of the first", fx.name, sig)
 				}
 			}
 			if len(got) != wantCh {
 				t.Errorf("%s, %s: %d channels, want %d", fx.name, sig, len(got), wantCh)
+			}
+			if fx.ps && sig != "implicit" {
+				// PS is applied (PS4): the output is ffmpeg's stereo, not the SBR mono channel
+				all := readF32(t, filepath.Join("testdata", "aac", "ref", "he44-ps.f32"))
+				for c := range got {
+					var worst float64
+					for i := 0; i < min(len(got[c]), len(all)/2); i++ {
+						worst = math.Max(worst, math.Abs(float64(got[c][i])-float64(all[2*i+c])))
+					}
+					t.Logf("%s, %s against ffmpeg, channel %d: largest difference %.2e", fx.name, sig, c, worst)
+					if worst > psHE44Bound {
+						t.Errorf("%s, %s: differs from ffmpeg by %.2e on channel %d", fx.name, sig, worst, c)
+					}
+				}
+				continue
 			}
 			for c := range got {
 				e, peak := sbrBeyondRounding(got[c], want[min(c, len(want)-1)])
@@ -131,6 +147,33 @@ func TestAACDecodeHE(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// TestAACDecodePSOffSwitch: with the test switch psOffTest the decoder is what it was
+// before PS4: stereo announced, the second channel a copy of the first.
+func TestAACDecodePSOffSwitch(t *testing.T) {
+	fx := aacHEFixtures[3]
+	_, fr := aacADTSFrames(t, filepath.Join("testdata", "aac", fx.name))
+	c, err := newAAC(aacHETrack(fx, "explicit"), AudioConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.(*aacDecoder).parser.sbrOf(aacIDSCE, 0).psOffTest = true
+	var out []Audio
+	for i := 0; i < 3; i++ {
+		if out, err = c.decode(fr[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out[0].Channels != 2 || out[0].Samples() != 2048 {
+		t.Fatalf("%d channels, %d samples", out[0].Channels, out[0].Samples())
+	}
+	d := out[0].Data
+	for s := 0; s < out[0].Samples(); s++ {
+		if string(d[8*s:8*s+4]) != string(d[8*s+4:8*s+8]) {
+			t.Fatalf("sample %d: the channels differ", s)
 		}
 	}
 }
