@@ -6,6 +6,7 @@ package decode
 import (
 	"errors"
 	"fmt"
+	"math/bits"
 	"sync"
 )
 
@@ -142,8 +143,29 @@ var (
 	aacHuffErr      error
 )
 
+// aacSpecNSign[cb-1][i] is the number of sign bits that follow a codeword of the
+// unsigned spectrum codebook cb whose table entry is i (the entries of lut, by the
+// next aacLUTBits bits of the stream): the count of nonzero values of the symbol.
+// band reads it beside the entry, in the same cycle, instead of after it, from the
+// symbol, which kept the length of the next codeword waiting for a second load and
+// a population count. It is 0 for the signed codebooks and for entries a codeword
+// longer than the table leaves empty.
+var aacSpecNSign [11][1 << aacLUTBits]uint8
+
 func aacHuffInit() {
 	aacHuffSpectral, aacHuffScale, aacHuffErr = buildAACCodebooks(aacSpectralCodes, aacSpectralBits, aacScalefactorCodes, aacScalefactorBits)
+	if aacHuffErr == nil {
+		for cb, h := range aacHuffSpectral {
+			if cb+1 < 3 || cb+1 == 5 || cb+1 == 6 {
+				continue
+			}
+			for i, e := range h.lut {
+				if e != 0 {
+					aacSpecNSign[cb][i] = uint8(bits.OnesCount8(aacTupleNZ[cb][e>>8]))
+				}
+			}
+		}
+	}
 }
 
 // buildAACCodebooks builds the twelve codebooks from their tables.

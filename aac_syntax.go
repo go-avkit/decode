@@ -569,14 +569,18 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 	// those symbols take the general path through the reader.
 	data := r.data
 	pos := r.bitPos()
+	nsgn := &aacSpecNSign[cb-1]
 	for i := 0; i < len(dst); i += dim {
 		var sym int
 		var s uint32 // the sign bits of the symbol, first value in the top bit
 		if bp := pos >> 3; bp+8 <= len(data) {
 			w := binary.BigEndian.Uint64(data[bp:]) << uint(pos&7) // at least 57 stream bits at the top
-			l := 0
-			if e := h.lut[w>>(64-aacLUTBits)]; e != 0 {
-				l, sym = int(e&0xff), int(e>>8)
+			l, n := 0, 0
+			if ix := w >> (64 - aacLUTBits); h.lut[ix] != 0 {
+				// the entry and its count of sign bits are two loads at the same index,
+				// neither waiting for the other
+				e := h.lut[ix]
+				l, sym, n = int(e&0xff), int(e>>8), int(nsgn[ix])
 			} else {
 				// a codeword longer than the table: down the tree, a bit at a time
 				cur := 0
@@ -589,10 +593,9 @@ func (p *aacParser) band(r *aacBits, cb int, dst []int32) error {
 					}
 					cur = int(c)
 				}
-			}
-			n := 0
-			if unsigned {
-				n = bits.OnesCount8(aacTupleNZ[cb-1][sym])
+				if unsigned {
+					n = bits.OnesCount8(aacTupleNZ[cb-1][sym])
+				}
 			}
 			s = uint32(w << uint(l) >> uint(64-n)) // n = 0 gives 0: a shift of 64 empties a uint64
 			pos += l + n
