@@ -232,8 +232,12 @@ jobs:
             exit 1
           fi
           echo "running ${{ matrix.goarch }} under $q"
-          # -v prints the time of every test, so that the timeout below is measured from
-          # this log and not guessed (the package passed the default 10 minutes under
-          # qemu until the golden PS test and the slot pipeline came); the timeout is a
-          # ceiling with a margin over the slowest lane's measured time.
-          GOARCH=${{ matrix.goarch }} go test -v -timeout 40m -exec="$q" ./...
+          # -v prints the time of every test. Measured on a quiet runner (the log of
+          # go-avkit/decode#95): the whole package takes 310 s on riscv64, 343 s on
+          # loong64, 416 s on ppc64le and 418 s on s390x, the slowest tests being
+          # TestAACAccuracy (52 to 124 s), TestOpusCompareSanity, TestSBRTablesSweep and
+          # TestAACWindowSequences; TestPSOutputGolden is 3 to 7 s of it. The default
+          # 10 minute timeout of go test is 1.4 times the slowest lane, and a loaded runner
+          # went past it (riscv64 and ppc64le, a red main): 30 minutes is 4 times the
+          # slowest measured lane.
+          GOARCH=${{ matrix.goarch }} go test -v -timeout 30m -exec="$q" ./...
