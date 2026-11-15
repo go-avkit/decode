@@ -40,12 +40,12 @@ type aacMDCT struct {
 // immutable and shared by every decoder; each decoder owns the scratch it passes
 // in, so concurrent decoders do not touch each other's.
 type aacMDCTScratch struct {
-	out []float32 // m values
+	out, out2 []float32 // m values each (the second for the pair)
 }
 
 // newScratch returns working memory for this transform.
 func (m *aacMDCT) newScratch() *aacMDCTScratch {
-	return &aacMDCTScratch{out: make([]float32, m.m)}
+	return &aacMDCTScratch{out: make([]float32, m.m), out2: make([]float32, m.m)}
 }
 
 func newAACMDCT(m int) *aacMDCT {
@@ -60,8 +60,22 @@ func newAACMDCT(m int) *aacMDCT {
 // -0. It works in sc, which came from newScratch of this transform and is not shared
 // between goroutines.
 func (t *aacMDCT) inverse(dst, src []float32, sc *aacMDCTScratch) {
+	t.finish(dst, t.plan.DCTMixed(sc.out, src[:t.m], fft.NormBackward))
+}
+
+// inversePair is inverse of two spectra at once (the 8 short windows of a frame, two at
+// a time): the two transforms are one DCTMixedPair, within the same error bound as two
+// single calls but not bit for bit.
+func (t *aacMDCT) inversePair(dst0, dst1, src0, src1 []float32, sc *aacMDCTScratch) {
+	m := t.m
+	c0, c1 := t.plan.DCTMixedPair(sc.out, sc.out2, src0[:m], src1[:m], fft.NormBackward)
+	t.finish(dst0, c0)
+	t.finish(dst1, c1)
+}
+
+// finish reverses, scales and negates the transform c into the m samples dst.
+func (t *aacMDCT) finish(dst, c []float32) {
 	m, h := t.m, t.m/2
-	c := t.plan.DCTMixed(sc.out, src[:m], fft.NormBackward)
 	// (t_r, s_r) from C = (s, t), negated (below), in one pass over the output with
 	// the slices cut to h so that no index needs a bounds check
 	lo, hi := dst[:h], dst[h:m]
