@@ -182,6 +182,13 @@ func TestPSMixAgainstReference(t *testing.T) {
 					dl = psDecLayouts[1]
 				}
 				h.rows = psNoiseRows(rng, dl.rows, 300, st.burst)
+				// the subband signal is zero at and above the SBR top (the decoder
+				// skips those rows, the reference mixes them: same zeros)
+				for k := dl.rowsBelow(st.top); k < dl.rows; k++ {
+					for n := range h.rows {
+						h.rows[n][k] = 0
+					}
+				}
 				s := h.rows
 				m.apply(h, st.p, st.top)
 				out := ref.frame(st.p, st.top, &s)

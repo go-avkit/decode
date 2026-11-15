@@ -461,10 +461,18 @@ func (m *psMixer) applyPhases(p *psState, e, nb int, h, hi *[psMaxBands]psGain) 
 // |s[k]|² over its rows, added in row order, as a row by row loop does, but a run of
 // rows of one band keeps its sum in a register.
 func (dl *psDecLayout) bandPowers(pw *[psMaxBands]float64, s *[psMaxRows]complex128) {
+	dl.bandPowersTo(pw, s, dl.rows)
+}
+
+// bandPowersTo is bandPowers over the first cut rows only.
+func (dl *psDecLayout) bandPowersTo(pw *[psMaxBands]float64, s *[psMaxRows]complex128, cut int) {
 	clear(pw[:dl.nb])
 	for _, r := range dl.runs {
+		if int(r.start) >= cut {
+			break
+		}
 		sum := pw[r.band]
-		for _, v := range s[r.start:r.end] {
+		for _, v := range s[r.start:min(int(r.end), cut)] {
 			sum += real(v)*real(v) + imag(v)*imag(v)
 		}
 		pw[r.band] = sum
@@ -474,9 +482,15 @@ func (dl *psDecLayout) bandPowers(pw *[psMaxBands]float64, s *[psMaxRows]complex
 // transient computes the attenuation gain of every parameter band and slot into m.tg
 // (section 3.5) from the power of all rows of the band.
 func (m *psMixer) transient(rows *[sbrQMFSlots][psMaxRows]complex128, dl *psDecLayout) {
+	m.transientTo(rows, dl, dl.rows)
+}
+
+// transientTo is transient over the first cut rows: the rows above are zero, and add
+// nothing to a power.
+func (m *psMixer) transientTo(rows *[sbrQMFSlots][psMaxRows]complex128, dl *psDecLayout, cut int) {
 	var pw [psMaxBands]float64
 	for n := range rows {
-		dl.bandPowers(&pw, &rows[n])
+		dl.bandPowersTo(&pw, &rows[n], cut)
 		for b := 0; b < dl.nb; b++ {
 			pk := max(psPeakDecay*m.peak[b], pw[b])
 			m.peak[b] = pk
@@ -509,10 +523,29 @@ func (m *psMixer) apply(h *psHybrid, p *psState, top int) {
 	m.nPh = psPhaseBandsOf(p.is34)
 	m.clearAbove(dl, top)
 	m.matrices(p, dl.nb)
-	m.transient(&h.rows, dl)
-	for k := 0; k < dl.rows; k++ {
+	// The rows of the QMF bands at or above the SBR top are zero (the subband signal is
+	// zero there, and clearAbove has cleared their past): decorrelating and mixing them
+	// gives zero, so only the left rows below the top are worked and the right rows
+	// above it are cleared.
+	cut := dl.rowsBelow(top)
+	m.transientTo(&h.rows, dl, cut)
+	for k := 0; k < cut; k++ {
 		m.row(h, dl, k)
 	}
+	for n := range m.rr {
+		clear(m.rr[n][cut:dl.rows])
+	}
+}
+
+// rowsBelow is the number of leading rows whose QMF band is below top (the QMF band of a
+// row never decreases, TestPSRowsBelow).
+func (dl *psDecLayout) rowsBelow(top int) int {
+	for k := 0; k < dl.rows; k++ {
+		if int(dl.qmf[k]) >= top {
+			return k
+		}
+	}
+	return dl.rows
 }
 
 // row decorrelates and mixes row k over the frame's slots.
