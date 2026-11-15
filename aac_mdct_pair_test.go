@@ -73,3 +73,30 @@ func TestAACMDCTPairMatchesDefinition(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkAACIMDCTShort times the 8 short windows of a frame: eight single transforms, or
+// four pairs.
+func BenchmarkAACIMDCTShort(b *testing.B) {
+	rng := rand.New(rand.NewSource(8))
+	m := newAACMDCT(128)
+	sc := m.newScratch()
+	src, dst := make([]float32, aacFrameLen), make([]float32, aacFrameLen)
+	for i := range src {
+		src[i] = float32(rng.NormFloat64() * 1000)
+	}
+	b.Run("singles", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < aacFrameLen; j += aacShortLen {
+				m.inverse(dst[j:j+aacShortLen], src[j:j+aacShortLen], sc)
+			}
+		}
+	})
+	b.Run("pairs", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < aacFrameLen; j += 2 * aacShortLen {
+				m.inversePair(dst[j:j+aacShortLen], dst[j+aacShortLen:j+2*aacShortLen],
+					src[j:j+aacShortLen], src[j+aacShortLen:j+2*aacShortLen], sc)
+			}
+		}
+	})
+}
