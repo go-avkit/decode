@@ -10,8 +10,17 @@ import (
 	"github.com/go-fft/fft"
 )
 
+// sbrPairBound is the bound, relative to the largest subband sample of a frame, on the
+// difference between the analysis bank (its two transforms run as a DCTPair) and the
+// five-pass loop with one transform at a time: both are within the DCT-IV error bound
+// of the exact value (about 1e-15 relative, TestSBRQMFAnalysis), so they agree to a few
+// times that; 1e-14 leaves a margin of about forty over what is measured (2.4e-16).
+const sbrPairBound = 1e-14
+
 // fivePassAnalysis is the analysis bank as it was before the window sum became one
-// floats.MulAddRows call: the history oldest first, five passes of u[n] += win[n]*x[63-n].
+// floats.MulAddRows call and the transforms a pair: the history oldest first, five
+// passes of u[n] += win[n]*x[63-n] (fused, as the compiler made it on arm64), two
+// single DCTs.
 type fivePassAnalysis struct {
 	hist    [sbrAnaKeep + aacFrameLen]float64
 	u, v, w [sbrSynBands]float64
@@ -30,8 +39,6 @@ func (a *fivePassAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]
 			win := (*[sbrSynBands]float64)(sbrAnaWindow[64*j:])
 			x := (*[sbrSynBands]float64)(h[sbrAnaTaps-64-64*j:])
 			for n := range a.u {
-				// fused, as the compiler made it on arm64 (it does not fuse on amd64 or
-				// 386, where the old loop rounded twice; MulAddRows fuses everywhere)
 				a.u[n] = math.FMA(win[n], x[63-n], a.u[n])
 			}
 		}
@@ -51,12 +58,12 @@ func (a *fivePassAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]
 	}
 }
 
-// TestSBRAnalysisBitIdentical: the analysis bank equals the five-pass loop it replaced
-// bit for bit, over several frames in a row (so the history carried between frames is
-// checked), on synthetic audio and on random input including a loud burst. A mutation
-// of the new loop (an off-by-one start of the slot's window, or the history copy)
-// fails it.
-func TestSBRAnalysisBitIdentical(t *testing.T) {
+// TestSBRAnalysisAgainstFivePass: the analysis bank agrees with the five-pass loop and
+// single transforms it replaced to sbrPairBound of each frame's peak, over several
+// frames in a row (so the history carried between frames is checked), on synthetic
+// audio and on random input including a loud burst. A shifted window start or history
+// copy in the new loop fails it by many orders of magnitude (checked by hand).
+func TestSBRAnalysisAgainstFivePass(t *testing.T) {
 	const frames = 6
 	x := uint32(11)
 	rnd := make([]float32, frames*aacFrameLen)
@@ -70,19 +77,25 @@ func TestSBRAnalysisBitIdentical(t *testing.T) {
 	for name, pcm := range map[string][]float32{"audio": sbrTestPCM(frames, 3), "random": rnd} {
 		var a sbrAnalysis
 		var ref fivePassAnalysis
+		var worstAll float64
 		for f := 0; f < frames; f++ {
 			in := pcm[f*aacFrameLen : (f+1)*aacFrameLen]
 			var got, want [sbrAnaBands][sbrLowSlots]complex128
 			a.process(in, &got, 0)
 			ref.process(in, &want, 0)
+			var peak, worst float64
 			for k := range got {
 				for l := 0; l < sbrQMFSlots; l++ {
 					g, w := got[k][l], want[k][l]
-					if math.Float64bits(real(g)) != math.Float64bits(real(w)) || math.Float64bits(imag(g)) != math.Float64bits(imag(w)) {
-						t.Fatalf("%s frame %d band %d slot %d: %v, five-pass loop %v", name, f, k, l, g, w)
-					}
+					peak = math.Max(peak, math.Max(math.Abs(real(w)), math.Abs(imag(w))))
+					worst = math.Max(worst, math.Max(math.Abs(real(g)-real(w)), math.Abs(imag(g)-imag(w))))
 				}
 			}
+			if worst > sbrPairBound*peak {
+				t.Fatalf("%s frame %d: largest difference %.3e, %.3e of the frame's peak %.3e, bound %.0e", name, f, worst, worst/peak, peak, sbrPairBound)
+			}
+			worstAll = math.Max(worstAll, worst/peak)
 		}
+		t.Logf("%s: largest difference to the five-pass loop with single transforms: %.3e of a frame's peak (bound %.0e)", name, worstAll, sbrPairBound)
 	}
 }
