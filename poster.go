@@ -99,7 +99,7 @@ func PosterFrame(r *container.Reader, trackID uint32, t float64, cfg PosterConfi
 	switch tc.Codec {
 	case "avc1", "avc3", "hvc1", "hev1":
 	default:
-		return Frame{}, fmt.Errorf("%w: codec %q, only H.264 (avc1, avc3) and HEVC (hvc1, hev1) are decoded", ErrUnsupported, tc.Codec)
+		return Frame{}, &CodecError{Codec: tc.Codec}
 	}
 	samples, err := r.Samples(trackID)
 	if err != nil {

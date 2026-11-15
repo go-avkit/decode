@@ -38,7 +38,10 @@ past the end gives the last picture, one before the first presentation time give
 the first, a negative or NaN `t` is `ErrTime`. Decoding starts at the last sync
 sample at or before the picture's sample (the first sample if none is flagged) and
 stops as soon as the picture is out. H.264 (`avc1`, `avc3`) and HEVC (`hvc1`,
-`hev1`); another codec is `ErrUnsupported`.
+`hev1`); another codec (VP8, VP9, AV1, MPEG-4 Part 2, ...) is refused by name,
+before any sample is read, with a `*CodecError` (`codec "vp09" is not supported`,
+`errors.As` gives the fourcc, `errors.Is(err, ErrUnsupported)` holds) in
+`DecodeTrack`, `NewTrack` and `PosterFrame`: a VP9 file is not reported as corrupt.
 
 ## Edit lists
 
