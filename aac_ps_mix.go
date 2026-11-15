@@ -3,7 +3,12 @@
 
 package decode
 
-import "math"
+import (
+	"math"
+	"unsafe"
+
+	"github.com/go-simd/floats"
+)
 
 // Parametric Stereo decorrelation and mixing (HE-AAC v2), stages 2 to 5 of
 // docs/aac-ps-design.md, written from docs/aac-ps-mixing.md sections 1 to 5 alone (a
@@ -467,11 +472,21 @@ func (m *psMixer) applyPhases(p *psState, e, nb int, h, hi *[psMaxBands]psGain) 
 // |s[k]|² over its rows, added in row order, as a row by row loop does, but a run of
 // rows of one band keeps its sum in a register.
 func (dl *psDecLayout) bandPowers(pw *[psMaxBands]float64, s *[psMaxRows]complex128) {
+	var sq [psMaxRows]float64
+	for k, v := range s[:dl.rows] {
+		sq[k] = real(v)*real(v) + imag(v)*imag(v)
+	}
+	dl.sumRuns(pw, &sq)
+}
+
+// sumRuns adds the row powers sq into the parameter bands, in row order, a run of rows of
+// one band keeping its sum in a register.
+func (dl *psDecLayout) sumRuns(pw *[psMaxBands]float64, sq *[psMaxRows]float64) {
 	clear(pw[:dl.nb])
 	for _, r := range dl.runs {
 		sum := pw[r.band]
-		for _, v := range s[r.start:r.end] {
-			sum += real(v)*real(v) + imag(v)*imag(v)
+		for _, p := range sq[r.start:r.end] {
+			sum += p
 		}
 		pw[r.band] = sum
 	}
@@ -480,9 +495,14 @@ func (dl *psDecLayout) bandPowers(pw *[psMaxBands]float64, s *[psMaxRows]complex
 // transient computes the attenuation gain of every parameter band and slot into m.tg
 // (section 3.5) from the power of all rows of the band.
 func (m *psMixer) transient(rows *[sbrQMFSlots][psMaxRows]complex128, dl *psDecLayout) {
+	// the power of every row of the frame in one pass over the contiguous slots (the
+	// squared magnitudes, a go-simd kernel), then the sums per band
+	var sq [sbrQMFSlots][psMaxRows]float64
+	floats.SquaredMagnitude(unsafe.Slice(&sq[0][0], sbrQMFSlots*psMaxRows),
+		unsafe.Slice((*float64)(unsafe.Pointer(&rows[0][0])), 2*sbrQMFSlots*psMaxRows), 1)
 	var pw [psMaxBands]float64
 	for n := range rows {
-		dl.bandPowers(&pw, &rows[n])
+		dl.sumRuns(&pw, &sq[n])
 		for b := 0; b < dl.nb; b++ {
 			pk := max(psPeakDecay*m.peak[b], pw[b])
 			m.peak[b] = pk
