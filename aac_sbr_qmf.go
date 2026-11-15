@@ -73,7 +73,7 @@ var (
 
 // sbrAnalysis is the state of the analysis bank of one channel.
 type sbrAnalysis struct {
-	hist    [sbrAnaKeep + aacFrameLen]float64 // oldest sample first, in 16-bit units
+	hist    [sbrAnaKeep + aacFrameLen]float64 // newest sample first, in 16-bit units
 	u, v, w [sbrSynBands]float64
 	c, s    [sbrSynBands]float64
 }
@@ -81,22 +81,20 @@ type sbrAnalysis struct {
 // process takes the 1024 core samples of a frame and writes the 32 subband
 // samples of each of the 32 bands to low[k][first:first+32].
 func (a *sbrAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]complex128, first int) {
-	copy(a.hist[:sbrAnaKeep], a.hist[aacFrameLen:])
+	// the history is kept newest first, so that the samples the window meets in the
+	// order of the definition (x[0] the newest) are consecutive: the old frame's newest
+	// samples move behind the new frame, which is written backwards
+	copy(a.hist[aacFrameLen:], a.hist[:sbrAnaKeep])
 	for i, s := range in[:aacFrameLen] {
-		a.hist[sbrAnaKeep+i] = float64(s) * sbrPCMUnit
+		a.hist[aacFrameLen-1-i] = float64(s) * sbrPCMUnit
 	}
 	for l := 0; l < sbrQMFSlots; l++ {
-		// x[i] of the definition is hist[l*32+319-i]: the five taps n+64j of the
-		// sum are the 64 samples ending at hist[l*32+319-64j], read backwards
-		h := a.hist[l*32 : l*32+sbrAnaTaps]
+		// x[i] of the definition is h[i], h the 320 samples from the newest of the
+		// slot: u[n] = sum over j < 5 of c[n+64j] * x[n+64j], five rows of 64 that the
+		// kernel sums with the 64 results in registers, in the order of j
+		h := a.hist[aacFrameLen-32-32*l : aacFrameLen-32-32*l+sbrAnaTaps]
 		a.u = [sbrSynBands]float64{}
-		for j := 0; j < 5; j++ {
-			win := (*[sbrSynBands]float64)(sbrAnaWindow[64*j:])
-			x := (*[sbrSynBands]float64)(h[sbrAnaTaps-64-64*j:])
-			for n := range a.u {
-				a.u[n] += win[n] * x[63-n]
-			}
-		}
+		floats.MulAddRows(a.u[:], sbrAnaWindow[:], 64, h, 64, 5)
 		// fold the 64 sums onto the odd angles of the DCT-IV kernel: the angle
 		// (4n-1) is 2m+1 for m = 2n-1 up to n = 32, and for n >= 33 it is mirrored
 		// (256-(4n-1) = 2m+1 with m = 128-2n), which negates the cosine and keeps
