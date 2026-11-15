@@ -136,8 +136,9 @@ func (s *sbrState) adjust(ch int) {
 		var (
 			eo, qo, eCurr [sbrSynBands]float64
 			gain, qm, sm  [sbrSynBands]float64
-			band          [sbrSynBands]bool // a sinusoid in the table band holding the subband
-			onset         [sbrSynBands]bool // the sinusoid itself, at its band's midpoint
+			gsm, qsm      [sbrSynBands]float64 // the smoothed gains and noise levels of a slot
+			band          [sbrSynBands]bool    // a sinusoid in the table band holding the subband
+			onset         [sbrSynBands]bool    // the sinusoid itself, at its band's midpoint
 		)
 		res := c.freqRes[e+1]
 		tab := t.fLow[:t.n[0]+1]
@@ -263,32 +264,45 @@ func (s *sbrState) adjust(ch int) {
 				// phase is not reset): ffmpeg's output on S17 is 3e-4 off without it
 				a.noiseIdx = 0
 			}
-			for j := 0; j < m; j++ {
-				g, q := gain[j]*sbrSmooth[0], qm[j]*sbrSmooth[0]
-				if smooth {
-					for k := 1; k <= sbrSmoothOrder; k++ {
-						h := &a.hist[(a.histPos+1-k+2*sbrSmoothOrder)%sbrSmoothOrder]
-						g += h[0][j] * sbrSmooth[k]
-						q += h[1][j] * sbrSmooth[k]
-					}
-				} else {
-					g, q = gain[j], qm[j]
+			// the smoothed gains and noise levels of the slot, the taps in the order
+			// of k for every subband, the history rows found once per slot
+			gs, qs := &gsm, &qsm
+			if smooth {
+				for j := 0; j < m; j++ {
+					gs[j], qs[j] = gain[j]*sbrSmooth[0], qm[j]*sbrSmooth[0]
 				}
-				a.noiseIdx = (a.noiseIdx + 1) & 511
-				z := d.high[kx+j][i] * complex(g, 0)
+				for k := 1; k <= sbrSmoothOrder; k++ {
+					h := &a.hist[(a.histPos+1-k+2*sbrSmoothOrder)%sbrSmoothOrder]
+					w := sbrSmooth[k]
+					for j := 0; j < m; j++ {
+						gs[j] += h[0][j] * w
+						qs[j] += h[1][j] * w
+					}
+				}
+			} else {
+				copy(gs[:m], gain[:m])
+				copy(qs[:m], qm[:m])
+			}
+			// the noise table advances once per subband
+			ni := a.noiseIdx
+			y := &a.y[i]
+			for j := 0; j < m; j++ {
+				ni = (ni + 1) & 511
+				z := d.high[kx+j][i] * complex(gs[j], 0)
 				if sm[j] != 0 {
 					z += sbrSinusoid(sm[j], a.sineIdx, kx+j)
 				} else {
-					nz := sbrNoiseTable[a.noiseIdx]
-					z += complex(nz[0]*q, nz[1]*q)
+					nz := sbrNoiseTable[ni]
+					z += complex(nz[0]*qs[j], nz[1]*qs[j])
 				}
-				a.y[i][kx+j] = z
+				y[kx+j] = z
 			}
+			a.noiseIdx = ni
 			a.sineIdx = (a.sineIdx + 1) & 3
 			a.histPos = (a.histPos + 1) % sbrSmoothOrder
-			for j := 0; j < m; j++ {
-				a.hist[a.histPos][0][j], a.hist[a.histPos][1][j] = gain[j], qm[j]
-			}
+			ph := &a.hist[a.histPos]
+			copy(ph[0][:m], gain[:m])
+			copy(ph[1][:m], qm[:m])
 		}
 		a.prevS = onset
 	}
