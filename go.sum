@@ -18,6 +18,8 @@ github.com/go-dsp/signal v0.2.0 h1:+566tdjkOtNctyqU+xzf7NRGYu4rR9GvCk4QtF9pYWY=
 github.com/go-dsp/signal v0.2.0/go.mod h1:V1WJie25RkckmxghlSe11czV9MfD7H8ba+QB0ZR1XCI=
 github.com/go-fft/fft v0.30.1 h1:a7EgK40nbjyFVuNGyLSF/1z7gWeDw14hQBgzHxPYK0I=
 github.com/go-fft/fft v0.30.1/go.mod h1:ED10lho90MeXLe4Iz4WX+rrbfFv68DtSx02z28/M2mU=
+github.com/go-fft/fft v0.30.2 h1:PtngOLT4p4Lq7dYh6B8UYhFCkXo8sovzTZwgEYWQCGs=
+github.com/go-fft/fft v0.30.2/go.mod h1:yyuVlNrMcAUGNBeF4E1AQeBr0qWofUzTxWEpEPFAWHY=
 github.com/go-fleettools/fleettools v0.81.0 h1:UnMflmNw5b82Z+7Ums7UVaW5RrGuACCVmSwytwT1hxw=
 github.com/go-fleettools/fleettools v0.81.0/go.mod h1:y/o3p2HZAvto9J5G5gtPxhN45zgvaYFAXCY9RCK/lQw=
 github.com/go-numerics/special v0.4.0 h1:nTAwJv1T79Aw1cFb3SO6c3HUd1/xX0ORHjKf2wbLnII=
@@ -26,6 +28,8 @@ github.com/go-scikit/refbench v0.1.1 h1:3UNGHqwOzIdjaKQo2A1j6q0UtmqIXBZ4htCiVEb1
 github.com/go-scikit/refbench v0.1.1/go.mod h1:PhJxvLwXiQeKLP2f5ndcb9k5k4PTvU1rSFJ/MKRCrU0=
 github.com/go-simd/floats v0.18.0 h1:2pmRj6YN1MlGFzv5mG+MWKSQjUSBgLjULJ9yDDvU+D8=
 github.com/go-simd/floats v0.18.0/go.mod h1:Aq5a6oY5pUqm9Hpi+iV2nrNmaaUb0rwHvUHIerXWSvA=
+github.com/go-simd/floats v0.20.0 h1:4N/hJzjd+qwtIvKHN/Jr7xjt2KH8aLFfUG1YwXGt1Kg=
+github.com/go-simd/floats v0.20.0/go.mod h1:Aq5a6oY5pUqm9Hpi+iV2nrNmaaUb0rwHvUHIerXWSvA=
 github.com/go-test/deep v1.1.0 h1:WOcxcdHcvdgThNXjw0t76K42FXTU7HpNQWHpA2HHNlg=
 github.com/go-test/deep v1.1.0/go.mod h1:5C2ZWiW0ErCdrYzpqxLbTX7MG14M9iiw8DgHncVwcsE=
 github.com/icza/bitio v1.1.0 h1:ysX4vtldjdi3Ygai5m1cWy4oLkhWTAi+SyO6HC8L9T0=
