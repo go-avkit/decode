@@ -525,6 +525,16 @@ frames, whatever the history (angle 0, zero, kept) and the carried imaginary par
 (remapped, zeroed, kept): measured, not bounded (Q16 of `aac-ps-mixing.md`). No ISO vector
 switches layout with phases.
 
+**Q16 hypothesis (unverified).** At a 20 to 34 switch ffmpeg reads imaginary gains for
+every band but writes them only for the first 11 or 17 phase bands, so stale values leak
+in after a switch. That would explain why no variant of ours closes S16d.
+
+**The S16e choice follows ffmpeg's state, not the standard.** "Keep the stored imaginary
+parts across a frame without phases" reproduces ffmpeg to 1e-7, but it is a reading of
+ffmpeg's retained state (the same mechanism as the Q16 hypothesis); the standard says
+nothing of it and no ISO vector exercises it. Treat it as ffmpeg-compatible behaviour,
+open to change if the standard's text says otherwise.
+
 ## PR split (each green, reviewed independently, before the next)
 
 1. **PS1: bitstream and tables.** `aac_ps.go` (parse, state, fix-up envelope,
