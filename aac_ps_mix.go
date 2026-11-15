@@ -536,14 +536,24 @@ func (m *psMixer) row(h *psHybrid, dl *psDecLayout, k int) {
 		ap := &dl.ap[k]
 		w := &m.w[k]
 		var d [sbrQMFSlots]complex128 // the decorrelated signal of a phased row, before the transient gain
+		// the three links written out, the delays 3, 4 and 5 constants
+		w0, w1, w2 := &w[0], &w[1], &w[2]
+		phi, q0, q1, q2 := ap.phi, ap.q[0], ap.q[1], ap.q[2]
+		cq0, cq1, cq2, c0, c1, c2 := ap.cq[0], ap.cq[1], ap.cq[2], ap.c[0], ap.c[1], ap.c[2]
 		for n := range h.rows {
-			x := ap.phi * in[psHist+n-psPreDelay]
-			for j := range w {
-				old := w[j][n]
-				cur := x + ap.cq[j]*old
-				w[j][psLinkDelay[j]+n] = cur
-				x = ap.q[j]*old - complex(ap.c[j]*real(cur), ap.c[j]*imag(cur))
-			}
+			x := phi * in[psHist+n-psPreDelay]
+			old := w0[n]
+			cur := x + cq0*old
+			w0[3+n] = cur
+			x = q0*old - complex(c0*real(cur), c0*imag(cur))
+			old = w1[n]
+			cur = x + cq1*old
+			w1[4+n] = cur
+			x = q1*old - complex(c1*real(cur), c1*imag(cur))
+			old = w2[n]
+			cur = x + cq2*old
+			w2[5+n] = cur
+			x = q2*old - complex(c2*real(cur), c2*imag(cur))
 			if phased {
 				d[n] = x
 				continue
