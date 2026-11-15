@@ -313,6 +313,7 @@ type psMixer struct {
 	tg           [sbrQMFSlots][psMaxBands]float64
 	rr           [sbrQMFSlots][psMaxRows]complex128
 	xr           [sbrQMFSlots][sbrSynBands]complex128
+	pl, pr       sbrPlanes    // the left and the right block as planes, for the synthesis banks
 	syn          sbrSynthesis // the synthesis bank of the right channel
 }
 

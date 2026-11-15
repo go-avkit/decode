@@ -304,6 +304,32 @@ func psSynthesise(rows *[sbrQMFSlots][psMaxRows]complex128, x *[sbrQMFSlots][sbr
 	}
 }
 
+// psSynthesisePlanes is psSynthesise into the planes of the synthesis bank: the same sums
+// and copies, with the real and the reversed imaginary parts stored apart, so that the
+// bank does not deinterleave the frame again.
+func psSynthesisePlanes(rows *[sbrQMFSlots][psMaxRows]complex128, p *sbrPlanes, is34 bool) {
+	ly := psLayoutOf(is34)
+	n := ly.start[ly.nSplit]
+	for l := range rows {
+		r := &rows[l]
+		re, im := &p.re[l], &p.im[l]
+		for k := 0; k < ly.nSplit; k++ {
+			var sum complex128
+			for _, v := range r[ly.start[k]:ly.start[k+1]] {
+				sum += v
+			}
+			re[k], im[sbrSynBands-1-k] = real(sum), imag(sum)
+		}
+		for j, v := range r[n:] {
+			k := ly.nSplit + j
+			if k >= sbrSynBands {
+				break
+			}
+			re[k], im[sbrSynBands-1-k] = real(v), imag(v)
+		}
+	}
+}
+
 // psLookAhead takes the six slots that follow the frame from the low band analysis: the
 // SBR output lags the analysis by sbrHFAdj slots and the array holds sbrHFGen slots of
 // history, so slot 32+j of the output is low[k][32+sbrHFAdj+j]. A band at or above the
@@ -339,14 +365,16 @@ func (s *sbrState) psApplyFrame(d *sbrChanDSP, kx, m int, withSBR bool, out [2][
 		d.psLookAhead(kx, &look)
 		s.hyb.analyse(&d.x, &look, s.ps.is34)
 		mx.apply(s.hyb, &s.ps, kx+m)
-		s.hyb.synthesise(&d.x, s.ps.is34)
-		psSynthesise(&mx.rr, &mx.xr, s.ps.is34)
-	} else {
-		// PS is suspended (a fault until the next header, or no SBR data): both channels are
-		// the mono signal and the state of PS, the decorrelator, the transient detector, the
-		// matrices and the hybrid history, is frozen until it resumes (Q14)
-		mx.xr = d.x
+		psSynthesisePlanes(&s.hyb.rows, &mx.pl, s.ps.is34)
+		psSynthesisePlanes(&mx.rr, &mx.pr, s.ps.is34)
+		d.syn.processPlanes(out[0], &mx.pl)
+		mx.syn.processPlanes(out[1], &mx.pr)
+		return
 	}
+	// PS is suspended (a fault until the next header, or no SBR data): both channels are
+	// the mono signal and the state of PS, the decorrelator, the transient detector, the
+	// matrices and the hybrid history, is frozen until it resumes (Q14)
+	mx.xr = d.x
 	d.syn.process(out[0], &d.x)
 	mx.syn.process(out[1], &mx.xr)
 }

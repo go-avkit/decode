@@ -128,38 +128,64 @@ type sbrSynthesis struct {
 // process turns the 32 slots of subband samples x (each of 64 bands, in 16-bit
 // units) into the 2048 samples of out, in +-1.0 units.
 func (y *sbrSynthesis) process(out []float32, x *[sbrQMFSlots][sbrSynBands]complex128) {
-	start := len(y.buf) - sbrSynKeep
-	copy(y.buf[start:], y.buf[y.off:y.off+sbrSynKeep])
-	y.off = start
-	out = out[:sbrQMFSlots*sbrSynBands]
+	out = y.begin(out)
 	for l := range x {
 		for k, z := range x[l] {
 			y.a[k], y.b[sbrSynBands-1-k] = real(z), imag(z)
 		}
-		sbrDCT4.DCTPair(y.c[:], y.s[:], y.a[:], y.b[:], fft.NormBackward)
-		y.off -= 128
-		v := y.buf[y.off : y.off+128]
-		// the 1/64 of the definition, the 1/2 of the transforms' factor 2 and the
-		// 1/32768 back to +-1.0: 2^-22, exact. The sine part is (-1)^n y.s[n].
-		const scale = 1.0 / (128 * sbrPCMUnit)
-		for n := 0; n < sbrSynBands; n += 2 {
-			v[n] = (y.s[n] - y.c[n]) * scale
-			v[127-n] = (y.c[n] + y.s[n]) * scale
-			v[n+1] = (-y.s[n+1] - y.c[n+1]) * scale
-			v[126-n] = (y.c[n+1] - y.s[n+1]) * scale
-		}
-		// ten products of 64 values: block n of the window against the 64 values of
-		// v that the definition's g takes at 128n (+64 for odd n)
-		// The even blocks are rows 256 apart of v against rows 128 apart of the window,
-		// and so are the odd blocks 192 on: two fused multiply-add kernels that keep the
-		// 64 sums in registers across their five rows, the even blocks first.
-		var acc [sbrSynBands]float64
-		b := y.buf[y.off:]
-		floats.MulAddRows(acc[:], sbrQMFWindow[:], 128, b, 256, 5)
-		floats.MulAddRows(acc[:], sbrQMFWindow[64:], 128, b[192:], 256, 5)
-		o := (*[sbrSynBands]float32)(out[l*sbrSynBands:])
-		for q, s := range acc {
-			o[q] = float32(s)
-		}
+		y.slot((*[sbrSynBands]float32)(out[l*sbrSynBands:]), &y.a, &y.b)
+	}
+}
+
+// sbrPlanes is a frame of subband samples as two real planes, the form the transforms
+// take: re[l][k] is the real part of band k of slot l, and im[l][63-k] its imaginary
+// part (the sine transform reads it reversed).
+type sbrPlanes struct {
+	re, im [sbrQMFSlots][sbrSynBands]float64
+}
+
+// processPlanes is process on a frame held as planes: no deinterleave.
+func (y *sbrSynthesis) processPlanes(out []float32, p *sbrPlanes) {
+	out = y.begin(out)
+	for l := range p.re {
+		y.slot((*[sbrSynBands]float32)(out[l*sbrSynBands:]), &p.re[l], &p.im[l])
+	}
+}
+
+// begin moves the history back to the end of its buffer, once per frame, so that a slot
+// never shifts it, and returns the frame's output.
+func (y *sbrSynthesis) begin(out []float32) []float32 {
+	start := len(y.buf) - sbrSynKeep
+	copy(y.buf[start:], y.buf[y.off:y.off+sbrSynKeep])
+	y.off = start
+	return out[:sbrQMFSlots*sbrSynBands]
+}
+
+// slot synthesises one slot: the real parts a and the reversed imaginary parts b of its 64
+// bands into the 64 samples o.
+func (y *sbrSynthesis) slot(o *[sbrSynBands]float32, a, b *[sbrSynBands]float64) {
+	sbrDCT4.DCTPair(y.c[:], y.s[:], a[:], b[:], fft.NormBackward)
+	y.off -= 128
+	v := y.buf[y.off : y.off+128]
+	// the 1/64 of the definition, the 1/2 of the transforms' factor 2 and the
+	// 1/32768 back to +-1.0: 2^-22, exact. The sine part is (-1)^n y.s[n].
+	const scale = 1.0 / (128 * sbrPCMUnit)
+	for n := 0; n < sbrSynBands; n += 2 {
+		v[n] = (y.s[n] - y.c[n]) * scale
+		v[127-n] = (y.c[n] + y.s[n]) * scale
+		v[n+1] = (-y.s[n+1] - y.c[n+1]) * scale
+		v[126-n] = (y.c[n+1] - y.s[n+1]) * scale
+	}
+	// ten products of 64 values: block n of the window against the 64 values of
+	// v that the definition's g takes at 128n (+64 for odd n)
+	// The even blocks are rows 256 apart of v against rows 128 apart of the window,
+	// and so are the odd blocks 192 on: two fused multiply-add kernels that keep the
+	// 64 sums in registers across their five rows, the even blocks first.
+	var acc [sbrSynBands]float64
+	w := y.buf[y.off:]
+	floats.MulAddRows(acc[:], sbrQMFWindow[:], 128, w, 256, 5)
+	floats.MulAddRows(acc[:], sbrQMFWindow[64:], 128, w[192:], 256, 5)
+	for q, s := range acc {
+		o[q] = float32(s)
 	}
 }
