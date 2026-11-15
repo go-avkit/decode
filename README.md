@@ -9,9 +9,9 @@ Part of [go-avkit](https://go-avkit.github.io): [documentation](https://go-avkit
 Video and audio decoders for [avkit](https://github.com/go-avkit/avkit), pure Go,
 no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
 (ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10, 4:2:0. Audio: FLAC, MP3 and
-Opus, and AAC-LC and HE-AAC v1 (SBR) since v0.6.0; Parametric Stereo (HE-AAC v2,
-procedure A) is applied by default since the release after v0.6.0 (
-baseline mixing: IPD/OPD ignored, see [Audio](#audio)). Waves D1 to D3 of
+Opus, AAC-LC and HE-AAC v1 (SBR) since v0.6.0, and HE-AAC v2 (Parametric Stereo,
+baseline mixing: procedure A, IPD/OPD ignored) since v0.7.0, about 1.4 to 1.5 times
+ffmpeg's CPU time on one core (see [Audio](#audio)). Waves D1 to D3 of
 [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89); see
 [Audio](#audio) for what each codec is checked against.
 
@@ -187,7 +187,7 @@ type 5, or the backward compatible extension) or the stream only carries it (the
 decoder switches at the first SBR data, as ffmpeg does): on the four HE-AAC fixtures
 it is within 3e-6 of ffmpeg 9.0.2's output sample by sample, and within a float32
 rounding plus 1e-6 of a float64 reference. **Parametric Stereo (HE-AAC v2) is applied
-by default** (`docs/aac-ps-design.md`, "PS4 as built"): **a mono core whose configuration
+by default since v0.7.0** (`docs/aac-ps-design.md`, "PS4 as built"): **a mono core whose configuration
 signals SBR (object type 5 or 29, or the backward compatible extension) and does not say
 PS absent is announced as stereo from the first frame**, as ffmpeg's output is, because
 `Audio.Channels` and the layout are those of the track and cannot change mid-stream; its
@@ -243,11 +243,17 @@ rounds started above load 8 and were discarded):
 
 Mono was not measured (no input at hand). The measured binary is `a36c9fc`.
 
-HE-AAC v2 (PS applied), same method, a 620 s file, 5 interleaved rounds at 1-minute load
-7.37 to 7.81: decode 1068 ms, ffmpeg `utime` 614 ms, **1.74 times ffmpeg's**, an open
-defect ([#77](https://github.com/go-avkit/decode/issues/77); the SBR share is
-[#47](https://github.com/go-avkit/decode/issues/47)): the second synthesis bank and the
-decorrelator and mixer are about 45 % of the time.
+**HE-AAC v2 (PS applied, since v0.7.0) is slower than ffmpeg: about 1.4 to 1.5 times its
+`utime` on one core**, an open defect
+([#77](https://github.com/go-avkit/decode/issues/77); the SBR share is
+[#47](https://github.com/go-avkit/decode/issues/47)). Same method (decode-only
+`BenchmarkAACDecodeReuse` against the `utime` of a whole ffmpeg 9.0.2 `-threads 1`
+process, a 620 s HE-AAC v2 file, Go 1.27.4, Apple M4 Max), after the speed work of
+[#80, #81 and #82](https://github.com/go-avkit/decode/pulls): **1.37 at a 1-minute load of
+1.6, and 1.45 to 1.47 at a load of 6 to 7**, so the ratio moves with the machine's load
+and the gap is stated as a range. It was 1.74 before that work (load 7.37 to 7.81). The
+second synthesis bank and the decorrelator and mixer are the largest shares of the
+remaining time.
 
 Opus (RFC 6716: SILK, CELT and hybrid, mono and stereo, mapping family 0): the
 pre-skip of the header is dropped, the output gain it states applied, and an Ogg
