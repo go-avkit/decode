@@ -318,7 +318,9 @@ func psImpulse(is34 bool, k, frames int) []complex128 {
 		if f == 0 {
 			h.rows[0][k] = 1
 		}
-		m.row(h, dl, k)
+		for n := range h.rows {
+			m.step(n, &h.rows[n], &m.rr[n], dl)
+		}
 		for n := range h.rows {
 			out = append(out, h.rows[n][k])
 		}

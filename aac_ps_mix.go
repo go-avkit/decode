@@ -175,17 +175,17 @@ const (
 // the fractional pre-delay and link delays in thousandths of a slot, and the slope of
 // the decay with the QMF band. Normative values.
 const (
-	psPreDelay    = 2
-	psLongDelay   = 14
-	psShortDelay  = 1
-	psDecaySlope  = 0.05
-	psAllPassQMF  = 23 // QMF bands below this use the all-pass chain
-	psLongEndQMF  = 35 // and from here on the short delay
-	psHist        = psLongDelay
-	psMaxAllPass  = 50 // all-pass rows of the 34-band layout
-	psLinkSpan    = 5 + sbrQMFSlots
-	psPreFracMil  = 390
-	psAngleMilDen = 24 * 1000 * 2 // angle pi*delta*f, with f in 24ths and delta in thousandths, per turn of 2 pi
+	psPreDelay     = 2
+	psLongDelay    = 14
+	psShortDelay   = 1
+	psDecaySlope   = 0.05
+	psAllPassQMF   = 23 // QMF bands below this use the all-pass chain
+	psLongEndQMF   = 35 // and from here on the short delay
+	psHist         = psLongDelay
+	psMaxAllPass   = 50 // all-pass rows of the 34-band layout
+	psLinkMaxDelay = 5  // the longest of the link delays 3, 4 and 5
+	psPreFracMil   = 390
+	psAngleMilDen  = 24 * 1000 * 2 // angle pi*delta*f, with f in 24ths and delta in thousandths, per turn of 2 pi
 )
 
 var psLinkFracMil = [3]int{430, 750, 347}
@@ -301,11 +301,14 @@ type psMixer struct {
 	// transient detector, per parameter band
 	peak, avg, dev [psMaxBands]float64
 
-	// in[k] holds the last psHist slots of row k's input, then the current frame's;
-	// w[k][m] the internal signal of link m of all-pass row k, its slot n at index
-	// psLinkDelay[m]+n, the delayed values in front.
-	in [psMaxRows][psHist + sbrQMFSlots]complex128
-	w  [psMaxAllPass][3][psLinkSpan]complex128
+	// The delay lines, as rings over the slots, so that they do not grow with the frame:
+	// in[t%(psHist+1)] holds the input rows of slot t (the last psHist slots are the
+	// delays of the rows that delay); w[m][t%(psLinkDelay[m]+1)] the internal signal of
+	// link m of the all-pass rows at slot t. tick is the slot count, which only the
+	// positions in the rings depend on.
+	in   [psHist + 1][psMaxRows]complex128
+	w    [3][psLinkMaxDelay + 1][psMaxAllPass]complex128
+	tick int
 
 	// the frame's scratch
 	gain, gainIm [sbrQMFSlots][psMaxBands]psGain
@@ -318,8 +321,8 @@ type psMixer struct {
 
 // reset clears the decorrelator and the transient detector (a layout switch).
 func (m *psMixer) reset() {
-	m.in = [psMaxRows][psHist + sbrQMFSlots]complex128{}
-	m.w = [psMaxAllPass][3][psLinkSpan]complex128{}
+	m.in = [psHist + 1][psMaxRows]complex128{}
+	m.w = [3][psLinkMaxDelay + 1][psMaxAllPass]complex128{}
 	m.peak, m.avg, m.dev = [psMaxBands]float64{}, [psMaxBands]float64{}, [psMaxBands]float64{}
 	// the phase history before the first envelope, and after a layout switch, is angle 0
 	for i := range m.hist {
@@ -356,14 +359,23 @@ func (m *psMixer) switchTo(is34 bool) {
 
 // clearAbove zeroes the past of every row of a QMF band at or above top, the SBR top.
 func (m *psMixer) clearAbove(dl *psDecLayout, top int) {
+	// the QMF band of a row never decreases (TestPSRowsBelow): the rows at or above top
+	// are the trailing ones, from kt. Every position of a ring is cleared: the one that
+	// the first slot overwrites is not read.
+	kt := dl.rows
 	for k := 0; k < dl.rows; k++ {
-		if int(dl.qmf[k]) < top {
-			continue
+		if int(dl.qmf[k]) >= top {
+			kt = k
+			break
 		}
-		clear(m.in[k][:psHist])
-		if k < dl.nAP {
-			for j := range m.w[k] {
-				clear(m.w[k][j][:psLinkDelay[j]])
+	}
+	for s := range m.in {
+		clear(m.in[s][kt:dl.rows])
+	}
+	if kt < dl.nAP {
+		for j := range m.w {
+			for s := range m.w[j] {
+				clear(m.w[j][s][kt:dl.nAP])
 			}
 		}
 	}
@@ -480,26 +492,44 @@ func (dl *psDecLayout) bandPowers(pw *[psMaxBands]float64, s *[psMaxRows]complex
 // transient computes the attenuation gain of every parameter band and slot into m.tg
 // (section 3.5) from the power of all rows of the band.
 func (m *psMixer) transient(rows *[sbrQMFSlots][psMaxRows]complex128, dl *psDecLayout) {
-	var pw [psMaxBands]float64
 	for n := range rows {
-		dl.bandPowers(&pw, &rows[n])
-		for b := 0; b < dl.nb; b++ {
-			pk := max(psPeakDecay*m.peak[b], pw[b])
-			m.peak[b] = pk
-			m.avg[b] += psSmooth * (pw[b] - m.avg[b])
-			m.dev[b] += psSmooth * (pk - pw[b] - m.dev[b])
-			g := 1.0
-			if psImpact*m.dev[b] > m.avg[b] {
-				g = m.avg[b] / (psImpact * m.dev[b])
-			}
-			m.tg[n][b] = g
+		m.transientSlot(n, &rows[n], dl)
+	}
+}
+
+// transientSlot is transient for slot n, the rows of which are s; the slots come in order.
+func (m *psMixer) transientSlot(n int, s *[psMaxRows]complex128, dl *psDecLayout) {
+	var pw [psMaxBands]float64
+	dl.bandPowers(&pw, s)
+	for b := 0; b < dl.nb; b++ {
+		pk := max(psPeakDecay*m.peak[b], pw[b])
+		m.peak[b] = pk
+		m.avg[b] += psSmooth * (pw[b] - m.avg[b])
+		m.dev[b] += psSmooth * (pk - pw[b] - m.dev[b])
+		g := 1.0
+		if psImpact*m.dev[b] > m.avg[b] {
+			g = m.avg[b] / (psImpact * m.dev[b])
 		}
+		m.tg[n][b] = g
 	}
 }
 
 // apply turns the mono hybrid rows of h into the left rows (in place) and the right rows
-// (m.rr), for an applied frame; top is the SBR top kx+M.
+// (m.rr), for an applied frame; top is the SBR top kx+M. It is the slot steps below run
+// over the whole frame; the slot by slot pipeline interleaves them with the stages that
+// precede and follow.
 func (m *psMixer) apply(h *psHybrid, p *psState, top int) {
+	dl := m.begin(p, top)
+	for n := range h.rows {
+		m.transientSlot(n, &h.rows[n], dl)
+		m.step(n, &h.rows[n], &m.rr[n], dl)
+	}
+}
+
+// begin starts a frame: the layout (a switch resets the decorrelator), the phase mode,
+// the past of the rows above the SBR top, and the matrices of the frame's slots. It
+// returns the layout.
+func (m *psMixer) begin(p *psState, top int) *psDecLayout {
 	dl := psDecLayouts[0]
 	if p.is34 {
 		dl = psDecLayouts[1]
@@ -515,90 +545,91 @@ func (m *psMixer) apply(h *psHybrid, p *psState, top int) {
 	m.nPh = psPhaseBandsOf(p.is34)
 	m.clearAbove(dl, top)
 	m.matrices(p, dl.nb)
-	m.transient(&h.rows, dl)
-	for k := 0; k < dl.rows; k++ {
-		m.row(h, dl, k)
-	}
+	return dl
 }
 
-// row decorrelates and mixes row k over the frame's slots.
-func (m *psMixer) row(h *psHybrid, dl *psDecLayout, k int) {
-	b := dl.band[k]
-	in := &m.in[k]
-	for n := range h.rows {
-		in[psHist+n] = h.rows[n][k]
-	}
-	// the rows of the phase bands are all-pass rows (TestPSPhaseBandsAreAllPass): the delay
-	// rows, QMF 23 and up, never carry phases
-	phased := m.phased && int(b) < m.nPh && k < dl.nAP
-	switch {
-	case k < dl.nAP:
-		ap := &dl.ap[k]
-		w := &m.w[k]
-		var d [sbrQMFSlots]complex128 // the decorrelated signal of a phased row, before the transient gain
-		// the three links written out, the delays 3, 4 and 5 constants
-		w0, w1, w2 := &w[0], &w[1], &w[2]
-		phi, q0, q1, q2 := ap.phi, ap.q[0], ap.q[1], ap.q[2]
-		cq0, cq1, cq2, c0, c1, c2 := ap.cq[0], ap.cq[1], ap.cq[2], ap.c[0], ap.c[1], ap.c[2]
-		for n := range h.rows {
-			x := phi * in[psHist+n-psPreDelay]
-			old := w0[n]
-			cur := x + cq0*old
-			w0[3+n] = cur
-			x = q0*old - complex(c0*real(cur), c0*imag(cur))
-			old = w1[n]
-			cur = x + cq1*old
-			w1[4+n] = cur
-			x = q1*old - complex(c1*real(cur), c1*imag(cur))
-			old = w2[n]
-			cur = x + cq2*old
-			w2[5+n] = cur
-			x = q2*old - complex(c2*real(cur), c2*imag(cur))
-			if phased {
-				d[n] = x
-				continue
-			}
-			h.rows[n][k], m.rr[n][k] = psMixPair(in[psHist+n], x, &m.gain[n][b], m.tg[n][b])
-		}
-		for j := range w {
-			copy(w[j][:psLinkDelay[j]], w[j][sbrQMFSlots:])
-		}
-		if phased {
-			m.mixPhased(h, k, b, dl, &d)
-		}
-	case k < dl.nLong:
-		for n := range h.rows {
-			h.rows[n][k], m.rr[n][k] = psMixPair(in[psHist+n], in[psHist+n-psLongDelay], &m.gain[n][b], m.tg[n][b])
-		}
-	default:
-		for n := range h.rows {
-			h.rows[n][k], m.rr[n][k] = psMixPair(in[psHist+n], in[psHist+n-psShortDelay], &m.gain[n][b], m.tg[n][b])
+// step decorrelates and mixes slot n: rows holds the hybrid rows of the slot and is
+// overwritten with the left rows, rr receives the right rows. The slots of a frame come in
+// order, and each leaves its input and its link signals in the rings for the ones after.
+func (m *psMixer) step(n int, rows, rr *[psMaxRows]complex128, dl *psDecLayout) {
+	t := m.tick
+	const ring = psHist + 1
+	cur := t % ring
+	copy(m.in[cur][:dl.rows], rows[:dl.rows])
+	s := &m.in[cur]
+	nAP := dl.nAP
+	// the all-pass rows: the three links along the rows of the slot, which are independent
+	var dec [psMaxAllPass]complex128
+	{
+		ap := dl.ap[:nAP]
+		inp := m.in[(t+ring-psPreDelay)%ring][:nAP]
+		old0, new0 := m.w[0][(t+1)%(psLinkDelay[0]+1)][:nAP], m.w[0][t%(psLinkDelay[0]+1)][:nAP]
+		old1, new1 := m.w[1][(t+1)%(psLinkDelay[1]+1)][:nAP], m.w[1][t%(psLinkDelay[1]+1)][:nAP]
+		old2, new2 := m.w[2][(t+1)%(psLinkDelay[2]+1)][:nAP], m.w[2][t%(psLinkDelay[2]+1)][:nAP]
+		out := dec[:nAP]
+		for k := range out {
+			a := &ap[k]
+			x := a.phi * inp[k]
+			old := old0[k]
+			c := x + a.cq[0]*old
+			new0[k] = c
+			x = a.q[0]*old - complex(a.c[0]*real(c), a.c[0]*imag(c))
+			old = old1[k]
+			c = x + a.cq[1]*old
+			new1[k] = c
+			x = a.q[1]*old - complex(a.c[1]*real(c), a.c[1]*imag(c))
+			old = old2[k]
+			c = x + a.cq[2]*old
+			new2[k] = c
+			x = a.q[2]*old - complex(a.c[2]*real(c), a.c[2]*imag(c))
+			out[k] = x
 		}
 	}
-	copy(in[:psHist], in[sbrQMFSlots:])
+	// the mixing: the decorrelated signal of an all-pass row, the delayed input of a delay row
+	gn, tn := &m.gain[n], &m.tg[n]
+	for k := 0; k < nAP; k++ {
+		b := dl.band[k]
+		if m.phased && int(b) < m.nPh {
+			// the rows of the phase bands are all-pass rows (TestPSPhaseBandsAreAllPass): the delay
+			// rows, QMF 23 and up, never carry phases
+			rows[k], rr[k] = m.mixPhased(n, k, b, dl, s[k], dec[k])
+			continue
+		}
+		rows[k], rr[k] = psMixPair(s[k], dec[k], &gn[b], tn[b])
+	}
+	if dl.nLong > nAP {
+		d := &m.in[(t+ring-psLongDelay)%ring]
+		for k := nAP; k < dl.nLong; k++ {
+			b := dl.band[k]
+			rows[k], rr[k] = psMixPair(s[k], d[k], &gn[b], tn[b])
+		}
+	}
+	d := &m.in[(t+ring-psShortDelay)%ring]
+	for k := max(dl.nLong, nAP); k < dl.rows; k++ {
+		b := dl.band[k]
+		rows[k], rr[k] = psMixPair(s[k], d[k], &gn[b], tn[b])
+	}
+	m.tick++
 }
 
-// mixPhased mixes row k of a phase band with the complex gains of the slot: the same
-// l = gLs s + gLd d, r = gRs s + gRd d, with complex gains and the transient gain on d.
-// A row of negative centre frequency (image) takes the conjugate gains.
-func (m *psMixer) mixPhased(h *psHybrid, k int, b uint8, dl *psDecLayout, d *[sbrQMFSlots]complex128) {
-	in := &m.in[k]
+// mixPhased mixes row k of a phase band at slot n with the complex gains of the slot: the
+// same l = gLs s + gLd d, r = gRs s + gRd d, with complex gains and the transient gain on
+// d. A row of negative centre frequency (image) takes the conjugate gains.
+func (m *psMixer) mixPhased(n, k int, b uint8, dl *psDecLayout, s, d complex128) (l, r complex128) {
 	sg := 1.0
 	if dl.image[k] && !m.ffImage {
 		sg = -1
 	}
-	ff := m.ffImage && dl.imageFF(k)
-	for n := range h.rows {
-		g, gi := &m.gain[n][b], m.gainIm[n][b]
-		if ff {
-			for i := range gi {
-				gi[i] -= 2 * m.imStart[n][b][i] // minus the start, plus the end
-			}
+	g, gi := &m.gain[n][b], m.gainIm[n][b]
+	if m.ffImage && dl.imageFF(k) {
+		for i := range gi {
+			gi[i] -= 2 * m.imStart[n][b][i] // minus the start, plus the end
 		}
-		s, x := in[psHist+n], complex(m.tg[n][b], 0)*d[n]
-		h.rows[n][k] = complex(g[psGLs], sg*gi[psGLs])*s + complex(g[psGLd], sg*gi[psGLd])*x
-		m.rr[n][k] = complex(g[psGRs], sg*gi[psGRs])*s + complex(g[psGRd], sg*gi[psGRd])*x
 	}
+	x := complex(m.tg[n][b], 0) * d
+	l = complex(g[psGLs], sg*gi[psGLs])*s + complex(g[psGLd], sg*gi[psGLd])*x
+	r = complex(g[psGRs], sg*gi[psGRs])*s + complex(g[psGRd], sg*gi[psGRd])*x
+	return l, r
 }
 
 // imageFF reports whether ffmpeg flips row k (test switch ffImage): the rows of negative

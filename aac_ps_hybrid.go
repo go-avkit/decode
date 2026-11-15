@@ -231,17 +231,29 @@ func psLayoutOf(is34 bool) *psLayout {
 // of the frame.
 type psHybrid struct {
 	hist [psSplitMax][psLook]complex128 // slots 26..31 of the previous frame
-	win  [psLook + sbrQMFSlots + psLook]complex128
+	win  [psSplitMax][psLook + sbrQMFSlots + psLook]complex128
 	rows [sbrQMFSlots][psMaxRows]complex128
 }
 
 // analyse computes the hybrid rows of the 32 slots of x, the 64-band signal of the
 // frame, into h.rows. look[j][k] is slot 32+j of band k, which the SBR output has not
 // released yet. It also takes the frame's last six slots as the next frame's history.
+// It is the three steps below run over the whole frame; the slot by slot pipeline runs
+// them between the stages that follow.
 func (h *psHybrid) analyse(x *[sbrQMFSlots][sbrSynBands]complex128, look *[psLook][psSplitMax]complex128, is34 bool) {
+	h.begin(x, look, is34)
+	for l := range h.rows {
+		h.slot(l, x, is34, &h.rows[l])
+	}
+	h.end(x)
+}
+
+// begin starts the analysis of a frame: the window of every split band, the six slots of
+// history, the 32 of the frame and the six of look-ahead.
+func (h *psHybrid) begin(x *[sbrQMFSlots][sbrSynBands]complex128, look *[psLook][psSplitMax]complex128, is34 bool) {
 	ly := psLayoutOf(is34)
-	w := &h.win
 	for k := 0; k < ly.nSplit; k++ {
+		w := &h.win[k]
 		copy(w[:psLook], h.hist[k][:])
 		for l := range x {
 			w[psLook+l] = x[l][k]
@@ -249,31 +261,40 @@ func (h *psHybrid) analyse(x *[sbrQMFSlots][sbrSynBands]complex128, look *[psLoo
 		for j := range look {
 			w[psLook+sbrQMFSlots+j] = look[j][k]
 		}
+	}
+}
+
+// slot computes the hybrid rows of slot l into rows: the filters of the split bands over
+// the window, and the other bands as they are.
+func (h *psHybrid) slot(l int, x *[sbrQMFSlots][sbrSynBands]complex128, is34 bool, rows *[psMaxRows]complex128) {
+	ly := psLayoutOf(is34)
+	for k := 0; k < ly.nSplit; k++ {
+		w := &h.win[k]
 		filt := ly.filt[ly.start[k]:ly.start[k+1]]
 		out := ly.start[k]
-		for l := 0; l < sbrQMFSlots; l++ {
-			var sm, df [psLook + 1]complex128
+		var sm, df [psLook + 1]complex128
+		for t := 1; t <= psLook; t++ {
+			a, b := w[l+psLook+t], w[l+psLook-t]
+			sm[t], df[t] = a+b, a-b
+		}
+		ctr := w[l+psLook]
+		for i := range filt {
+			f := &filt[i]
+			yr, yi := f.c0*real(ctr), f.c0*imag(ctr)
 			for t := 1; t <= psLook; t++ {
-				a, b := w[l+psLook+t], w[l+psLook-t]
-				sm[t], df[t] = a+b, a-b
+				yr += f.c[t]*real(sm[t]) + f.s[t]*imag(df[t])
+				yi += f.c[t]*imag(sm[t]) - f.s[t]*real(df[t])
 			}
-			ctr := w[l+psLook]
-			for i := range filt {
-				f := &filt[i]
-				yr, yi := f.c0*real(ctr), f.c0*imag(ctr)
-				for t := 1; t <= psLook; t++ {
-					yr += f.c[t]*real(sm[t]) + f.s[t]*imag(df[t])
-					yi += f.c[t]*imag(sm[t]) - f.s[t]*real(df[t])
-				}
-				h.rows[l][out+i] = complex(yr, yi)
-			}
+			rows[out+i] = complex(yr, yi)
 		}
 	}
 	n := ly.start[ly.nSplit]
-	for l := range x {
-		copy(h.rows[l][n:], x[l][ly.nSplit:])
-	}
-	// all five bands keep a history, whichever are split now
+	copy(rows[n:], x[l][ly.nSplit:])
+}
+
+// end finishes the frame: its last six slots are the history of the next. All five bands
+// keep a history, whichever are split now.
+func (h *psHybrid) end(x *[sbrQMFSlots][sbrSynBands]complex128) {
 	for k := range h.hist {
 		for i := range h.hist[k] {
 			h.hist[k][i] = x[sbrQMFSlots-psLook+i][k]
