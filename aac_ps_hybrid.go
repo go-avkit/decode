@@ -325,6 +325,60 @@ func psSynthesise(rows *[sbrQMFSlots][psMaxRows]complex128, x *[sbrQMFSlots][sbr
 	}
 }
 
+// psSlotPlanes is one slot of the 64-band signal as the two real planes the synthesis
+// bank's transforms take: re[k] the real part of band k and im[63-k] its imaginary part.
+type psSlotPlanes struct {
+	re, im [sbrSynBands]float64
+}
+
+// psSynthesiseSlot is psSynthesise for one slot, into planes: the sums of the rows of the
+// split bands (added in row order) and the other rows copied.
+func psSynthesiseSlot(r *[psMaxRows]complex128, is34 bool, p *psSlotPlanes) {
+	ly := psLayoutOf(is34)
+	for k := 0; k < ly.nSplit; k++ {
+		var sum complex128
+		for _, v := range r[ly.start[k]:ly.start[k+1]] {
+			sum += v
+		}
+		p.re[k], p.im[sbrSynBands-1-k] = real(sum), imag(sum)
+	}
+	for j, v := range r[ly.start[ly.nSplit]:] {
+		k := ly.nSplit + j
+		if k >= sbrSynBands {
+			break
+		}
+		p.re[k], p.im[sbrSynBands-1-k] = real(v), imag(v)
+	}
+}
+
+// psPipelineFrame is the applied PS path of a frame run slot by slot: for each of the 32
+// slots the hybrid analysis, the transient detector, the decorrelator and mixer, the hybrid
+// synthesis of the left and of the right block, and the synthesis bank's transform of
+// each, so that a slot's rows live in the cache from analysis to PCM instead of the frame's
+// 46 KB matrices being written and read by every stage in turn. The arithmetic of every
+// sample is that of the stages run over the whole frame (TestPSOutputGolden).
+func (s *sbrState) psPipelineFrame(d *sbrChanDSP, kx, m int, out [2][]float32) {
+	mx, h := s.mix, s.hyb
+	is34 := s.ps.is34
+	var look [psLook][psSplitMax]complex128
+	d.psLookAhead(kx, &look)
+	h.begin(&d.x, &look, is34)
+	dl := mx.begin(&s.ps, kx+m)
+	outL, outR := d.syn.begin(out[0]), mx.syn.begin(out[1])
+	var rows, rr [psMaxRows]complex128
+	var pl, pr psSlotPlanes
+	for n := 0; n < sbrQMFSlots; n++ {
+		h.slot(n, &d.x, is34, &rows)
+		mx.transientSlot(n, &rows, dl)
+		mx.step(n, &rows, &rr, dl)
+		psSynthesiseSlot(&rows, is34, &pl)
+		psSynthesiseSlot(&rr, is34, &pr)
+		d.syn.slot((*[sbrSynBands]float32)(outL[n*sbrSynBands:]), &pl.re, &pl.im)
+		mx.syn.slot((*[sbrSynBands]float32)(outR[n*sbrSynBands:]), &pr.re, &pr.im)
+	}
+	h.end(&d.x)
+}
+
 // psLookAhead takes the six slots that follow the frame from the low band analysis: the
 // SBR output lags the analysis by sbrHFAdj slots and the array holds sbrHFGen slots of
 // history, so slot 32+j of the output is low[k][32+sbrHFAdj+j]. A band at or above the
@@ -356,13 +410,10 @@ func (s *sbrState) psApplyFrame(d *sbrChanDSP, kx, m int, withSBR bool, out [2][
 		if s.hyb == nil {
 			s.hyb = new(psHybrid)
 		}
-		var look [psLook][psSplitMax]complex128
-		d.psLookAhead(kx, &look)
-		s.hyb.analyse(&d.x, &look, s.ps.is34)
-		mx.apply(s.hyb, &s.ps, kx+m)
-		s.hyb.synthesise(&d.x, s.ps.is34)
-		psSynthesise(&mx.rr, &mx.xr, s.ps.is34)
-	} else {
+		s.psPipelineFrame(d, kx, m, out)
+		return
+	}
+	{
 		// PS is suspended (a fault until the next header, or no SBR data): both channels are
 		// the mono signal and the state of PS, the decorrelator, the transient detector, the
 		// matrices and the hybrid history, is frozen until it resumes (Q14)
