@@ -62,6 +62,17 @@ const (
 var (
 	sbrDCT4 = fft.NewDCTPlan(sbrSynBands, 4)
 
+	// sbrSynWindow is the prototype times 2^-22 (1/(128*sbrPCMUnit)): a power of two,
+	// so every product and sum of the window stage is the exact scaling of the one
+	// with the unscaled window (no subnormal arises at the signal levels of PCM), and
+	// the stage that used to scale the 128 values of each slot does not.
+	sbrSynWindow = func() (w [640]float64) {
+		for i := range w {
+			w[i] = sbrQMFWindow[i] / (128 * sbrPCMUnit)
+		}
+		return w
+	}()
+
 	// sbrAnaWindow is the analysis window: every second tap of the prototype.
 	sbrAnaWindow = func() (w [sbrAnaTaps]float64) {
 		for i := range w {
@@ -143,14 +154,15 @@ func (y *sbrSynthesis) process(out []float32, x *[sbrQMFSlots][sbrSynBands]compl
 		sbrDCT4.DCT(y.s[:], y.b[:], fft.NormBackward)
 		y.off -= 128
 		v := y.buf[y.off : y.off+128]
-		// the 1/64 of the definition, the 1/2 of the transforms' factor 2 and the
-		// 1/32768 back to +-1.0: 2^-22, exact. The sine part is (-1)^n y.s[n].
-		const scale = 1.0 / (128 * sbrPCMUnit)
+		// v is the sum and difference of the two transforms; the 1/64 of the
+		// definition, the 1/2 of the transforms' factor 2 and the 1/32768 back to
+		// +-1.0 (2^-22, exact) are in sbrSynWindow. The sine part is (-1)^n y.s[n].
+		c, s := &y.c, &y.s
 		for n := 0; n < sbrSynBands; n += 2 {
-			v[n] = (y.s[n] - y.c[n]) * scale
-			v[127-n] = (y.c[n] + y.s[n]) * scale
-			v[n+1] = (-y.s[n+1] - y.c[n+1]) * scale
-			v[126-n] = (y.c[n+1] - y.s[n+1]) * scale
+			v[n] = s[n] - c[n]
+			v[127-n] = c[n] + s[n]
+			v[n+1] = -s[n+1] - c[n+1]
+			v[126-n] = c[n+1] - s[n+1]
 		}
 		// ten products of 64 values: block n of the window against the 64 values of
 		// v that the definition's g takes at 128n (+64 for odd n)
@@ -159,8 +171,8 @@ func (y *sbrSynthesis) process(out []float32, x *[sbrQMFSlots][sbrSynBands]compl
 		// 64 sums in registers across their five rows, the even blocks first.
 		var acc [sbrSynBands]float64
 		b := y.buf[y.off:]
-		floats.MulAddRows(acc[:], sbrQMFWindow[:], 128, b, 256, 5)
-		floats.MulAddRows(acc[:], sbrQMFWindow[64:], 128, b[192:], 256, 5)
+		floats.MulAddRows(acc[:], sbrSynWindow[:], 128, b, 256, 5)
+		floats.MulAddRows(acc[:], sbrSynWindow[64:], 128, b[192:], 256, 5)
 		o := (*[sbrSynBands]float32)(out[l*sbrSynBands:])
 		for q, s := range acc {
 			o[q] = float32(s)
