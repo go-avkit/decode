@@ -268,15 +268,20 @@ load recorded before each):
 | same | AAC-LC stereo, 48 kHz (609 s) | 0.94 (283 ms against 301 ms; 0.90 to 0.95) | 0.13 to 0.93 | 6.1.1 |
 | same | AAC-LC stereo, impulses every 50 ms (300 s, made with ffmpeg's encoder) | 1.04 (144 ms against 138 ms) | 0.13 to 0.93 | 6.1.1 |
 | Apple M4 Max, 2026-11-15, **indicative** | HE-AAC v2 (620 s) | 1.11 (689 ms against 623 ms; main before it 1.12) | 7.0 to 7.7 | 9.0.2 |
+| Apple M4 Max, 2026-11-15 (5 rounds, all under 8) | AAC-LC stereo, impulses every 50 ms (300 s) | 0.70 (142 ms against 203 ms; 154 ms, 0.76, before the short-window pair: -7.8 %) | 7.22 to 7.82 | 9.0.2 |
+| same | AAC-LC stereo, 48 kHz (609 s) | 0.68 (319 ms against 471 ms; 318 ms before) | 7.22 to 7.82 | 9.0.2 |
+| same | AAC-LC mono, 48 kHz (600 s) | 0.46 (153 ms against 333 ms; 152 ms before) | 7.22 to 7.82 | 9.0.2 |
 
-The M4 figure is at a load just under the gate of 8 and moves with it (1.37 to 1.47 earlier
-in the same work at a load of 1.6 and 6 to 7); it is not refreshed at a quieter load. The
+The M4 HE-AAC v2 figure is at a load just under the gate of 8 and moves with it (1.37 to
+1.47 earlier in the same work at a load of 1.6 and 6 to 7); it was not refreshed at a quieter
+load. The three AAC-LC rows were measured at 7.2 to 7.8, under the gate. The
 x86 rows are measured on a host with another user, loads under 1. The x86 ratios are
 against ffmpeg 6.1.1 (Ubuntu's build), the M4 ones against 9.0.2, so they are not a
 like-for-like comparison of the two machines. The short-block transform
 (8 short windows as 4 pairs of the 128-point DCT-IV) is 27 % faster in its own benchmark on
-the M4 (`BenchmarkAACIMDCTShort`: 1247 ns against 908 ns; load 36, **indicative**); it is
-not visible in the whole-decode ratios above. The changes that moved the HE-AAC v2 ratio
+the M4 (`BenchmarkAACIMDCTShort`: 1247 ns against 908 ns; load 36, **indicative**), and
+7.8 % in the whole decode of the transient-heavy clip (the table); the other clips have few
+short blocks, and x86 has no fused 128-point kernel. The changes that moved the HE-AAC v2 ratio
 are the fused DCT-IV pairs and window sums of go-fft and go-simd, and the PS path run
 slot by slot. The decorrelator and mixer, the second synthesis bank and the SBR
 adjustment are the largest shares of what remains (on x86 the decode is instruction
