@@ -121,7 +121,8 @@ H.264 only.
 
 Audio decoders wrap pure Go libraries and are checked against ffmpeg, like the
 video ones. Wave D3 of [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89),
-one codec per pull request: FLAC, MP3, Opus, and AAC-LC (in house, below).
+one codec per pull request: FLAC, MP3, Opus, and AAC-LC (in house, below), and
+linear PCM (WAVE).
 **Vorbis is not decoded** (see below), **MP2 neither**.
 
 ```go
@@ -170,8 +171,20 @@ divergences each with its issue:
 * [#20](https://github.com/go-avkit/decode/issues/20): a fragmented MP4, whose edit
   list ffmpeg does not apply.
 
+Linear PCM, which is what a WAVE file's track is, goes through the same API
+(reported from go-perceptual: it was refused, so WAV was unreachable). The width and
+the byte order are the container's, from the `pcmC` record of an `ipcm` or `fpcm`
+entry (`TrackConfig.CodecConfig`: ISO/IEC 23003-5 5.1), never inferred from a sample's
+length or the track's duration; an entry without the record is `ErrAudioConfig`.
+Output is ffmpeg's: `ipcm` 8 and 16 bits (signed) to `SampleS16`, 24 and 32 bits to
+`SampleS32` (24 bits left-justified, shifted up by eight, so full scale stays full
+scale), `fpcm` 32 bits to `SampleF32`, **`fpcm` 64 bits to `SampleF32`, rounded to
+the nearest single: lossy**, and `raw ` (unsigned 8 bits, silence is 128) to
+`SampleS16`. A sample that is not a whole number of frames is `ErrAudioSample`.
+
 | Codec | Library | Licence | Output | Oracle |
 |---|---|---|---|---|
+| Linear PCM (`ipcm`, `fpcm`, `raw `) | in this package | BSD-3-Clause | as above | bit-exact against ffmpeg, 6 WAVE fixtures (s16, s24, s32, f32, f64, u8) |
 | FLAC (`fLaC`) | [`mewkiz/flac`](https://github.com/mewkiz/flac) v1.0.14 | Unlicense (public domain) | `s16le` up to 16 bits, `s32le` (left-justified) up to 24 | bit-exact, 13 fixtures |
 | MP3 (`mp3`) | [`tphakala/go-mp3`](https://github.com/tphakala/go-mp3) v0.3.0 | MIT (a port of minimp3, CC0) | `f32le` | max error 1.07e-6, SNR at least 127.9 dB, 10 fixtures, sample counts equal |
 | Opus (`Opus`) | [`pion/opus`](https://github.com/pion/opus) v0.1.0 | MIT | `f32le`, 48 kHz | opus_compare passes on all 12 RFC 8251 vectors, stereo and mono, quality 66.3 to 99.8 % |
