@@ -307,6 +307,31 @@ values:
     symbol: psMixTable
     source: the gains of the up-mix matrix, c_l = sqrt2 c / sqrt(1 + c^2), c_r = sqrt2 / sqrt(1 + c^2), alpha = arccos(ICC)/2, beta = alpha (c_r - c_l)/sqrt2 (P1 eq. 4 to 8, eq. 8 for beta), computed at start-up for every IID and ICC index; TestPSMixGains compares all 46 x 8 gains with a 192-bit evaluation (6.7e-16) and with the anchor table of the specification
     rationale: the gains follow from the paper's formulas, so no table is held.
+  # PS5, procedure B and IPD/OPD (docs/aac-ps-mixing.md section 6): written from that
+  # specification alone; no reference implementation was opened, only the ffmpeg binary
+  # was run, and ISO/IEC 14496-26's al_sbr_ps_03 and 04 with their _ur references decided.
+  - kind: derived
+    file: aac_ps_mix.go
+    symbol: psMixTableB
+    source: the principal-axis decomposition of the 2x2 covariance the parameters describe (powers in the ratio c^2 normalised to a sum of 2, correlation rho'), docs/aac-ps-mixing.md section 6.1, with alpha = atan2(2 c rho', c^2 - 1)/2, the eigenvalues 1 +- nu of the normalised covariance, gamma = arctan sqrt((1-nu)/(1+nu)); TestPSMixGainsB checks the output covariance (1.6e-15) and the gains against a Jacobi eigendecomposition at 192 bits (4.4e-16)
+    rationale: the matrix follows from the covariance, so no table is held.
+  - kind: normative-values
+    file: aac_ps_mix.go
+    symbol: psRhoFloor
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the floor 0.05 of the coherence in procedure B, docs/aac-ps-mixing.md section 6.1; al_sbr_ps_03 (procedure B) at 0.033 LSB and TestPSMixGainsB's mutation of it decide it
+    rationale: a constant of the mixing the standard fixes.
+  - kind: normative-values
+    file: aac_ps_mix.go
+    symbol: psPhaseW2
+    standard: ISO/IEC 14496-3
+    clause: standard table number not verified; the weights 0.25, 0.5 and 1 (psPhaseW2, psPhaseW1, psPhaseW0) of the smoothing of the IPD and OPD over the last two envelopes and the current one, and the phase band counts 11 and 17 (psPhaseBandsOf), docs/aac-ps-mixing.md section 6.2; al_sbr_ps_04 (IPD/OPD) at 0.033 LSB decides them, and the written streams S16 against ffmpeg 9.0.2 at 1e-6
+    rationale: constants of the phase processing the standard fixes.
+  - kind: derived
+    file: aac_ps_mix.go
+    symbol: psRemapPhase
+    source: the maps of section 4.2 restricted to the phase bands (5 to 11, 11 to 17, 17 to 11, 5 to 17), docs/aac-ps-mixing.md section 6.2; source bands past the count the IID mode gives are zero, which gives the zero band of 5 to 11 and 5 to 17; TestPSRemapPhase writes the bands out
+    rationale: no new table, the existing maps psMap34to20, psMap20to34 and the 10 to 20 formula.
   - kind: normative-values
     file: aac_ps_mixref_test.go
     symbol: psRefICC

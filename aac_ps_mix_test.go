@@ -44,6 +44,18 @@ func psTestState(is34 bool, iidMode, iccMode, numEnv int, border []int, iid, icc
 
 var psFixedBorders = map[int][]int{1: {-1, 31}, 2: {-1, 15, 31}, 4: {-1, 7, 15, 23, 31}}
 
+// psWithPhases turns IPD/OPD on in a state made by psTestState: the phase indices of
+// envelope e, band b are ipd(e, b) and opd(e, b), over the bands of the IID mode.
+func psWithPhases(p *psState, ipd, opd func(e, b int) int) *psState {
+	p.enableIPDOPD, p.nrIPDOPD = true, psIPDBandsOf[p.iidMode]
+	for e := 0; e < p.numEnv; e++ {
+		for b := 0; b < p.nrIPDOPD; b++ {
+			p.ipd[e][b], p.opd[e][b] = int8(ipd(e, b)&7), int8(opd(e, b)&7)
+		}
+	}
+	return p
+}
+
 // psNoiseRows makes the rows of a frame: complex noise of the given level, with a loud
 // burst over the slots from burst on (0 for none) so that the transient detector acts.
 func psNoiseRows(rng *rand.Rand, rows int, level float64, burst int) (s [sbrQMFSlots][psMaxRows]complex128) {
@@ -74,7 +86,38 @@ func psRefScenarios() map[string][]psRefStep {
 	iidC := func(e, b int) int { return (e*5+b*3+rnd.Intn(4))%15 - 7 }
 	iidF := func(e, b int) int { return (e*7+b*5+rnd.Intn(4))%31 - 15 }
 	icc := func(e, b int) int { return (e + 2*b + rnd.Intn(3)) % 8 }
+	ipd := func(e, b int) int { return 1 + e*3 + b*5 + rnd.Intn(3) }
+	opd := func(e, b int) int { return 2 + e*5 + b*3 + rnd.Intn(5) }
 	return map[string][]psRefStep{
+		"procedure B, ICC modes 3 to 5, both layouts": {
+			{psTestState(false, 1, 4, 4, psFixedBorders[4], iidC, icc), true, 55, 9},
+			{psTestState(true, 5, 5, 2, psFixedBorders[2], iidF, icc), true, 64, 12},
+			{psTestState(true, 2, 3, 2, psFixedBorders[2], iidC, icc), true, 64, 0},
+			{psTestState(false, 0, 3, 1, psFixedBorders[1], iidC, icc), true, 55, 0},
+		},
+		"phases, 20 bands, 4 and 2 envelopes": {
+			{psWithPhases(psTestState(false, 1, 1, 4, psFixedBorders[4], iidC, icc), ipd, opd), true, 55, 9},
+			{psWithPhases(psTestState(false, 1, 1, 2, psFixedBorders[2], iidC, icc), ipd, opd), true, 55, 0},
+			{psWithPhases(psTestState(false, 1, 1, 1, psFixedBorders[1], iidC, icc), ipd, opd), true, 55, 4},
+		},
+		"phases, 34 bands": {
+			{psWithPhases(psTestState(true, 2, 2, 2, psFixedBorders[2], iidC, icc), ipd, opd), true, 64, 7},
+			{psWithPhases(psTestState(true, 5, 2, 4, psFixedBorders[4], iidF, icc), ipd, opd), true, 64, 0},
+		},
+		"phases, the other band counts and B": {
+			{psWithPhases(psTestState(false, 0, 1, 2, psFixedBorders[2], iidC, icc), ipd, opd), true, 55, 0},
+			{psWithPhases(psTestState(true, 0, 2, 2, psFixedBorders[2], iidC, icc), ipd, opd), true, 64, 0},
+			{psWithPhases(psTestState(true, 1, 2, 2, psFixedBorders[2], iidC, icc), ipd, opd), true, 64, 0},
+			{psWithPhases(psTestState(false, 1, 4, 2, psFixedBorders[2], iidC, icc), ipd, opd), true, 55, 3},
+		},
+		"phases, switches, a frame without phases": {
+			{psWithPhases(psTestState(false, 1, 1, 2, psFixedBorders[2], iidC, icc), ipd, opd), true, 60, 5},
+			{psWithPhases(psTestState(true, 2, 2, 2, psFixedBorders[2], iidC, icc), ipd, opd), true, 60, 5},
+			{psTestState(true, 2, 2, 2, psFixedBorders[2], iidC, icc), true, 60, 0},
+			{psWithPhases(psTestState(true, 2, 2, 2, psFixedBorders[2], iidC, icc), ipd, opd), true, 60, 0},
+			{psWithPhases(psTestState(true, 2, 2, 2, psFixedBorders[2], iidC, icc), ipd, opd), false, 60, 0},
+			{psWithPhases(psTestState(false, 1, 1, 2, psFixedBorders[2], iidC, icc), ipd, opd), true, 60, 0},
+		},
 		"20 bands, 4 envelopes": {
 			{psTestState(false, 1, 1, 4, psFixedBorders[4], iidC, icc), true, 55, 9},
 			{psTestState(false, 1, 1, 4, psFixedBorders[4], iidC, icc), true, 55, 0},

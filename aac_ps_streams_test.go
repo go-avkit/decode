@@ -36,6 +36,7 @@ type psStreamSpec struct {
 	name    string
 	core    string
 	bounded bool // the bound applies; else the difference is measured and logged
+	ffImage bool // compared under the test switch that gives the image rows of IPD/OPD ffmpeg's rule (Q5)
 	frames  []psStreamFrame
 }
 
@@ -265,7 +266,71 @@ func psStreamSpecs() []psStreamSpec {
 	}
 	add("S16a20", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame { return ipdFrame(i, false, 0) }))
 	add("S16a34", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame { return ipdFrame(i, true, 0) }))
-	add("S16b20", "stationary", false, psRepeat(psStreamFrames, func(i int) psStreamFrame { return ipdFrame(i, false, 1+i%7) }))
+	// S16b and the streams after it put phases on the image rows too, where ffmpeg's rule
+	// differs from the specification's and from ISO's (Q5): they are compared under the test
+	// switch ffImage, and TestPSImageRowRule shows the default differs.
+	addFF := func(name string, fr []psStreamFrame) {
+		add(name, "stationary", true, fr)
+		specs[len(specs)-1].ffImage = true
+	}
+	addFF("S16b20", psRepeat(psStreamFrames, func(i int) psStreamFrame { return ipdFrame(i, false, 1+i%7) }))
+	addFF("S16b34", psRepeat(psStreamFrames, func(i int) psStreamFrame { return ipdFrame(i, true, 1+i%7) }))
+	// IPD and OPD apart, over 4 and 2 envelopes (the smoothing runs over envelopes and
+	// across frames), and every phase index
+	phased := func(i int, h *psHdrSpec, iidN, iccN, ipdN, count int) psStreamFrame {
+		f := psFixed(h, iidN, iccN, count, shift(mixed, i, 2), icc2)
+		f.ext = []psExtItem{{id: 0, enable: true,
+			ipd: psEnvs(ipdN, count, func(e, b int) int { return (1 + i + 2*e + b) % 8 }),
+			opd: psEnvs(ipdN, count, func(e, b int) int { return (3 + 2*i + e + 3*b) % 8 })}}
+		return psStreamFrame{ps: f}
+	}
+	extHdr := func(i, iid, icc int) *psHdrSpec {
+		if i == 0 {
+			return &psHdrSpec{iid: iid, icc: icc, ext: true}
+		}
+		return nil
+	}
+	addFF("S16c20", psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		return phased(i, extHdr(i, 1, 1), 20, 20, 11, []int{4, 2}[i%2])
+	}))
+	addFF("S16c34", psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		return phased(i, extHdr(i, 2, 2), 34, 34, 17, []int{4, 2}[i%2])
+	}))
+	// the phase bands of the other resolutions: 5 -> 11 (IID mode 0), 5 -> 17 and 11 -> 17
+	addFF("S16f", psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		return phased(i, extHdr(i, 0, 1), 10, 20, 5, 2)
+	}))
+	addFF("S16g", psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		return phased(i, extHdr(i, 0, 2), 10, 34, 5, 2)
+	}))
+	addFF("S16h", psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		return phased(i, extHdr(i, 1, 2), 20, 34, 11, 2)
+	}))
+	// the layout switches with phases: the history of the smoothing and the carried matrix
+	// (S16d is measured, not bounded: after a layout switch ffmpeg's phases differ from
+	// ours for one or two frames, and no ISO stream switches layout with phases; Q16.)
+	addFF("S16d", psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		var h *psHdrSpec
+		if i%2 == 0 {
+			h = &psHdrSpec{iid: 1, icc: 1, ext: true}
+			if i%4 == 0 {
+				h.iid, h.icc = 2, 2
+			}
+		}
+		if i%4 < 2 {
+			return phased(i, h, 34, 34, 17, 2)
+		}
+		return phased(i, h, 20, 20, 11, 2)
+	}))
+	specs[len(specs)-1].bounded = false
+	// phases switched off and on again: a frame whose extension says so, between frames that send them
+	addFF("S16e", psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		f := phased(i, extHdr(i, 1, 1), 20, 20, 11, 2)
+		if i%4 == 2 {
+			f.ps.ext = []psExtItem{{id: 0, enable: false}}
+		}
+		return f
+	}))
 	// S17: a header that lowers stop_freq (and so the SBR top) in mid-stream, which shows
 	// the clearing above the top (Q10); S17b raises it again. Both rest on the SBR restart
 	// of the noise table at a header (its own pull request).
@@ -289,12 +354,43 @@ func psStreamSpecs() []psStreamSpec {
 		}
 		return f
 	}))
-	add("S18", "stationary", false, psRepeat(psStreamFrames, func(i int) psStreamFrame {
+	add("S18", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
 		var h *psHdrSpec
 		if i == 0 {
 			h = psHdr(1, 4)
 		}
 		return psStreamFrame{ps: psFixed(h, 20, 20, 4, shift(comboC, i, 4), shift(comboCC, i, 4))}
+	}))
+	// procedure B on every IID and ICC index: 34 bands with the fine IID (mode 5, ICC mode
+	// 5), 10 bands with the fine IID and ICC mode 3 (the 10 -> 20 maps), and ICC mode 3 with
+	// 34 bands against the coarse IID
+	add("S18b", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		var h *psHdrSpec
+		if i == 0 {
+			h = psHdr(5, 5)
+		}
+		return psStreamFrame{ps: psFixed(h, 34, 34, 4, shift(comboF, i, 4), shift(comboFC, i, 4))}
+	}))
+	add("S18c", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		var h *psHdrSpec
+		if i == 0 {
+			h = psHdr(3, 3)
+		}
+		return psStreamFrame{ps: psFixed(h, 10, 10, 2, shift(comboF, i, 2), shift(comboFC, i, 2))}
+	}))
+	add("S18d", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		var h *psHdrSpec
+		if i == 0 {
+			h = psHdr(2, 3)
+		}
+		return psStreamFrame{ps: psFixed(h, 34, 10, 2, shift(comboC, i, 2), shift(comboCC, i, 2))}
+	}))
+	// procedure B with phases
+	addFF("S18e", psRepeat(psStreamFrames, func(i int) psStreamFrame {
+		f := phased(i, extHdr(i, 1, 4), 20, 20, 11, 2)
+		f.ps.iid = psEnvs(20, 2, shift(comboC, i, 2))
+		f.ps.icc = psEnvs(20, 2, shift(comboCC, i, 2))
+		return f
 	}))
 	// S19c: the first two frames both carry ps_data, then frames without
 	add("S19c", "stationary", true, psRepeat(psStreamFrames, func(i int) psStreamFrame {
@@ -456,8 +552,20 @@ var psStreamHashes = map[string]string{
 	"S16a20": "2515622b45702c62",
 	"S16a34": "260ebe7f8fd99edf",
 	"S16b20": "27e790a9cf35fa9b",
+	"S16b34": "02dcb0dc9bcca144",
+	"S16c20": "c3b6cddc0818160a",
+	"S16c34": "dcab8951c3821c7d",
+	"S16f":   "d16d862c3ec105cd",
+	"S16g":   "621e0c2c3e536dde",
+	"S16h":   "1b6a7921359cd961",
+	"S16d":   "8c0c9517a16f98b0",
+	"S16e":   "7a67aa1964a20ea5",
 	"S17":    "bbc6c96a1c572fec",
 	"S17b":   "6c861bad4af1c55c",
+	"S18b":   "1b3eaa98820f16b8",
+	"S18c":   "4912b489dc24cc85",
+	"S18d":   "51e66c59abbb234b",
+	"S18e":   "b342417b820396d7",
 	"S18":    "0d0148771894035c",
 	"S19a":   "6477df9b99078106",
 	"S19b":   "b0e571bc968d14e1",
@@ -513,12 +621,18 @@ func TestPSRecordStreams(t *testing.T) {
 // recording of ffmpeg's: the largest absolute difference per channel over the common
 // samples.
 func psStreamCompare(t testing.TB, spec psStreamSpec) (maxL, maxR float64, n int) {
+	return psStreamCompareMode(t, spec, psTestMode{ffImage: spec.ffImage})
+}
+
+// psStreamCompareMode is psStreamCompare under the switches of mode.
+func psStreamCompareMode(t testing.TB, spec psStreamSpec, mode psTestMode) (maxL, maxR float64, n int) {
 	t.Helper()
 	b := psBuildStream(t, spec)
 	if want, ok := psStreamHashes[spec.name]; !ok || want != psSHA(b) {
 		t.Fatalf("%s: stream hash %s is not the recorded %q: record ffmpeg's output again (PS_RECORD)", spec.name, psSHA(b), want)
 	}
-	l, r := psDecodeADTS(t, psStreamFile(t, spec.name, b), psStreamFrames)
+	cfg, frames := aacADTSFrames(t, psStreamFile(t, spec.name, b))
+	l, r, _ := psDecodeFramesMode(t, cfg, frames, psStreamFrames, mode)
 	fl, fr := psReadF32Stereo(t, psStreamPath(spec.name))
 	if len(fl) != len(l) {
 		t.Fatalf("%s: %d samples, ffmpeg gives %d", spec.name, len(l), len(fl))
@@ -550,31 +664,62 @@ func TestPSStreamsAgainstFFmpeg(t *testing.T) {
 	}
 }
 
-// TestPSBaselineProfile: the decoder implements the PS baseline profile, procedure A for
-// every ICC mode (3 to 5 included) with IPD/OPD ignored; the full profile (procedure B,
-// IPD/OPD, section 6 of docs/aac-ps-mixing.md) is later work.
-func TestPSBaselineProfile(t *testing.T) {
-	pcm := map[string][2][]float32{}
-	mono := map[string][]float32{}
-	for _, spec := range psStreamSpecs() {
-		if spec.name != "S18" && spec.name != "S16b20" && spec.name != "S16a20" {
-			continue
+// TestPSBaselineSwitch: the test switch psBaselineTest gives baseline mixing (procedure A
+// for every ICC mode, IPD/OPD ignored), which the default full profile differs from on
+// the streams that use procedure B (S18) or phases (S16b20); it is the same on a stream
+// that uses neither (S09c: ICC mode 1, no phases).
+func TestPSBaselineSwitch(t *testing.T) {
+	run := func(name string, mode psTestMode) [2][]float32 {
+		for _, spec := range psStreamSpecs() {
+			if spec.name == name {
+				cfg, fr := aacADTSFrames(t, psStreamFile(t, name, psBuildStream(t, spec)))
+				l, r, _ := psDecodeFramesMode(t, cfg, fr, psStreamFrames, mode)
+				return [2][]float32{l, r}
+			}
 		}
-		b := psBuildStream(t, spec)
-		cfg, fr := aacADTSFrames(t, psStreamFile(t, spec.name, b))
-		l, r, _ := psDecodeFrames(t, cfg, fr, psStreamFrames)
-		l0, _, _ := psDecodeFramesOff(t, cfg, fr, psStreamFrames, true)
-		pcm[spec.name], mono[spec.name] = [2][]float32{l, r}, l0
+		t.Fatalf("no stream %s", name)
+		return [2][]float32{}
 	}
-	// procedure B (ICC mode 4) is mixed as procedure A: a stereo image, not the mono signal
-	s18 := pcm["S18"]
-	if slices.Equal(s18[0], s18[1]) || slices.Equal(s18[0], mono["S18"]) || slices.Equal(s18[1], mono["S18"]) {
-		t.Error("S18: the stream is not mixed to a stereo image")
+	for _, name := range []string{"S18", "S16b20"} {
+		full, base := run(name, psTestMode{}), run(name, psTestMode{baseline: true})
+		if slices.Equal(full[0], base[0]) && slices.Equal(full[1], base[1]) {
+			t.Errorf("%s: the baseline switch changes nothing", name)
+		}
+		if slices.Equal(base[0], base[1]) {
+			t.Errorf("%s: baseline mixing gives no stereo image", name)
+		}
 	}
-	// IPD/OPD are ignored: phases or none, the same samples
-	a, b := pcm["S16a20"], pcm["S16b20"]
-	if slices.Equal(a[0], a[1]) || !slices.Equal(a[0], b[0]) || !slices.Equal(a[1], b[1]) {
-		t.Error("S16b20: IPD/OPD with phases changed the output, or the image is mono")
+	// IPD/OPD ignored: phases or none, the same samples; and a stream without either
+	a, b := run("S16a20", psTestMode{baseline: true}), run("S16b20", psTestMode{baseline: true})
+	if !slices.Equal(a[0], b[0]) || !slices.Equal(a[1], b[1]) {
+		t.Error("baseline mixing: IPD/OPD with phases changed the output")
+	}
+	full, base := run("S09c", psTestMode{}), run("S09c", psTestMode{baseline: true})
+	if !slices.Equal(full[0], base[0]) || !slices.Equal(full[1], base[1]) {
+		t.Error("S09c uses neither procedure B nor phases: the profiles must agree")
+	}
+}
+
+// TestPSImageRowRule (Q5): the default image-row rule of IPD/OPD (the conjugate gains on
+// the rows of negative centre frequency, which ISO's al_sbr_ps_04 supports) differs from
+// ffmpeg's on streams that put phases on those rows, in the left channel (the right
+// carries opd - ipd); and the streams whose image bands have phase 0 agree with ffmpeg
+// to the bound under both rules.
+func TestPSImageRowRule(t *testing.T) {
+	for _, spec := range psStreamSpecs() {
+		switch spec.name {
+		case "S16b20", "S16b34", "S16c20":
+			l, r, _ := psStreamCompareMode(t, spec, psTestMode{})
+			if l < 1e-3 && r < 1e-3 {
+				t.Errorf("%s: the default rule is as close to ffmpeg's as the bound (L %.2e R %.2e): the rules do not differ here", spec.name, l, r)
+			}
+			t.Logf("%s under the specification's image-row rule: L %.2e R %.2e from ffmpeg's", spec.name, l, r)
+		case "S16a20", "S16a34":
+			l, r, _ := psStreamCompareMode(t, spec, psTestMode{})
+			if l > psStreamBound || r > psStreamBound {
+				t.Errorf("%s: phases 0 on the image bands, but differs from ffmpeg by L %.2e R %.2e", spec.name, l, r)
+			}
+		}
 	}
 }
 

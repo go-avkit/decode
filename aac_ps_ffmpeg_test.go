@@ -29,6 +29,17 @@ func psDecodeFrames(t testing.TB, cfg aacConfig, fr [][]byte, frames int) (l, r 
 // psDecodeFramesOff is psDecodeFrames with the test switch that turns PS off when off.
 func psDecodeFramesOff(t testing.TB, cfg aacConfig, fr [][]byte, frames int, off bool) (l, r []float32, s *sbrState) {
 	t.Helper()
+	return psDecodeFramesMode(t, cfg, fr, frames, psTestMode{off: off})
+}
+
+// psTestMode are the test switches of the PS path: off (no PS), baseline (procedure A for
+// every ICC mode, IPD/OPD ignored) and ffImage (the image rows of IPD/OPD as ffmpeg has
+// them, not as the specification and ISO's al_sbr_ps_04 have them).
+type psTestMode struct{ off, baseline, ffImage bool }
+
+// psDecodeFramesMode is psDecodeFrames under the switches of mode.
+func psDecodeFramesMode(t testing.TB, cfg aacConfig, fr [][]byte, frames int, mode psTestMode) (l, r []float32, s *sbrState) {
+	t.Helper()
 	cfg.sbr = true
 	p, err := newAACParser(cfg, DefaultMaxAudioChannels)
 	if err != nil {
@@ -44,7 +55,7 @@ func psDecodeFramesOff(t testing.TB, cfg aacConfig, fr [][]byte, frames int, off
 		var pcm [2][aacFrameLen]float32
 		synth.element(&els[0], 0, [2][]float32{pcm[0][:], pcm[1][:]})
 		s = p.sbrOf(els[0].id, els[0].tag)
-		s.psOffTest = off
+		s.psOffTest, s.psBaselineTest, s.psFFImageTest = mode.off, mode.baseline, mode.ffImage
 		got := [2][]float32{make([]float32, sbrQMFSlots*sbrSynBands), make([]float32, sbrQMFSlots*sbrSynBands)}
 		s.process(1, [2][]float32{pcm[0][:], pcm[1][:]}, got, els[0].sbr != nil)
 		l, r = append(l, got[0]...), append(r, got[1]...)

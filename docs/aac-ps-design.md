@@ -408,7 +408,7 @@ duplicating `out[0]`.
 **Baseline mixing.** Procedure A for every ICC mode (3 to 5 included), IPD/OPD parsed and
 ignored; 34-band streams keep 34 bands (a baseline decoder maps 34 to 20, so
 `al_sbr_ps_06` matches `_ur` but not `_bl`, 2226 LSB off). The full profile,
-procedure B and IPD/OPD (section 6 of `aac-ps-mixing.md`), is later work. (An earlier
+procedure B and IPD/OPD (section 6 of `aac-ps-mixing.md`), came with PS5 (below). (An earlier
 revision of this PR fell back to L = R = mono on such streams; that was wrong: a baseline
 decoder applies procedure A, and ISO's `_bl` references of `al_sbr_ps_03` and `04` confirm
 it at 0.033 LSB.) A fault of the parser still suspends PS until the next header (Q14).
@@ -442,6 +442,88 @@ count equal the reference's for all seven, with no leading frames dropped.
 in `row` (plus the transient detector and matrices), SBR adjustment 8 %, FFT kernels 9 %.
 
 **S19b** (layout switches with no-data frames, 0.08 informational) is still measured only.
+
+## PS5 as built
+
+The full profile: procedure B for ICC modes 3 to 5 and IPD/OPD (section 6 of
+`aac-ps-mixing.md`), in `aac_ps_mix.go`, written from that section and the files named in
+the task alone (clean room: no reference implementation, no page showing one was opened;
+the ffmpeg binary was run as a black box, and ISO's `_ur` waveforms decided).
+
+**Default.** The decoder now outputs the full profile. Baseline mixing (procedure A for
+every ICC mode, IPD/OPD ignored, what v0.7.0 does) is the test switch
+`sbrState.psBaselineTest` (`psMixer.baseline`); `TestPSBaselineSwitch` shows it differs on
+S18 and S16b20 and agrees on a stream that uses neither. The 801 PS files use neither
+feature: the output of the 820 HE-AAC files of `~/Movies` decoded by `origin/main`
+(`e4467b0`) and by this branch has the same SHA-256 on every file, and against ffmpeg
+9.0.2 the largest absolute difference per file is unchanged: median 4.3e-7, 90th
+percentile 9.5e-7, 99th percentile 2.8e-6, maximum 1.09e-5 (the file of PS4's table).
+
+**What it does.** Procedure B: `rho' = max(rho, 0.05)`, `alpha = atan2(2 c rho', c^2 - 1)/2`,
+`nu`, `gamma`, the rotation of section 6.1; `psMixBCoarse` and `psMixBFine`, chosen when
+ICC is enabled in a mode 3 or above. IPD/OPD: the phase indices are mapped to the phase
+bands (11 at 20 bands, 17 at 34) by the maps of 4.2 with the missing bands zero, smoothed
+per band over envelopes with the weights 0.25, 0.5, 1 and a history of angle 0 (reset at
+a layout switch and at the start), and applied as `e^{j opd}` on the left gains and
+`e^{j(opd - ipd)}` on the right ones; real and imaginary parts are interpolated per gain
+exactly as the real gains are, and the rows of negative centre frequency (20 bands: 0, 1;
+34 bands: 9, 10, 11) take the conjugate gains over the whole interpolation. Only the
+all-pass rows carry phases (`TestPSPhaseBandsAreAllPass`), so the delay rows keep the real
+fast path of PS3 and the speed of the PS4 path is unchanged where there are no phases.
+
+**ISO.** `TestAACConformancePS` now asserts all seven vectors against their `_ur`
+references at 0.033 LSB, 03 (procedure B) and 04 (IPD/OPD) included; `al_sbr_ps_03_ur` is
+pinned in `testdata/aac-conformance.txt` (`aacconf pin` fetched it from ISO's archive,
+checked its MD5 against ISO's list and gave the same SHA-256 as the local copy,
+`3b905534...`). The baseline switch matches the `_bl` references
+of 03 and 04 as v0.7.0 did.
+
+**ffmpeg.** S18 (procedure B, 0.12 to 0.15 before): 7.5e-8. S16b20 (IPD/OPD, 0.27 before):
+1.5e-7 under the second test switch below. New streams, all within 1e-6 (largest 2.6e-7):
+S16b34, S16c20, S16c34 (IPD and OPD apart, 4 and 2 envelopes), S16f, S16g, S16h (the
+phase band maps 5 to 11, 5 to 17, 11 to 17), S16e (a frame that sends no phases between
+frames that do), S18b, S18c, S18d (procedure B at 34 bands with the fine IID, at 10 bands
+with ICC mode 3, with the coarse 34-band IID), S18e (procedure B with phases).
+
+**Q5 decided by ISO, not by ffmpeg.** ffmpeg's rule for the image rows of IPD/OPD
+differs from the specification's (section 6.2) and from FAAD2's; with the specification's
+rule ISO's `al_sbr_ps_04` is at 0.033 LSB, and with ffmpeg's it is at 0.761 LSB (and
+without any conjugation, 2.08 LSB). So the decoder follows the specification, and the
+written streams whose phases sit on the image rows (S16b, S16c, ...) are compared with
+ffmpeg under a second test switch (`psFFImageTest`, `psMixer.ffImage`) that gives ffmpeg's
+rule: rows 0 and 1 at 20 bands, 9 to 13 at 34, the imaginary part running from minus its
+value at the start of the envelope to its value at the end. That is a measurement that
+everything else, the smoothing, the interpolation, the application, the maps, the
+history, is ffmpeg's to 1e-7; `TestPSImageRowRule` shows the default rule is 1.4e-2 to
+4.8e-2 from ffmpeg on those streams, in the left channel only when IPD = OPD (the right
+channel carries `opd - ipd`) and in both otherwise, and within 1e-6 where the image bands
+have phase 0 (S16a).
+
+**Reference.** The double-double and 192-bit reference of `aac_ps_mixref_test.go` covers
+procedure B (a Jacobi eigendecomposition of the target covariance, not the closed form)
+and IPD/OPD (phasors from exact angles, the smoothing, the argument by an arctangent at
+192 bits, the interpolation in 192 bits, the conjugation by the rows' centre
+frequencies typed again). Bound, unchanged: 2^-44 of the row's peak per sample, assert on
+every sample; measured 9.2e-16 of the peak at worst over 11 scenarios (procedure B in
+both layouts, phases at 20 and 34 bands, the other band counts, switches, a frame without
+phases). The gains of procedure B agree with the reference to 4.4e-16 and the output
+covariance with the target to 1.6e-15 (P7, 46 x 8 pairs).
+
+**Mutations.** Eighteen, applied by hand to the source and each killed (the tests that
+failed are in the pull request): the sign, the floor, the half angle and the gamma of the
+procedure-B matrix, its selection; the interpolation of the imaginary part (end only,
+squared fraction, a zero start); the two smoothing weights, no smoothing, no history, the
+history's initial angle; right gains by opd + ipd, no rotation of the left gains; the
+conjugation of the image rows; the phase band count; the 5 to 11 map; the carried
+imaginary parts across a frame without phases.
+
+**Open (not asked of ISO, followed from ffmpeg).** A frame without phases is real, and
+leaves the stored imaginary parts of the matrices as they were, so that the next frame with
+phases starts from them (S16e; zeroing them gives a 3e-2 difference). After a layout
+switch with phases (S16d) the output differs from ffmpeg's by up to 6e-2 for one or two
+frames, whatever the history (angle 0, zero, kept) and the carried imaginary parts
+(remapped, zeroed, kept): measured, not bounded (Q16 of `aac-ps-mixing.md`). No ISO vector
+switches layout with phases.
 
 ## PR split (each green, reviewed independently, before the next)
 
