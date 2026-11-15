@@ -1,0 +1,4 @@
+go test fuzz v1
+string("avc1")
+[]byte("\x67\x42\x00")
+[]byte("\x68")
