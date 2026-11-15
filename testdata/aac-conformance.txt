@@ -35,7 +35,8 @@ b9fe1327f04a93f3f799cb3606b3281f5d5db84d09a1f582eabaa166899adad8  referencesWav/
 188f6611c045789027537eb6c2a68c30f9d8599945d7807d83b500fcd79b8e3c  compressedMp4/al03_11.mp4
 ffcd5c0edfc5024dd6d3a467b9c16645b15cf95045f02095d355cbc502e4c42b  referencesWav/al03_11.wav
 # HE-AAC v2 (PS) vectors, al_sbr_ps_00 to 06, with the references of the add-opt directory
-# ("_ur", and the baseline "_bl" of 04), pinned the same way on 2026-11-14.
+# ("_ur", and the baseline "_bl" of 03 and 04), pinned the same way on 2026-11-14; 03_ur added
+# with the full profile (PS5).
 d237a400ec5978576d5b1fa9fda292d494aad5dc184e9c24922e8fe17162298e  compressedMp4/al_sbr_ps_00.mp4
 21647b347f795440b9deab128e44b6ebb38de9e032b855d4340ab65f46f031b5  referencesWav/add-opt/al_sbr_ps_00_ur.wav
 67e90d0803f64819a895ffa349e65722b30df673bc5ab7dee1ca22fe3a1be217  compressedMp4/al_sbr_ps_01.mp4
@@ -44,6 +45,7 @@ e43e2dc4a3e2591a88e5fe7888791eb94cbeef771b3015eecac64db37917a385  referencesWav/
 32acd8b9f8789ee704fe7a2a078dcbc8b339f4f136e6ef24597350563064bad2  referencesWav/add-opt/al_sbr_ps_02_ur.wav
 717153ee39f505e897e3dc22357b39dbf0470c8033c7e0c76d5b3b68d6d8e238  compressedMp4/al_sbr_ps_03.mp4
 e9a977fad8b75bfcd2b10e8518b015ef60da4c0a9212dfbd433a95d3f0b51e04  referencesWav/add-opt/al_sbr_ps_03_bl.wav
+3b905534a0e90922dcde26048a0023f405bd1f496d6e35586fddda5502dbaafa  referencesWav/add-opt/al_sbr_ps_03_ur.wav
 89669b9f796678db2a9bf13cc33a0617e6864bf1b0152fa717ba3616d869a749  compressedMp4/al_sbr_ps_04.mp4
 d00d6d52a362a31b362010e30f422898eb48ecd8829cfdbbbe0fabd927c41d35  referencesWav/add-opt/al_sbr_ps_04_ur.wav
 b9019042aeb196eefbc8ad2a2791c300c18b344904997d8b8082236a04eb6a39  referencesWav/add-opt/al_sbr_ps_04_bl.wav

@@ -330,6 +330,7 @@ func (s *sbrState) psApplyFrame(d *sbrChanDSP, kx, m int, withSBR bool, out [2][
 		s.mix = new(psMixer)
 	}
 	mx := s.mix
+	mx.baseline, mx.ffImage = s.psBaselineTest, s.psFFImageTest
 	if withSBR && s.ps.start {
 		if s.hyb == nil {
 			s.hyb = new(psHybrid)

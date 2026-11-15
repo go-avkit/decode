@@ -71,24 +71,26 @@ type sbrState struct {
 	haveSpe bool // spec holds a header that built the tables
 	started bool // a valid header has been read: SBR data is parsed and used
 
-	ampResHeader uint8
-	limBands     uint8
-	limGains     uint8
-	interpolFreq uint8
-	smoothing    uint8
-	coupling     bool
-	psSeen       bool // a PS extension was found in the payload
-	psHybridTest bool // test switch: a mono element's frame goes through the hybrid analysis and synthesis (PS2); PS is not applied to the output yet
-	psOffTest    bool // test switch: PS is not applied, out[1] is a copy of out[0] (what the decoder did before PS4)
-	psOn         bool // PS may be carried (the channel policy, aacConfig.stereoOut): its extension is parsed into ps and applied
-	ps           psState
-	hyb          *psHybrid // the PS hybrid bank, made when psHybridTest or PS first needs it
-	mix          *psMixer  // the PS decorrelator, mixer and right synthesis bank, made when PS first needs it
-	extBits      int       // bits of bs_extension_data in the last frame, 0 for none
-	ch           [2]sbrChannel
-	dsp          [2]*sbrChanDSP      // signal state of the channels (aac_sbr_hf.go)
-	refill       [2]bool             // a header reset: the smoothing history is refilled at the next adjustment
-	buf          [sbrMaxPayload]byte // the payload being parsed
+	ampResHeader   uint8
+	limBands       uint8
+	limGains       uint8
+	interpolFreq   uint8
+	smoothing      uint8
+	coupling       bool
+	psSeen         bool // a PS extension was found in the payload
+	psHybridTest   bool // test switch: a mono element's frame goes through the hybrid analysis and synthesis (PS2); PS is not applied to the output yet
+	psOffTest      bool // test switch: PS is not applied, out[1] is a copy of out[0] (what the decoder did before PS4)
+	psFFImageTest  bool // test switch: the image rows of IPD/OPD follow ffmpeg's rule, not the specification's (see psMixer.ffImage)
+	psBaselineTest bool // test switch: baseline mixing, procedure A for every ICC mode and IPD/OPD ignored (decode v0.7.0 to v0.7.x)
+	psOn           bool // PS may be carried (the channel policy, aacConfig.stereoOut): its extension is parsed into ps and applied
+	ps             psState
+	hyb            *psHybrid // the PS hybrid bank, made when psHybridTest or PS first needs it
+	mix            *psMixer  // the PS decorrelator, mixer and right synthesis bank, made when PS first needs it
+	extBits        int       // bits of bs_extension_data in the last frame, 0 for none
+	ch             [2]sbrChannel
+	dsp            [2]*sbrChanDSP      // signal state of the channels (aac_sbr_hf.go)
+	refill         [2]bool             // a header reset: the smoothing history is refilled at the next adjustment
+	buf            [sbrMaxPayload]byte // the payload being parsed
 }
 
 // newSBRState returns the state of a stream whose core runs at coreRate: SBR

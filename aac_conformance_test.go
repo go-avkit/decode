@@ -173,9 +173,9 @@ func TestAACConformance(t *testing.T) {
 
 // TestAACConformancePS: the seven PS vectors of ISO/IEC 14496-26 (al_sbr_ps_00 to 06,
 // mono AAC-LC core at 16 kHz, SBR, PS, 32 kHz stereo out) against the reference
-// waveforms of their add-opt directory: "_ur" for 00, 01, 02, 05, 06, and "_bl" (the
-// baseline profile: procedure A for every ICC mode, IPD/OPD ignored, which is what this
-// decoder implements) for 03 and 04, whose streams use procedure B and IPD/OPD. The
+// waveforms of their add-opt directory, all "_ur" (the full profile: 03 uses procedure B
+// and 04 IPD/OPD, which the decoder applies since PS5; before it matched their "_bl"
+// baseline references, procedure A for every ICC mode with IPD/OPD ignored). The
 // references hold every sample (no leading frames are left out, unlike the AAC-LC ones).
 // The bound is the provisional one of TestAACConformance.
 func TestAACConformancePS(t *testing.T) {
@@ -205,12 +205,15 @@ func TestAACConformancePS(t *testing.T) {
 		}
 		return b
 	}
-	for k := 0; k <= 6; k++ {
-		name := fmt.Sprintf("al_sbr_ps_%02d", k)
-		kind := "ur"
-		if k == 3 || k == 4 {
-			kind = "bl" // procedure B (03) and IPD/OPD (04): the baseline reference, which ignores them
-		}
+	// the full profile (procedure B in 03, IPD/OPD in 04) against the "_ur" references, and
+	// the baseline switch against the "_bl" references of 03 and 04
+	type psCase struct {
+		k    int
+		kind string
+	}
+	cases := []psCase{{0, "ur"}, {1, "ur"}, {2, "ur"}, {3, "ur"}, {4, "ur"}, {5, "ur"}, {6, "ur"}, {3, "bl"}, {4, "bl"}}
+	for _, c := range cases {
+		name, kind := fmt.Sprintf("al_sbr_ps_%02d", c.k), c.kind
 		{
 			mp4, wav := read("compressedMp4/"+name+".mp4"), read("referencesWav/add-opt/"+name+"_"+kind+".wav")
 			ref, rch, rrate, err := aacWAV(wav)
@@ -225,7 +228,12 @@ func TestAACConformancePS(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", name, err)
 			}
-			bufs, err := DecodeAudioTrack(r, id, AudioConfig{})
+			var bufs []Audio
+			if kind == "bl" {
+				bufs, err = aacBaselineDecode(r, id)
+			} else {
+				bufs, err = DecodeAudioTrack(r, id, AudioConfig{})
+			}
 			if err != nil {
 				t.Errorf("%s: %v", name, err)
 				continue
@@ -258,4 +266,32 @@ func TestAACConformancePS(t *testing.T) {
 			}
 		}
 	}
+}
+
+// aacBaselineDecode decodes a track's samples with the baseline mixing switch (procedure A
+// for every ICC mode, IPD/OPD ignored) and no gapless handling: the ISO vectors have none,
+// so every sample is presented.
+func aacBaselineDecode(r *container.Reader, id uint32) ([]Audio, error) {
+	tc, err := r.TrackConfig(id)
+	if err != nil {
+		return nil, err
+	}
+	samples, err := r.Samples(id)
+	if err != nil {
+		return nil, err
+	}
+	c, err := newAAC(tc, AudioConfig{})
+	if err != nil {
+		return nil, err
+	}
+	c.(*aacDecoder).parser.sbrOf(aacIDSCE, 0).psBaselineTest = true
+	var out []Audio
+	for _, s := range samples {
+		a, err := c.decode(s.Data)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a...)
+	}
+	return out, nil
 }

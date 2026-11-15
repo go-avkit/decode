@@ -9,8 +9,8 @@ Part of [go-avkit](https://go-avkit.github.io): [documentation](https://go-avkit
 Video and audio decoders for [avkit](https://github.com/go-avkit/avkit), pure Go,
 no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
 (ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10, 4:2:0. Audio: FLAC, MP3 and
-Opus, AAC-LC and HE-AAC v1 (SBR) since v0.6.0, and HE-AAC v2 (Parametric Stereo,
-baseline mixing: procedure A, IPD/OPD ignored) since v0.7.0, about 1.4 to 1.5 times
+Opus, AAC-LC and HE-AAC v1 (SBR) since v0.6.0, and HE-AAC v2 (Parametric Stereo)
+since v0.7.0, with the full profile (procedure B, IPD/OPD) since its next release, about 1.4 to 1.5 times
 ffmpeg's CPU time on one core (see [Audio](#audio)). Waves D1 to D3 of
 [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89); see
 [Audio](#audio) for what each codec is checked against.
@@ -192,11 +192,13 @@ signals SBR (object type 5 or 29, or the backward compatible extension) and does
 PS absent is announced as stereo from the first frame**, as ffmpeg's output is, because
 `Audio.Channels` and the layout are those of the track and cannot change mid-stream; its
 second channel is the right channel PS makes from the mono signal, and a copy of the first
-channel while the stream sends no PS parameters. **The decoder does baseline
-mixing**: procedure A for every ICC mode (3 to 5 included), IPD/OPD ignored, and 34-band
-streams keep 34 bands (a baseline decoder maps them to 20, so `al_sbr_ps_06` matches its
-`_ur` reference but not `_bl`, 2226 LSB off); the full profile (procedure B, IPD/OPD) is
-later work. On 801 mono PS files of
+channel while the stream sends no PS parameters. **The decoder applies the full PS
+profile** (`docs/aac-ps-design.md`, "PS5 as built"): procedure B for ICC modes 3 to 5 and
+IPD/OPD with their smoothing and interpolation, as the `_ur` references of ISO's vectors
+are; and 34-band streams keep 34 bands (a baseline decoder maps them to 20, so
+`al_sbr_ps_06` matches `_ur` but not `_bl`, 2226 LSB off). v0.7.0 mixed with baseline
+mixing (procedure A for every ICC mode, IPD/OPD ignored): the 801 library files use
+neither feature and decode to the same samples. On 801 mono PS files of
 the author's library the output has ffmpeg 9.0.2's length and channel count, and is
 within 1.1e-5 of its samples (median 4.4e-7, 99th percentile 2.7e-6; the worst file's
 error is the same on L and R, so it is in the mono signal before the mixer, in ffmpeg's
@@ -220,9 +222,11 @@ reports the counts as information. ISO/IEC 14496-26 conformance
 (`TestAACConformance`, 15 pinned vectors, a provisional 1 LSB bound): 12 pass at 0.002
 to 0.006 LSB; `al03` (window sequences out of order) and `al18`, `al19` (noise
 substitution: the generator is not normative) do not yet. The PS vectors `al_sbr_ps_00`
-to `06` (`TestAACConformancePS`): 00, 01, 02, 05 and 06 against ISO's `_ur` references,
-03 (procedure B) and 04 (IPD/OPD) against the baseline references `_bl`, all seven at
-0.033 LSB. A program_config_element
+to `06` (`TestAACConformancePS`): all seven against ISO's `_ur` references (full
+profile; 03 uses procedure B and 04 IPD/OPD), at 0.033 LSB. On the written streams
+ffmpeg's output is matched to 1e-6 with procedure B (S18) and with IPD/OPD (S16), where
+ffmpeg's rule for the image rows of the phases is the one test switch away: ISO's
+`al_sbr_ps_04` follows the specification's rule (0.033 LSB), not ffmpeg's (0.76 LSB). A program_config_element
 that names no layout decodes with its channels numbered in element order
 (`Audio.Layout` is zero).
 

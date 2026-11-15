@@ -620,6 +620,28 @@ Q11 is settled) and S19 are measured and their differences reported.
   specification. The library's PS files are all at one SBR rate pair. A conformance
   stream at a low rate would show a rate-dependent standard.
 
+**Settled by PS5** (docs/aac-ps-design.md, "PS5 as built"). Section 6.1 and 6.2 were
+implemented as written and match ISO's `al_sbr_ps_03_ur` and `04_ur` at 0.033 LSB.
+
+- **Q5** is decided by ISO's `al_sbr_ps_04_ur`: the derived rule (conjugate gains on the
+  rows of negative centre frequency, over the whole interpolation) gives 0.033 LSB,
+  ffmpeg's rule 0.761 LSB, no conjugation 2.08 LSB.
+- **Q11**: the rotation of section 6.1 matches both ffmpeg (S18, S18b to S18e, 2.6e-7 at
+  worst) and ISO (`al_sbr_ps_03_ur`).
+- **Q12**: the decoder applies the full profile by default, as the `_ur` references do;
+  baseline mixing is a test switch.
+- **Section 6.2, history of the smoothing:** "angle 0" is the unit phasor `e^{j0}` (a zero
+  complex history fails S16b at its first frame).
+- **Section 6.2, "when it is off":** a frame whose extension turns IPD/OPD off is real
+  (imaginary parts zero at once), and it leaves the stored imaginary parts of the carried
+  matrices as they were, so that the next frame with phases starts from them (S16e;
+  zeroing them gives a 3e-2 difference from ffmpeg).
+- **Q16 (new): phases across a 20 to 34 layout switch.** ffmpeg's output differs from this
+  specification's reading (history reset to angle 0, carried matrix remapped by the value
+  maps, its imaginary parts included) for one or two frames after the switch, by up to
+  6e-2 (S16d). Remapping or zeroing the imaginary parts, keeping or zeroing the history,
+  do not close it. No ISO vector switches layout with phases; measured, not bounded.
+
 ## 9. Read log
 
 Everything opened for this specification. Copyleft code was read to learn what is

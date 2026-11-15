@@ -175,6 +175,82 @@ func psRefGains(db, icc int, eq7 bool) [4]*big.Float {
 	return [4]*big.Float{bmul(cL, cp), bmul(cL, sp), bmul(cR, cm), bmul(cR, sm)}
 }
 
+// psRefGainsB are the four gains of procedure B (section 6.1) for an IID in dB and an ICC
+// index, at 192 bits, from a numerical eigendecomposition of the target covariance (the
+// decoder evaluates the closed form): the covariance of the two mixed channels has the
+// powers c_L^2 and c_R^2 (summing to 2) and the correlation rho' = max(rho, 0.05); one
+// Jacobi rotation diagonalises it; the major axis, in the first quadrant, carries the
+// mono signal and the minor one the decorrelated signal.
+func psRefGainsB(db, icc int) [4]*big.Float {
+	a := bnew().SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(max(db, -db))), nil))
+	c := bigRoot(a, 20)
+	if db < 0 {
+		c = bquo(bi(1), c)
+	}
+	cR := bquo(bsqrt(bi(2)), bsqrt(badd(bi(1), bmul(c, c))))
+	cL := bmul(c, cR)
+	rho := bdec(psRefICC[icc])
+	if floor := bdec("0.05"); rho.Cmp(floor) < 0 {
+		rho = floor
+	}
+	c11, c22, c12 := bmul(cL, cL), bmul(cR, cR), bmul(bmul(cL, cR), rho)
+	tau := bquo(bsub(c22, c11), bmul(bi(2), c12))
+	t := bquo(bi(1), badd(bnew().Abs(tau), bsqrt(badd(bi(1), bmul(tau, tau)))))
+	if tau.Sign() < 0 {
+		t.Neg(t)
+	}
+	cs := bquo(bi(1), bsqrt(badd(bi(1), bmul(t, t))))
+	sn := bmul(t, cs)
+	l1, l2 := bsub(c11, bmul(t, c12)), badd(c22, bmul(t, c12)) // eigenvalues of (cs, -sn) and (sn, cs)
+	major := [2]*big.Float{cs, bnew().Neg(sn)}
+	lM, lm := l1, l2
+	if l2.Cmp(l1) > 0 {
+		major, lM, lm = [2]*big.Float{sn, cs}, l2, l1
+	}
+	if major[0].Sign() < 0 || major[0].Sign() == 0 && major[1].Sign() < 0 {
+		major = [2]*big.Float{bnew().Neg(major[0]), bnew().Neg(major[1])}
+	}
+	if lm.Sign() < 0 {
+		lm = bnew()
+	}
+	sM, sm := bsqrt(lM), bsqrt(lm)
+	u1, u2 := major[0], major[1]
+	return [4]*big.Float{bmul(u1, sM), bnew().Neg(bmul(u2, sm)), bmul(u2, sM), bmul(u1, sm)}
+}
+
+// bigAtan2 is the argument of x + iy in (-pi, pi].
+func bigAtan2(y, x *big.Float) *big.Float {
+	switch {
+	case x.Sign() > 0:
+		return bigAtan(bquo(y, x))
+	case x.Sign() < 0:
+		a := bigAtan(bquo(y, x))
+		if y.Sign() >= 0 {
+			return badd(a, bigPi())
+		}
+		return bsub(a, bigPi())
+	}
+	half := bquo(bigPi(), bi(2))
+	if y.Sign() < 0 {
+		half.Neg(half)
+	}
+	return half
+}
+
+// A cbig is a complex number at 192 bits.
+type cbig struct{ re, im *big.Float }
+
+func (a cbig) mul(b cbig) cbig {
+	return cbig{bsub(bmul(a.re, b.re), bmul(a.im, b.im)), badd(bmul(a.re, b.im), bmul(a.im, b.re))}
+}
+func (a cbig) conj() cbig { return cbig{a.re, bnew().Neg(a.im)} }
+
+// psRefPhasor is e^{j k pi/4}.
+func psRefPhasor(k int) cbig {
+	s, c := bigSinCos(bquo(bmul(bigPi(), bi(int64(k))), bi(4)))
+	return cbig{c, s}
+}
+
 // psRefCentre24 are the centre frequencies of the all-pass rows in 24ths of a QMF band:
 // the split rows as the specification lists them (section 3.3), then q + 1/2.
 var psRefCentre24 = [2][]int{
@@ -250,6 +326,8 @@ type psRefMix struct {
 	avg     [psMaxBands]*big.Float
 	dev     [psMaxBands]*big.Float
 	store   [psMaxEnv + 1][psMaxBands][4]*big.Float // the matrices of the last frame by envelope
+	storeIm [psMaxEnv + 1][psMaxBands][4]*big.Float // their imaginary parts (IPD/OPD)
+	hist    [2][psMaxBands][2]cbig                  // the phasors of the last two envelopes of IPD and OPD, by phase band
 	imp     map[[2]int][]cdd
 	gains   map[[3]int][4]*big.Float
 }
@@ -257,10 +335,11 @@ type psRefMix struct {
 func newPSRefMix(eq7 bool) *psRefMix {
 	r := &psRefMix{eq7: eq7, imp: map[[2]int][]cdd{}, gains: map[[3]int][4]*big.Float{}}
 	r.resetTransient()
+	r.resetPhases()
 	for e := range r.store {
 		for b := range r.store[e] {
 			for i := range r.store[e][b] {
-				r.store[e][b][i] = bnew()
+				r.store[e][b][i], r.storeIm[e][b][i] = bnew(), bnew()
 			}
 		}
 	}
@@ -273,7 +352,31 @@ func (r *psRefMix) resetTransient() {
 	}
 }
 
-func (r *psRefMix) gain(iid, icc int, fine bool) [4]*big.Float {
+// resetPhases sets the history of the phase smoothing to angle 0.
+func (r *psRefMix) resetPhases() {
+	for i := range r.hist {
+		for b := range r.hist[i] {
+			r.hist[i][b] = [2]cbig{{bi(1), bnew()}, {bi(1), bnew()}}
+		}
+	}
+}
+
+// smooth pushes the phase index k into the history of (parameter, band) and returns the
+// unit phasor of the smoothed phase: the argument of 0.25 u[e-2] + 0.5 u[e-1] + u[e],
+// taken with an arctangent and put back through sine and cosine.
+func (r *psRefMix) smooth(param, band, k int) cbig {
+	h := &r.hist[param][band]
+	u := psRefPhasor(k)
+	sum := cbig{
+		badd(badd(bmul(bdec("0.25"), h[1].re), bmul(bdec("0.5"), h[0].re)), u.re),
+		badd(badd(bmul(bdec("0.25"), h[1].im), bmul(bdec("0.5"), h[0].im)), u.im),
+	}
+	h[1], h[0] = h[0], u
+	s, c := bigSinCos(bigAtan2(sum.im, sum.re))
+	return cbig{c, s}
+}
+
+func (r *psRefMix) gain(iid, icc int, fine, procB bool) [4]*big.Float {
 	var db int
 	if fine {
 		db = int(psIIDdBFine[iid+15])
@@ -281,12 +384,59 @@ func (r *psRefMix) gain(iid, icc int, fine bool) [4]*big.Float {
 		db = int(psIIDdBCoarse[iid+7])
 	}
 	key := [3]int{db, icc, 0}
+	if procB {
+		key[2] = 1
+	}
 	if g, ok := r.gains[key]; ok {
 		return g
 	}
-	g := psRefGains(db, icc, r.eq7)
+	var g [4]*big.Float
+	if procB {
+		g = psRefGainsB(db, icc)
+	} else {
+		g = psRefGains(db, icc, r.eq7)
+	}
 	r.gains[key] = g
 	return g
+}
+
+// phaseIndices maps the n IPD or OPD indices of envelope e to the nPh phase bands of the
+// layout of nb parameter bands, by the maps of section 4.2 restricted to the phase bands
+// (section 6.2): 5 -> 11 and 5 -> 17 from the 10-band maps with the missing band 0, 17 ->
+// 11 and 11 -> 17 from the 34 -> 20 and 20 -> 34 maps.
+func psRefPhaseIndices(src []int8, n, nb, nPh int) []int {
+	out := make([]int, nPh)
+	switch {
+	case n == 5:
+		var mid [10]int8
+		copy(mid[:], src[:5])
+		var full [psMaxBands]int8
+		psRemapBands(full[:], mid[:], 10, nb)
+		for b := range out {
+			out[b] = int(full[b])
+		}
+	case n == 11 && nb == 20 || n == 17 && nb == 34:
+		for b := range out {
+			out[b] = int(src[b])
+		}
+	case n == 17:
+		var wide [34]int8
+		copy(wide[:], src[:17])
+		var full [20]int8
+		psRemapBands(full[:], wide[:], 34, 20)
+		for b := range out {
+			out[b] = int(full[b])
+		}
+	case n == 11:
+		var wide [20]int8
+		copy(wide[:], src[:11])
+		var full [34]int8
+		psRemapBands(full[:], wide[:], 20, 34)
+		for b := range out {
+			out[b] = int(full[b])
+		}
+	}
+	return out
 }
 
 // psRefOut is one frame of the reference's output: the left and right rows.
@@ -311,29 +461,32 @@ func (r *psRefMix) frame(p *psState, top int, s *[sbrQMFSlots][psMaxRows]complex
 		if !p.is34 {
 			to = 20
 		}
-		for en := range r.store {
-			var next [psMaxBands][4]*big.Float
-			for i := 0; i < 4; i++ {
-				for b := 0; b < to; b++ {
-					e := psMap20to34[b]
-					if !p.is34 {
-						e = psMap34to20[b]
-					}
-					sum := bnew()
-					for j := range e.src {
-						if e.w[j] != 0 {
-							sum = badd(sum, bmul(bi(int64(e.w[j])), r.store[en][e.src[j]][i]))
+		r.resetPhases()
+		for _, store := range []*[psMaxEnv + 1][psMaxBands][4]*big.Float{&r.store, &r.storeIm} {
+			for en := range store {
+				var next [psMaxBands][4]*big.Float
+				for i := 0; i < 4; i++ {
+					for b := 0; b < to; b++ {
+						e := psMap20to34[b]
+						if !p.is34 {
+							e = psMap34to20[b]
 						}
+						sum := bnew()
+						for j := range e.src {
+							if e.w[j] != 0 {
+								sum = badd(sum, bmul(bi(int64(e.w[j])), store[en][e.src[j]][i]))
+							}
+						}
+						next[b][i] = bquo(sum, bi(int64(e.div)))
 					}
-					next[b][i] = bquo(sum, bi(int64(e.div)))
 				}
-			}
-			for b := to; b < psMaxBands; b++ {
-				for i := range next[b] {
-					next[b][i] = bnew()
+				for b := to; b < psMaxBands; b++ {
+					for i := range next[b] {
+						next[b][i] = bnew()
+					}
 				}
+				store[en] = next
 			}
-			r.store[en] = next
 		}
 	}
 	r.started, r.is34 = true, p.is34
@@ -352,11 +505,26 @@ func (r *psRefMix) frame(p *psState, top int, s *[sbrQMFSlots][psMaxRows]complex
 	}
 	// the matrices of every slot, as big floats
 	numEnv, border := p.numEnv, p.border
-	var gain [sbrQMFSlots][psMaxBands][4]dd
-	prev := r.store[p.numEnvOld]
+	var gain, gainIm [sbrQMFSlots][psMaxBands][4]dd
+	phased := p.enableIPDOPD
+	nPh := 11
+	if p.is34 {
+		nPh = 17
+	}
+	procB := p.enableICC && p.iccMode >= 3
+	prev, prevIm := r.store[p.numEnvOld], r.storeIm[p.numEnvOld]
 	r.store[0] = prev
+	if phased {
+		r.storeIm[0] = prevIm
+	}
 	for e := 1; e <= numEnv; e++ {
 		next := prev
+		nextIm := r.storeIm[0] // the imaginary parts of this envelope: zero unless a phase band
+		for b := range nextIm {
+			for i := range nextIm[b] {
+				nextIm[b][i] = bnew()
+			}
+		}
 		var iid, icc [psMaxBands]int8
 		if p.enableIID {
 			psRemapBands(iid[:], p.iid[e-1][:], p.nrIID, nb)
@@ -365,9 +533,25 @@ func (r *psRefMix) frame(p *psState, top int, s *[sbrQMFSlots][psMaxRows]complex
 			psRemapBands(icc[:], p.icc[e-1][:], p.nrICC, nb)
 		}
 		for b := 0; b < nb; b++ {
-			next[b] = r.gain(int(iid[b]), int(icc[b]), p.iidQuant)
+			next[b] = r.gain(int(iid[b]), int(icc[b]), p.iidQuant, procB)
+		}
+		if phased {
+			ipd := psRefPhaseIndices(p.ipd[e-1][:], p.nrIPDOPD, nb, nPh)
+			opd := psRefPhaseIndices(p.opd[e-1][:], p.nrIPDOPD, nb, nPh)
+			for b := 0; b < nPh; b++ {
+				oi, oo := r.smooth(0, b, ipd[b]), r.smooth(1, b, opd[b])
+				orot := oo.mul(oi.conj())
+				rot := [4]cbig{oo, oo, orot, orot}
+				for i := 0; i < 4; i++ {
+					re, im := bmul(next[b][i], rot[i].re), bmul(next[b][i], rot[i].im)
+					next[b][i], nextIm[b][i] = re, im
+				}
+			}
 		}
 		r.store[e] = next
+		if phased {
+			r.storeIm[e] = nextIm
+		}
 		b0, b1 := int(border[e-1]), int(border[e])
 		for n := b0 + 1; n <= b1; n++ {
 			frac := bquo(bi(int64(n-b0)), bi(int64(b1-b0)))
@@ -375,10 +559,14 @@ func (r *psRefMix) frame(p *psState, top int, s *[sbrQMFSlots][psMaxRows]complex
 				for i := 0; i < 4; i++ {
 					v := badd(prev[b][i], bmul(frac, bsub(next[b][i], prev[b][i])))
 					gain[n][b][i] = ddFromBig(v)
+					if phased && b < nPh {
+						vi := badd(prevIm[b][i], bmul(frac, bsub(nextIm[b][i], prevIm[b][i])))
+						gainIm[n][b][i] = ddFromBig(vi)
+					}
 				}
 			}
 		}
-		prev = next
+		prev, prevIm = next, nextIm
 	}
 	// the transient gain
 	var tg [sbrQMFSlots][psMaxBands]dd
@@ -412,6 +600,7 @@ func (r *psRefMix) frame(p *psState, top int, s *[sbrQMFSlots][psMaxRows]complex
 		b := dl.band[k]
 		hist := r.s[k]
 		base := len(hist) - sbrQMFSlots
+		image := k < nSplit && psRefCentre24[b2idx(p.is34)][k] < 0
 		var h []cdd
 		switch {
 		case k < dl.nAP:
@@ -450,9 +639,16 @@ func (r *psRefMix) frame(p *psState, top int, s *[sbrQMFSlots][psMaxRows]complex
 			}
 			d = d.scale(tg[n][b])
 			sv := cddOf(hist[base+n])
-			g := gain[n][b]
-			out.l[n][k] = sv.scale(g[psGLs]).add(d.scale(g[psGLd]))
-			out.r[n][k] = sv.scale(g[psGRs]).add(d.scale(g[psGRd]))
+			g, gi := gain[n][b], gainIm[n][b]
+			if image {
+				// a row of negative centre frequency takes the conjugate gains
+				for i := range gi {
+					gi[i] = gi[i].neg()
+				}
+			}
+			c := func(i int) cdd { return cdd{g[i], gi[i]} }
+			out.l[n][k] = sv.mul(c(psGLs)).add(d.mul(c(psGLd)))
+			out.r[n][k] = sv.mul(c(psGRs)).add(d.mul(c(psGRd)))
 		}
 	}
 	return out

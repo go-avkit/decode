@@ -19,8 +19,9 @@ import (
 // HE-AAC v1 (SBR over AAC-LC, aac_sbr*.go) decodes at twice the core rate; PS (HE-AAC
 // v2, aac_ps*.go) is parsed and applied: a mono core that may carry it is announced as
 // stereo (aacConfig.stereoOut) and its second channel is PS's right channel, a copy of
-// the first while the stream sends no PS parameters; the baseline profile (procedure A,
-// IPD/OPD ignored). Not decoded, and
+// the first while the stream sends no PS parameters; the full profile is applied
+// (procedure B for ICC modes 3 to 5, IPD/OPD), baseline mixing is a test switch. Not
+// decoded, and
 // refused with ErrAudioUnsupported: AAC Main, LTP, SSR, 960-sample frames, the
 // downsampled SBR mode, coupling channels, and channel configurations that have no
 // fixed layout (11, 12, 14).
