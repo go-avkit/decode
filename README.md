@@ -10,8 +10,9 @@ Video and audio decoders for [avkit](https://github.com/go-avkit/avkit), pure Go
 no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
 (ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10, 4:2:0. Audio: FLAC, MP3 and
 Opus, AAC-LC and HE-AAC v1 (SBR) since v0.6.0, and HE-AAC v2 (Parametric Stereo)
-since v0.7.0, with the full profile (procedure B, IPD/OPD) since its next release, about 1.4 to 1.5 times
-ffmpeg's CPU time on one core (see [Audio](#audio)). Waves D1 to D3 of
+since v0.7.0, with the full profile (procedure B, IPD/OPD) by default since v0.8.0; on one core it takes
+about 1.6 times ffmpeg's CPU time on an x86 server core and about 1.1 times on an Apple M4,
+indicative (see [Audio](#audio)). Waves D1 to D3 of
 [go-avkit/avkit#89](https://github.com/go-avkit/avkit/issues/89); see
 [Audio](#audio) for what each codec is checked against.
 
@@ -193,9 +194,9 @@ PS absent is announced as stereo from the first frame**, as ffmpeg's output is, 
 `Audio.Channels` and the layout are those of the track and cannot change mid-stream; its
 second channel is the right channel PS makes from the mono signal, and a copy of the first
 channel while the stream sends no PS parameters. **The decoder applies the full PS
-profile** (`docs/aac-ps-design.md`, "PS5 as built"): procedure B for ICC modes 3 to 5 and
+profile by default since v0.8.0** (`docs/aac-ps-design.md`, "PS5 as built"): procedure B for ICC modes 3 to 5 and
 IPD/OPD with their smoothing and interpolation, as the `_ur` references of ISO's vectors
-are; and 34-band streams keep 34 bands (a baseline decoder maps them to 20, so
+are (all 7 of 7 below); and 34-band streams keep 34 bands (a baseline decoder maps them to 20, so
 `al_sbr_ps_06` matches `_ur` but not `_bl`, 2226 LSB off). v0.7.0 mixed with baseline
 mixing (procedure A for every ICC mode, IPD/OPD ignored): the 801 library files use
 neither feature and decode to the same samples. On 801 mono PS files of
@@ -251,17 +252,35 @@ rounds started above load 8 and were discarded):
 
 Mono was not measured (no input at hand). The measured binary is `a36c9fc`.
 
-**HE-AAC v2 (PS applied, since v0.7.0) is slower than ffmpeg: about 1.4 to 1.5 times its
-`utime` on one core**, an open defect
+**HE-AAC v2 (PS applied) is slower than ffmpeg on one core: about 1.6 times its `utime` on
+an x86 server core and about 1.1 times on an Apple M4**, an open defect
 ([#77](https://github.com/go-avkit/decode/issues/77); the SBR share is
-[#47](https://github.com/go-avkit/decode/issues/47)). Same method (decode-only
-`BenchmarkAACDecodeReuse` against the `utime` of a whole ffmpeg 9.0.2 `-threads 1`
-process, a 620 s HE-AAC v2 file, Go 1.27.4, Apple M4 Max), after the speed work of
-[#80, #81 and #82](https://github.com/go-avkit/decode/pulls): **1.37 at a 1-minute load of
-1.6, and 1.45 to 1.47 at a load of 6 to 7**, so the ratio moves with the machine's load
-and the gap is stated as a range. It was 1.74 before that work (load 7.37 to 7.81). The
-second synthesis bank and the decorrelator and mixer are the largest shares of the
-remaining time.
+[#47](https://github.com/go-avkit/decode/issues/47)); no parity is claimed. It was 1.74 on
+the M4 before the speed work of v0.8.0 (load 7.37 to 7.81). What was measured for v0.8.0,
+the same method (decode-only `BenchmarkAACDecodeReuse` against the `utime` of a whole
+`ffmpeg -threads 1 -benchmark` process, Go 1.27.4, 5 to 11 interleaved rounds, the 1-minute
+load recorded before each):
+
+| machine, date | input (length) | decode / ffmpeg | load | ffmpeg |
+|---|---|---|---|---|
+| x86: AMD Ryzen 9 7950X (Zen 4), Ubuntu 24.04, `taskset -c 2`, 2026-11-15 | HE-AAC v2 (620 s) | 1.62 (692 ms against 427 ms; 1.60 to 1.65 in three runs of that day) | 0.13 to 0.93 | 6.1.1 |
+| same | AAC-LC 5.1, 48 kHz (609 s) | 1.24 (715 ms against 578 ms; 1.24 to 1.27 in earlier runs) | 0.13 to 0.93 | 6.1.1 |
+| same | AAC-LC stereo, 48 kHz (609 s) | 0.94 (283 ms against 301 ms; 0.90 to 0.95) | 0.13 to 0.93 | 6.1.1 |
+| same | AAC-LC stereo, impulses every 50 ms (300 s, made with ffmpeg's encoder) | 1.04 (144 ms against 138 ms) | 0.13 to 0.93 | 6.1.1 |
+| Apple M4 Max, 2026-11-15, **indicative** | HE-AAC v2 (620 s) | 1.11 (689 ms against 623 ms; main before it 1.12) | 7.0 to 7.7 | 9.0.2 |
+
+The M4 figure is at a load just under the gate of 8 and moves with it (1.37 to 1.47 earlier
+in the same work at a load of 1.6 and 6 to 7); it is not refreshed at a quieter load. The
+x86 rows are measured on a host with another user, loads under 1. The x86 ratios are
+against ffmpeg 6.1.1 (Ubuntu's build), the M4 ones against 9.0.2, so they are not a
+like-for-like comparison of the two machines. The short-block transform
+(8 short windows as 4 pairs of the 128-point DCT-IV) is 27 % faster in its own benchmark on
+the M4 (`BenchmarkAACIMDCTShort`: 1247 ns against 908 ns; load 36, **indicative**); it is
+not visible in the whole-decode ratios above. The changes that moved the HE-AAC v2 ratio
+are the fused DCT-IV pairs and window sums of go-fft and go-simd, and the PS path run
+slot by slot. The decorrelator and mixer, the second synthesis bank and the SBR
+adjustment are the largest shares of what remains (on x86 the decode is instruction
+bound: IPC 4.6).
 
 Opus (RFC 6716: SILK, CELT and hybrid, mono and stereo, mapping family 0): the
 pre-skip of the header is dropped, the output gain it states applied, and an Ogg
