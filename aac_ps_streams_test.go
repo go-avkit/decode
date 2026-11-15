@@ -30,6 +30,7 @@ type psStreamFrame struct {
 	ps      *psFrame // nil: an SBR frame with no ps_data
 	sbrHdr  *sbrHdr  // a new SBR header
 	corrupt bool     // ps_data that does not parse
+	noSBR   bool     // no SBR fill element at all: the core frame alone (SBR drops out)
 }
 
 type psStreamSpec struct {
@@ -484,6 +485,10 @@ func psBuildStream(t testing.TB, spec psStreamSpec) []byte {
 	enc := newPSEnc()
 	var out []byte
 	for i, f := range spec.frames {
+		if f.noSBR {
+			out = append(out, psADTS(cores[i%len(cores)])...)
+			continue
+		}
 		p := sbrPayload{elem: aacIDSCE, grids: [2]sbrGrid{gridFixFix(1, 0), gridFixFix(1, 0)}, first: [2]int{20, 12}, ampKept: hdr.amp}
 		if i == 0 || f.sbrHdr != nil {
 			if f.sbrHdr != nil {
