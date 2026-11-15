@@ -30,7 +30,9 @@ func (a *fivePassAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]
 			win := (*[sbrSynBands]float64)(sbrAnaWindow[64*j:])
 			x := (*[sbrSynBands]float64)(h[sbrAnaTaps-64-64*j:])
 			for n := range a.u {
-				a.u[n] += win[n] * x[63-n]
+				// fused, as the compiler made it on arm64 (it does not fuse on amd64 or
+				// 386, where the old loop rounded twice; MulAddRows fuses everywhere)
+				a.u[n] = math.FMA(win[n], x[63-n], a.u[n])
 			}
 		}
 		a.v[0], a.w[63] = a.u[0], -a.u[0]
