@@ -391,17 +391,23 @@ func (m *psMixer) matrices(p *psState, nb int) {
 		}
 		b0, b1 := int(border[e-1]), int(border[e])
 		for n := b0 + 1; n <= b1; n++ {
+			if n == b1 {
+				copy(m.gain[n][:nb], next[:nb])
+				copy(m.gainIm[n][:nb], nextIm[:nb])
+				clear(m.imStart[n][:nb])
+				continue
+			}
 			f := float64(n-b0) / float64(b1-b0)
+			// the interpolation of every band, the four gains unrolled
+			gn, pv, nx := m.gain[n][:nb], prev[:nb], next[:nb]
+			for b := range gn {
+				p, q, g := &pv[b], &nx[b], &gn[b]
+				g[0] = p[0] + f*(q[0]-p[0])
+				g[1] = p[1] + f*(q[1]-p[1])
+				g[2] = p[2] + f*(q[2]-p[2])
+				g[3] = p[3] + f*(q[3]-p[3])
+			}
 			for b := 0; b < nb; b++ {
-				if n == b1 {
-					m.gain[n][b] = next[b]
-					m.gainIm[n][b] = nextIm[b]
-					m.imStart[n][b] = psGain{}
-					continue
-				}
-				for i := range psNGains {
-					m.gain[n][b][i] = prev[b][i] + f*(next[b][i]-prev[b][i])
-				}
 				if m.phased && b < m.nPh {
 					for i := range psNGains {
 						m.gainIm[n][b][i] = prevIm[b][i] + f*(nextIm[b][i]-prevIm[b][i])
