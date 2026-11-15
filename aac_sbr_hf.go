@@ -3,6 +3,12 @@
 
 package decode
 
+import (
+	"unsafe"
+
+	"github.com/go-simd/floats"
+)
+
 // SBR high frequency generation (HE-AAC v1): from the analysis of the core signal
 // (the low band) it builds the subband samples above the crossover by copying
 // low-band subbands up, patch by patch, through a prediction-error filter whose
@@ -87,18 +93,18 @@ func (d *sbrChanDSP) inverseFilter(k0 int) {
 // sbrPredictor returns the coefficients a0, a1 of the prediction-error filter of
 // the 40 samples x, zero for a degenerate or failed estimate.
 func sbrPredictor(x *[sbrLowSlots]complex128) (a0, a1 complex128) {
-	var r11, r22 float64
-	var r01, r12, r02 complex128
-	for i := 0; i < sbrLowSlots-2; i++ {
-		c := sbrConj(x[i])
-		r22 += sbrAbs2(x[i])
-		r12 += x[i+1] * c
-		r02 += x[i+2] * c
-	}
-	for i := 1; i < sbrLowSlots-1; i++ {
-		r11 += sbrAbs2(x[i])
-		r01 += x[i+1] * sbrConj(x[i])
-	}
+	// The five sums are go-simd kernels over the float64 view of x: the energies are the
+	// dot product of the view with itself, the correlations the conjugated complex dot
+	// product of the sequence with itself shifted by one or two slots (within the
+	// kernels' stated bounds, (n/4+8) units of the sum of absolute products).
+	f := unsafe.Slice((*float64)(unsafe.Pointer(&x[0])), 2*sbrLowSlots)
+	const n = sbrLowSlots - 2
+	r22 := floats.Dot(f[:2*n], f[:2*n])
+	r11 := floats.Dot(f[2:2*n+2], f[2:2*n+2])
+	r12r, r12i := floats.CDotC(f[:2*n], f[2:2*n+2])
+	r02r, r02i := floats.CDotC(f[:2*n], f[4:2*n+4])
+	r01r, r01i := floats.CDotC(f[2:2*n+2], f[4:2*n+4])
+	r12, r02, r01 := complex(r12r, r12i), complex(r02r, r02i), complex(r01r, r01i)
 	det := r11*r22 - sbrAbs2(r12)/(1+1e-6)
 	if det != 0 {
 		a1 = sbrDiv(r01*r12-r02*complex(r11, 0), det)
