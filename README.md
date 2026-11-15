@@ -174,7 +174,7 @@ divergences each with its issue:
 | FLAC (`fLaC`) | [`mewkiz/flac`](https://github.com/mewkiz/flac) v1.0.14 | Unlicense (public domain) | `s16le` up to 16 bits, `s32le` (left-justified) up to 24 | bit-exact, 13 fixtures |
 | MP3 (`mp3`) | [`tphakala/go-mp3`](https://github.com/tphakala/go-mp3) v0.3.0 | MIT (a port of minimp3, CC0) | `f32le` | max error 1.07e-6, SNR at least 127.9 dB, 10 fixtures, sample counts equal |
 | Opus (`Opus`) | [`pion/opus`](https://github.com/pion/opus) v0.1.0 | MIT | `f32le`, 48 kHz | opus_compare passes on all 12 RFC 8251 vectors, stereo and mono, quality 66.3 to 99.8 % |
-| AAC-LC, HE-AAC v1 and v2 (`mp4a`) | in this package, from ISO/IEC 14496-3 | BSD-3-Clause | `f32le` | error against the exact result about half of ffmpeg's on 5 fixtures; HE-AAC within 3e-6 of ffmpeg on 4; PS within 1.1e-5 of ffmpeg on 801 library files; 12 of 15 AAC-LC and 5 of 7 PS ISO conformance vectors, see below |
+| AAC-LC, HE-AAC v1 and v2 (`mp4a`) | in this package, from ISO/IEC 14496-3 | BSD-3-Clause | `f32le` | error against the exact result about half of ffmpeg's on 5 fixtures; HE-AAC within 3e-6 of ffmpeg on 4; PS within 1.1e-5 of ffmpeg on 801 library files; 12 of 15 AAC-LC and 7 of 7 PS ISO conformance vectors (at 0.033 LSB), see below |
 
 AAC-LC (mono to 7.1 by channel configuration 1 to 7, 8 kHz to 96 kHz; M/S and
 intensity stereo, perceptual noise substitution, TNS, pulses, short windows): written
