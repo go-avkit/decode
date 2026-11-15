@@ -8,11 +8,12 @@ require (
 	github.com/go-avkit/bitstream v0.4.0
 	github.com/go-avkit/h264 v0.9.0
 	github.com/go-dsp/signal v0.2.0
-	github.com/go-fft/fft v0.33.0
+	github.com/go-fft/fft v0.35.1
 	github.com/go-simd/floats v0.22.0
 	github.com/mewkiz/flac v1.0.14
 	github.com/pion/opus v0.1.0
 	github.com/tphakala/go-mp3 v0.3.0
+	golang.org/x/sys v0.49.0
 )
 
 require (
@@ -25,5 +26,4 @@ require (
 	github.com/mewkiz/pkg v0.0.0-20250417130911-3f050ff8c56d // indirect
 	github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 // indirect
 	github.com/tphakala/simd v1.16.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
 )
