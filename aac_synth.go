@@ -339,8 +339,10 @@ func (s *aacSynth) imdctWindow(st *aacChanSynth, ch *aacChannel, coef *[aacFrame
 	}
 	buf := s.buf[:]
 	if ics.short() {
-		for i := 0; i < aacFrameLen; i += aacShortLen {
-			aacMDCTShort.inverse(buf[i:i+aacShortLen], coef[i:i+aacShortLen], s.scrShort)
+		// the 8 short windows, two at a time (4 DCTMixedPair of 128 points)
+		for i := 0; i < aacFrameLen; i += 2 * aacShortLen {
+			aacMDCTShort.inversePair(buf[i:i+aacShortLen], buf[i+aacShortLen:i+2*aacShortLen],
+				coef[i:i+aacShortLen], coef[i+aacShortLen:i+2*aacShortLen], s.scrShort)
 		}
 	} else {
 		aacMDCTLong.inverse(buf, coef[:], s.scrLong)
