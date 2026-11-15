@@ -50,6 +50,23 @@ var (
 	ErrClosed = errors.New("decode: use of a closed decoder")
 )
 
+// CodecError is returned when a track's sample entry names a video codec this
+// package does not decode (VP8, VP9, AV1, MPEG-4 Part 2, ...). It names the
+// codec, as the container states it, so that a sound file is not reported as a
+// corrupt one: the samples are never handed to a parser of another codec. It
+// matches ErrUnsupported with errors.Is; errors.As reaches the fourcc.
+type CodecError struct {
+	// Codec is the sample entry's four characters.
+	Codec string
+}
+
+func (e *CodecError) Error() string {
+	return fmt.Sprintf("decode: codec %q is not supported (H.264 and HEVC are decoded)", e.Codec)
+}
+
+// Is reports a CodecError as ErrUnsupported.
+func (e *CodecError) Is(target error) bool { return target == ErrUnsupported }
+
 // Default limits. A stream is untrusted input: the picture size in its
 // sequence parameter set sizes every buffer the decoder allocates, so it is
 // bounded before the first of them is.

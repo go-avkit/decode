@@ -1,0 +1,4 @@
+go test fuzz v1
+string("hvc1")
+[]byte("\x40\x01")
+[]byte("\x44\x01")
