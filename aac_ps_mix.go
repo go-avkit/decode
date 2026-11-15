@@ -301,11 +301,14 @@ type psMixer struct {
 	// transient detector, per parameter band
 	peak, avg, dev [psMaxBands]float64
 
-	// in[k] holds the last psHist slots of row k's input, then the current frame's;
-	// w[k][m] the internal signal of link m of all-pass row k, its slot n at index
-	// psLinkDelay[m]+n, the delayed values in front.
-	in [psMaxRows][psHist + sbrQMFSlots]complex128
-	w  [psMaxAllPass][3][psLinkSpan]complex128
+	// Slot-major, so that the work of a slot runs along contiguous rows: in[s] holds the
+	// input rows of slot s, the last psHist slots of the previous frame first and then the
+	// frame's; w[m][s] the internal signal of link m of the all-pass rows, slot n of the
+	// frame at s = psLinkDelay[m]+n, the delayed values in front; dec[n] the decorrelated
+	// signal of the all-pass rows at slot n.
+	in  [psHist + sbrQMFSlots][psMaxRows]complex128
+	w   [3][psLinkSpan][psMaxAllPass]complex128
+	dec [sbrQMFSlots][psMaxAllPass]complex128
 
 	// the frame's scratch
 	gain, gainIm [sbrQMFSlots][psMaxBands]psGain
@@ -318,8 +321,8 @@ type psMixer struct {
 
 // reset clears the decorrelator and the transient detector (a layout switch).
 func (m *psMixer) reset() {
-	m.in = [psMaxRows][psHist + sbrQMFSlots]complex128{}
-	m.w = [psMaxAllPass][3][psLinkSpan]complex128{}
+	m.in = [psHist + sbrQMFSlots][psMaxRows]complex128{}
+	m.w = [3][psLinkSpan][psMaxAllPass]complex128{}
 	m.peak, m.avg, m.dev = [psMaxBands]float64{}, [psMaxBands]float64{}, [psMaxBands]float64{}
 	// the phase history before the first envelope, and after a layout switch, is angle 0
 	for i := range m.hist {
@@ -356,14 +359,22 @@ func (m *psMixer) switchTo(is34 bool) {
 
 // clearAbove zeroes the past of every row of a QMF band at or above top, the SBR top.
 func (m *psMixer) clearAbove(dl *psDecLayout, top int) {
+	// the QMF band of a row never decreases (TestPSRowsBelow): the rows at or above top
+	// are the trailing ones, from kt
+	kt := dl.rows
 	for k := 0; k < dl.rows; k++ {
-		if int(dl.qmf[k]) < top {
-			continue
+		if int(dl.qmf[k]) >= top {
+			kt = k
+			break
 		}
-		clear(m.in[k][:psHist])
-		if k < dl.nAP {
-			for j := range m.w[k] {
-				clear(m.w[k][j][:psLinkDelay[j]])
+	}
+	for s := 0; s < psHist; s++ {
+		clear(m.in[s][kt:dl.rows])
+	}
+	if kt < dl.nAP {
+		for j := range m.w {
+			for s := 0; s < psLinkDelay[j]; s++ {
+				clear(m.w[j][s][kt:dl.nAP])
 			}
 		}
 	}
@@ -516,89 +527,107 @@ func (m *psMixer) apply(h *psHybrid, p *psState, top int) {
 	m.clearAbove(dl, top)
 	m.matrices(p, dl.nb)
 	m.transient(&h.rows, dl)
-	for k := 0; k < dl.rows; k++ {
-		m.row(h, dl, k)
+	m.process(h, dl)
+}
+
+// process decorrelates and mixes the frame in h.rows, and keeps the history of the next.
+func (m *psMixer) process(h *psHybrid, dl *psDecLayout) {
+	m.decorrelate(h, dl)
+	m.mix(h, dl)
+	// the last psHist slots of the frame are the history of the next
+	copy(m.in[:psHist], m.in[sbrQMFSlots:])
+	for j := range m.w {
+		copy(m.w[j][:psLinkDelay[j]], m.w[j][sbrQMFSlots:])
 	}
 }
 
-// row decorrelates and mixes row k over the frame's slots.
-func (m *psMixer) row(h *psHybrid, dl *psDecLayout, k int) {
-	b := dl.band[k]
-	in := &m.in[k]
+// decorrelate runs the all-pass rows over the frame, a slot at a time: the three links
+// along the rows of the slot, which are independent and contiguous. It takes the input rows
+// of the frame into m.in first (the mixing overwrites h.rows in place).
+func (m *psMixer) decorrelate(h *psHybrid, dl *psDecLayout) {
 	for n := range h.rows {
-		in[psHist+n] = h.rows[n][k]
+		copy(m.in[psHist+n][:dl.rows], h.rows[n][:dl.rows])
 	}
-	// the rows of the phase bands are all-pass rows (TestPSPhaseBandsAreAllPass): the delay
-	// rows, QMF 23 and up, never carry phases
-	phased := m.phased && int(b) < m.nPh && k < dl.nAP
-	switch {
-	case k < dl.nAP:
-		ap := &dl.ap[k]
-		w := &m.w[k]
-		var d [sbrQMFSlots]complex128 // the decorrelated signal of a phased row, before the transient gain
-		// the three links written out, the delays 3, 4 and 5 constants
-		w0, w1, w2 := &w[0], &w[1], &w[2]
-		phi, q0, q1, q2 := ap.phi, ap.q[0], ap.q[1], ap.q[2]
-		cq0, cq1, cq2, c0, c1, c2 := ap.cq[0], ap.cq[1], ap.cq[2], ap.c[0], ap.c[1], ap.c[2]
-		for n := range h.rows {
-			x := phi * in[psHist+n-psPreDelay]
-			old := w0[n]
-			cur := x + cq0*old
-			w0[3+n] = cur
-			x = q0*old - complex(c0*real(cur), c0*imag(cur))
-			old = w1[n]
-			cur = x + cq1*old
-			w1[4+n] = cur
-			x = q1*old - complex(c1*real(cur), c1*imag(cur))
-			old = w2[n]
-			cur = x + cq2*old
-			w2[5+n] = cur
-			x = q2*old - complex(c2*real(cur), c2*imag(cur))
-			if phased {
-				d[n] = x
+	nAP := dl.nAP
+	ap := dl.ap[:nAP]
+	for n := 0; n < sbrQMFSlots; n++ {
+		inp := m.in[psHist+n-psPreDelay][:nAP]
+		old0, new0 := m.w[0][n][:nAP], m.w[0][3+n][:nAP]
+		old1, new1 := m.w[1][n][:nAP], m.w[1][4+n][:nAP]
+		old2, new2 := m.w[2][n][:nAP], m.w[2][5+n][:nAP]
+		out := m.dec[n][:nAP]
+		for k := range out {
+			a := &ap[k]
+			x := a.phi * inp[k]
+			old := old0[k]
+			cur := x + a.cq[0]*old
+			new0[k] = cur
+			x = a.q[0]*old - complex(a.c[0]*real(cur), a.c[0]*imag(cur))
+			old = old1[k]
+			cur = x + a.cq[1]*old
+			new1[k] = cur
+			x = a.q[1]*old - complex(a.c[1]*real(cur), a.c[1]*imag(cur))
+			old = old2[k]
+			cur = x + a.cq[2]*old
+			new2[k] = cur
+			x = a.q[2]*old - complex(a.c[2]*real(cur), a.c[2]*imag(cur))
+			out[k] = x
+		}
+	}
+}
+
+// mix writes the left rows (in place in h.rows) and the right rows (m.rr) of every slot
+// from the direct input and the decorrelated signal: the all-pass output for the all-pass
+// rows, the delayed input for the delay rows.
+func (m *psMixer) mix(h *psHybrid, dl *psDecLayout) {
+	nAP, nLong := dl.nAP, dl.nLong
+	for n := range h.rows {
+		s := &m.in[psHist+n]
+		gn, tn := &m.gain[n], &m.tg[n]
+		lo, ro := &h.rows[n], &m.rr[n]
+		for k := 0; k < nAP; k++ {
+			b := dl.band[k]
+			if m.phased && int(b) < m.nPh {
+				// the rows of the phase bands are all-pass rows (TestPSPhaseBandsAreAllPass):
+				// the delay rows, QMF 23 and up, never carry phases
+				lo[k], ro[k] = m.mixPhased(n, k, b, dl, s[k], m.dec[n][k])
 				continue
 			}
-			h.rows[n][k], m.rr[n][k] = psMixPair(in[psHist+n], x, &m.gain[n][b], m.tg[n][b])
+			lo[k], ro[k] = psMixPair(s[k], m.dec[n][k], &gn[b], tn[b])
 		}
-		for j := range w {
-			copy(w[j][:psLinkDelay[j]], w[j][sbrQMFSlots:])
+		if nLong > nAP {
+			d := &m.in[psHist+n-psLongDelay]
+			for k := nAP; k < nLong; k++ {
+				b := dl.band[k]
+				lo[k], ro[k] = psMixPair(s[k], d[k], &gn[b], tn[b])
+			}
 		}
-		if phased {
-			m.mixPhased(h, k, b, dl, &d)
-		}
-	case k < dl.nLong:
-		for n := range h.rows {
-			h.rows[n][k], m.rr[n][k] = psMixPair(in[psHist+n], in[psHist+n-psLongDelay], &m.gain[n][b], m.tg[n][b])
-		}
-	default:
-		for n := range h.rows {
-			h.rows[n][k], m.rr[n][k] = psMixPair(in[psHist+n], in[psHist+n-psShortDelay], &m.gain[n][b], m.tg[n][b])
+		d := &m.in[psHist+n-psShortDelay]
+		for k := max(nLong, nAP); k < dl.rows; k++ {
+			b := dl.band[k]
+			lo[k], ro[k] = psMixPair(s[k], d[k], &gn[b], tn[b])
 		}
 	}
-	copy(in[:psHist], in[sbrQMFSlots:])
 }
 
-// mixPhased mixes row k of a phase band with the complex gains of the slot: the same
-// l = gLs s + gLd d, r = gRs s + gRd d, with complex gains and the transient gain on d.
-// A row of negative centre frequency (image) takes the conjugate gains.
-func (m *psMixer) mixPhased(h *psHybrid, k int, b uint8, dl *psDecLayout, d *[sbrQMFSlots]complex128) {
-	in := &m.in[k]
+// mixPhased mixes row k of a phase band at slot n with the complex gains of the slot: the
+// same l = gLs s + gLd d, r = gRs s + gRd d, with complex gains and the transient gain on
+// d. A row of negative centre frequency (image) takes the conjugate gains.
+func (m *psMixer) mixPhased(n, k int, b uint8, dl *psDecLayout, s, d complex128) (l, r complex128) {
 	sg := 1.0
 	if dl.image[k] && !m.ffImage {
 		sg = -1
 	}
-	ff := m.ffImage && dl.imageFF(k)
-	for n := range h.rows {
-		g, gi := &m.gain[n][b], m.gainIm[n][b]
-		if ff {
-			for i := range gi {
-				gi[i] -= 2 * m.imStart[n][b][i] // minus the start, plus the end
-			}
+	g, gi := &m.gain[n][b], m.gainIm[n][b]
+	if m.ffImage && dl.imageFF(k) {
+		for i := range gi {
+			gi[i] -= 2 * m.imStart[n][b][i] // minus the start, plus the end
 		}
-		s, x := in[psHist+n], complex(m.tg[n][b], 0)*d[n]
-		h.rows[n][k] = complex(g[psGLs], sg*gi[psGLs])*s + complex(g[psGLd], sg*gi[psGLd])*x
-		m.rr[n][k] = complex(g[psGRs], sg*gi[psGRs])*s + complex(g[psGRd], sg*gi[psGRd])*x
 	}
+	x := complex(m.tg[n][b], 0) * d
+	l = complex(g[psGLs], sg*gi[psGLs])*s + complex(g[psGLd], sg*gi[psGLd])*x
+	r = complex(g[psGRs], sg*gi[psGRs])*s + complex(g[psGRd], sg*gi[psGRd])*x
+	return l, r
 }
 
 // imageFF reports whether ffmpeg flips row k (test switch ffImage): the rows of negative
