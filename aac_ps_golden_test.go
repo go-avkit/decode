@@ -9,7 +9,10 @@ import (
 	"encoding/hex"
 	"math"
 	"path/filepath"
+	"runtime"
 	"testing"
+
+	"golang.org/x/sys/cpu"
 )
 
 // psOutputSHA is the SHA-256 of the left then the right PCM, as float32 bits.
@@ -30,12 +33,18 @@ func psOutputSHA(l, r []float32) string {
 // the first matrix), of the two streams below in which SBR drops out, and of he44-ps.aac,
 // recorded from the decoder before the PS stages were restructured to run slot by slot.
 // They pin the output bit for bit: a restructuring that keeps the arithmetic of every
-// sample (the order of the additions, the fused multiply-adds) leaves them unchanged. One
-// table serves every architecture: the PCM is float32 of float64 arithmetic, and the
-// hashes recorded on arm64 (which fuses multiply-adds) and on amd64 (which does not) were
-// identical entry for entry. A change of the arithmetic on purpose records them again and
-// says why.
-var psGolden = map[string]string{
+// sample (the order of the additions, the fused multiply-adds) leaves them unchanged.
+//
+// There are two tables, and the line between them is the DCT pair kernel of go-fft, not
+// the compiler's fusion: the pair of transforms of the QMF banks is a fused kernel on arm64
+// and on amd64 with AVX2+FMA, and two single transforms elsewhere (386, riscv64, loong64,
+// ppc64le, s390x, amd64 without AVX2). The first recording gave identical hashes on arm64
+// and on amd64 (Go fuses multiply-adds on one and not on the other: the PCM is float32 of
+// float64 arithmetic, so that does not reach it) and the CI lanes without the kernel all
+// differed from them, in every entry, and agreed with one another entry for entry
+// (psGoldenPortable, taken from the log of those lanes). A change of the arithmetic on
+// purpose records them again and says why.
+var psGoldenFused = map[string]string{
 	"S01":             "52875a22e6af64ce6039f4910330297556ac9998fe43d3569e18b73149913ebc",
 	"S02":             "cbeb7be081926a6174a1844d02bac7455e70c9ec8947840b35c4d1759d841029",
 	"S03":             "52875a22e6af64ce6039f4910330297556ac9998fe43d3569e18b73149913ebc",
@@ -82,6 +91,64 @@ var psGolden = map[string]string{
 	"he44-ps.aac":     "9a40938beaeb1a033458670a1976943644bf0442088f3ba1057ccf9bb85b17f6",
 }
 
+var psGoldenPortable = map[string]string{
+	"S01":             "f285d1b35f1b77453dba05b13ab044a9bb62b0781825b04dadaaaa0b62cfbc14",
+	"S02":             "eb19cffec5b2161342c586afc06fd52f1821896b7be9c14b4395971b997dcac8",
+	"S03":             "f285d1b35f1b77453dba05b13ab044a9bb62b0781825b04dadaaaa0b62cfbc14",
+	"S04":             "09f909a9bc13bb241283956c1c2b9ca248d44a67000dbbceec55afcc469bb28e",
+	"S05":             "b037e2bd1025b89c1ea269dccfc21f0f7074f9d3c48fe3ffb84720ef13953e5a",
+	"S06":             "179850868c4c3b101589dd8df93599abedaca2d6c5ff0fb100ada9dc9c00ced8",
+	"S06b":            "7547c715a2e093dc87f7c9074f07aad6259e1bb846f35a721924a71f94f4f8ae",
+	"S07":             "3d0b74627bb961d722319010eae7dbd4a351cd3ec33c6c7492d10583df987f69",
+	"S08":             "aee798947e96a29be2690496d452384c1cb0a42c867e6039429e6871fe9e0733",
+	"S09c":            "13a25b48321aa95d43c1007c10cf937ba79f1aa0c95791db1c90524501bafe49",
+	"S09f":            "0411e06a9be65e26fa77d350476958934c9ac980b72839397dc95f8f550e3c24",
+	"S10":             "86b93d6fd0480b876748f559d72606c12ee54aa722e6ce1446c13c7cea27f0b5",
+	"S11":             "67f124a6c1368eaceb830b05e46c7e4ab16d96dc64a89d610077b3eea92fef40",
+	"S12":             "2841f0711736f636594f591a484bdc225da34862b9304ceea1aadf9236c307fb",
+	"S13a":            "34c96c09b907f58cf1187cf343a8bff35782066360a0d89d5cd5ef16aeab1dbe",
+	"S13b":            "d146d832a390538ef06ca8debb898028a621cbebbf45f6707af9fd258a93fbf6",
+	"S14a":            "b2941b593ec5b1e31c5e0a465546eff140761423bd6abb7e1f11190422cff2f2",
+	"S14b":            "57e9bdcbca0cecc58d4c3322492161ea90a1223509d9ac976c0bdbda05ab4860",
+	"S14c":            "95fbc1355dac10706589cc411c23022857f1aedc8d07a4b041792004db5bc0f9",
+	"S15":             "5c6d935682501d6d39e9da690173d3937aa14144d7f8b18c9c849744b6cee560",
+	"S16a20":          "8f0f542fd47cfc99a0e8edcb468a49a632add055c7ffb14360cf4f1399b9f6d8",
+	"S16a34":          "33dba4370db25c8d4da28d7fb3a4647f3122cd43739606cee7be2d3de9c06ddd",
+	"S16b20":          "8fe0b395fbfc14a0117d170c5da7bc4b1e1d3d46726f88bd16c73bdca0828025",
+	"S16b34":          "e8333791438e46d35803e3696067b10c7f049acd868047dc75ab06e8be13d6ef",
+	"S16c20":          "6fbf93241bfe5663b59e0e13940c8175443a337afc27f0482af87f7191f3d1d7",
+	"S16c34":          "e5fdf2d50939d108eac633d637c1a7a474e58109de76b4641ce8d6b77bfe2be7",
+	"S16f":            "ae250efe9a3b7dff051f4610076f82d71d1228ccfec12d53629986197974f688",
+	"S16g":            "51b44165a02e15d59386ee612d6d3403d92f8f146e8aa906a2c367873d729cf0",
+	"S16h":            "45bc6885addebed6991611c2cd661c261de2c4c208f6fd378f224ee7fada45c2",
+	"S16d":            "c6d2f423f7b1666a98db51f79946fecb9a077f74e1627299fbf8f9ef00601551",
+	"S16e":            "79da74acc2402993308a0b974694096669373b59e929d4304c5131b8a0515009",
+	"S17b":            "6b8bb6c6a34b69c1b01b7cb5962b82ffdefb4cc7ec6f16a22972b2043338596b",
+	"S17":             "95ba471bffd65a2374bbb1ad9d50c0fd6490fb40574e09bcae2c6508ddb6cb70",
+	"S18":             "83d8b50288f5c46abfefa617a248863d985fe93441306e506d451419aa85f1eb",
+	"S18b":            "2d6ee480cf99f8bdd2778db1ef7c98626230b20513ba1228ac494e087ba10ab8",
+	"S18c":            "ea29da36922adde38ae72461516cd443d5ba18dd59e2bcdc60c404f16d5f23b5",
+	"S18d":            "5332bc61000a8fcc926b7594da58bfeea821e4a26ce1e22ad0f0815b451da850",
+	"S18e":            "1801dfcd336e700597ef4c5d4b8a5d6cb8ae04255bdf1f8f2e6fc26a308f29d4",
+	"S19c":            "45af49a5fe4ec8ea37dd1a48d43e2c689e9298ea98694aef5c099f6e2eea472a",
+	"S19a":            "10277cfb585de4fbef0cdd2e63599f153d9d197026cdad1e0d864486c8b05b81",
+	"S19b":            "38cba22ecde6aaaa831c21fdbd47098f076320903f5b4c33af86b3527664a611",
+	"drop-S16a34-4-7": "e7172e9ec6d6b54c3eb388629ebc740cccfb79e9dcdcab6aee484363c1c4a8a2",
+	"drop-S09c-8-":    "22d016185f008dd8c77bd3fa3e27b0815c16de779e3e9cb7b70cf3898e10bbae",
+	"he44-ps.aac":     "d86095cb1b5a0b1384c9668e9c2e8bd789fe51ad21c54176d6e7d0ea39a56331",
+}
+
+// psPairFused reports whether go-fft runs the DCT pair as one fused kernel here.
+func psPairFused() bool {
+	switch runtime.GOARCH {
+	case "arm64":
+		return true
+	case "amd64":
+		return cpu.X86.HasAVX2 && cpu.X86.HasFMA
+	}
+	return false
+}
+
 // psDropoutSpecs are two streams in which SBR drops out, the frames of S16a34 (34 bands,
 // IPD/OPD) and of S09c with no SBR fill element at all (withSBR false: PS is suspended
 // and both channels are the mono signal until the SBR frames come back): a hole in the
@@ -114,9 +181,13 @@ func psDropoutSpecs() []psStreamSpec {
 
 // TestPSOutputGolden: the decoded PCM is the recorded one, bit for bit.
 func TestPSOutputGolden(t *testing.T) {
+	golden := psGoldenPortable
+	if psPairFused() {
+		golden = psGoldenFused
+	}
 	check := func(name, got string) {
 		t.Helper()
-		if want, ok := psGolden[name]; !ok || want != got {
+		if want, ok := golden[name]; !ok || want != got {
 			t.Errorf("%s: output SHA-256 %s, recorded %q", name, got, want)
 		}
 	}
