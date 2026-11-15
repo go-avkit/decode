@@ -232,4 +232,8 @@ jobs:
             exit 1
           fi
           echo "running ${{ matrix.goarch }} under $q"
-          GOARCH=${{ matrix.goarch }} go test -exec="$q" ./...
+          # -v prints the time of every test, so that the timeout below is measured from
+          # this log and not guessed (the package passed the default 10 minutes under
+          # qemu until the golden PS test and the slot pipeline came); the timeout is a
+          # ceiling with a margin over the slowest lane's measured time.
+          GOARCH=${{ matrix.goarch }} go test -v -timeout 40m -exec="$q" ./...
