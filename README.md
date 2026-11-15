@@ -224,9 +224,13 @@ to 0.006 LSB; `al03` (window sequences out of order) and `al18`, `al19` (noise
 substitution: the generator is not normative) do not yet. The PS vectors `al_sbr_ps_00`
 to `06` (`TestAACConformancePS`): all seven against ISO's `_ur` references (full
 profile; 03 uses procedure B and 04 IPD/OPD), at 0.033 LSB. On the written streams
-ffmpeg's output is matched to 1e-6 with procedure B (S18) and with IPD/OPD (S16), where
-ffmpeg's rule for the image rows of the phases is the one test switch away: ISO's
-`al_sbr_ps_04` follows the specification's rule (0.033 LSB), not ffmpeg's (0.76 LSB). A program_config_element
+ffmpeg's output is matched to 1e-6 with procedure B (S18). With IPD/OPD, by default S16b
+is 1.4e-2 to 1.9e-2 off ffmpeg, left channel only (S16c up to 4.8e-2), because ffmpeg deviates from the standard on the image
+rows (Q5, confirmed): it negates only the start of the interpolation for them, and at 34
+bands also negates rows 12 and 13, whose centre frequencies are positive. ISO's
+`al_sbr_ps_04` follows the specification's rule (0.033 LSB), not ffmpeg's (0.76 LSB); S16
+is matched to 1e-6 only under the test switch that gives ffmpeg's rule. S16d (phases
+across a 20/34 layout switch) is not bounded (measured 6.0e-2). A program_config_element
 that names no layout decodes with its channels numbered in element order
 (`Audio.Layout` is zero).
 
