@@ -108,8 +108,7 @@ func (a *sbrAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]compl
 		for n := 33; n < sbrSynBands; n++ {
 			a.v[128-2*n], a.w[2*n-65] = -a.u[n], a.u[n]
 		}
-		sbrDCT4.DCT(a.c[:], a.v[:], fft.NormBackward)
-		sbrDCT4.DCT(a.s[:], a.w[:], fft.NormBackward)
+		sbrDCT4.DCTPair(a.c[:], a.s[:], a.v[:], a.w[:], fft.NormBackward)
 		for k := 0; k < sbrAnaBands; k += 2 {
 			low[k][first+l] = complex(a.c[k], a.s[k])
 			low[k+1][first+l] = complex(a.c[k+1], -a.s[k+1])
@@ -137,8 +136,7 @@ func (y *sbrSynthesis) process(out []float32, x *[sbrQMFSlots][sbrSynBands]compl
 		for k, z := range x[l] {
 			y.a[k], y.b[sbrSynBands-1-k] = real(z), imag(z)
 		}
-		sbrDCT4.DCT(y.c[:], y.a[:], fft.NormBackward)
-		sbrDCT4.DCT(y.s[:], y.b[:], fft.NormBackward)
+		sbrDCT4.DCTPair(y.c[:], y.s[:], y.a[:], y.b[:], fft.NormBackward)
 		y.off -= 128
 		v := y.buf[y.off : y.off+128]
 		// the 1/64 of the definition, the 1/2 of the transforms' factor 2 and the
