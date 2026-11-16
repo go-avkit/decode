@@ -9,7 +9,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/gen2brain/h265/hevc"
 	"github.com/go-avkit/avkit/container"
 )
 
@@ -297,79 +296,6 @@ func decodeAll(t *testing.T, raw []byte) ([]Frame, error) {
 	}
 	rest, err := d.Flush()
 	return append(fs, rest...), err
-}
-
-func TestHEVCFrame(t *testing.T) {
-	d, _ := NewHEVC(Config{}, 4)
-	pic := func(depth int) *hevc.Picture {
-		p := &hevc.Picture{
-			Width: 8, Height: 4, CropX: 2, CropY: 2, CropW: 4, CropH: 2, ChromaFormat: 1,
-			BitDepth: depth, BitDepthC: depth, StrideY: 8, StrideC: 4, WidthC: 4, HeightC: 2, POC: 3, Tag: 9,
-		}
-		if depth > 8 {
-			p.Y16, p.Cb16, p.Cr16 = make([]uint16, 32), make([]uint16, 8), make([]uint16, 8)
-			for i := range p.Y16 {
-				p.Y16[i] = uint16(0x100 + i)
-			}
-			return p
-		}
-		p.Y, p.Cb, p.Cr = make([]byte, 32), make([]byte, 8), make([]byte, 8)
-		for i := range p.Y {
-			p.Y[i] = byte(i)
-		}
-		return p
-	}
-	f, err := d.hevcFrame(pic(8))
-	if err != nil || !slices.Equal(f.Y, []byte{18, 19, 20, 21, 26, 27, 28, 29}) || f.Width != 4 || f.Height != 2 || f.PTS != 0 {
-		t.Fatalf("8-bit: %v %+v", err, f)
-	}
-	d.sampleMode = true
-	f, err = d.hevcFrame(pic(10))
-	if err != nil || !slices.Equal(f.Y[:4], []byte{0x12, 0x01, 0x13, 0x01}) || f.BitDepth != 10 || f.PTS != 9 || f.YStride != 8 {
-		t.Fatalf("10-bit: %v %+v", err, f)
-	}
-	p := pic(8)
-	p.Corrupt = true
-	if f, _ = d.hevcFrame(p); !f.Corrupt {
-		t.Error("a corrupt picture was reported whole")
-	}
-
-	bad := map[string]func(*hevc.Picture){
-		"4:2:2":                  func(p *hevc.Picture) { p.ChromaFormat = 2 },
-		"unequal depths":         func(p *hevc.Picture) { p.BitDepthC = 10 },
-		"12 bits":                func(p *hevc.Picture) { p.BitDepth, p.BitDepthC = 12, 12 },
-		"an empty window":        func(p *hevc.Picture) { p.CropW = 0 },
-		"a window off the right": func(p *hevc.Picture) { p.CropX = 6 },
-		"a negative origin":      func(p *hevc.Picture) { p.CropX = -2 },
-		"a window below":         func(p *hevc.Picture) { p.CropH = 4 },
-		"a short plane":          func(p *hevc.Picture) { p.Y = p.Y[:20] },
-		"a short chroma":         func(p *hevc.Picture) { p.Cr = p.Cr[:2] },
-	}
-	for name, mutate := range bad {
-		p := pic(8)
-		mutate(p)
-		if _, err := d.hevcFrame(p); err == nil {
-			t.Errorf("%s was accepted", name)
-		}
-	}
-	p = pic(10)
-	p.Cb16 = nil
-	if _, err := d.hevcFrame(p); !errors.Is(err, ErrBitstream) {
-		t.Errorf("a short 16-bit plane: %v", err)
-	}
-	if _, err := d.hevcFrame(&hevc.Picture{ChromaFormat: 2}); !errors.Is(err, ErrUnsupported) {
-		t.Errorf("unsupported: %v", err)
-	}
-
-	// Every picture of a batch is converted; the first error is the one returned.
-	good, wrong := pic(8), pic(8)
-	wrong.ChromaFormat = 3
-	again := pic(8)
-	again.ChromaFormat = 2
-	fs, err := d.hevcFrames([]*hevc.Picture{wrong, good, again})
-	if len(fs) != 1 || !errors.Is(err, ErrUnsupported) {
-		t.Errorf("a batch: %d pictures, %v", len(fs), err)
-	}
 }
 
 func TestHEVCCloseAndFlush(t *testing.T) {

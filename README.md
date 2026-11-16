@@ -355,19 +355,41 @@ track may return.
 
 ## HEVC
 
-The decoding is [`github.com/gen2brain/h265`](https://github.com/gen2brain/h265)
-v0.2.4 (MIT, pure Go, assembly kernels with a `noasm` build tag), the `hevc`
-package. It decodes more than is claimed here; only what was measured is
-accepted:
+The decoding is [`github.com/go-avkit/h265`](https://github.com/go-avkit/h265)
+v0.21.0 (BSD-3-Clause, pure Go, written from the specification with assembly kernels
+from go-videodsp/kernels and a portable path), behind the same API as before:
+`NewHEVC`, `NewHVCC`, `NewTrack`, `DecodeSample`, `DecodeAnnexB`, `DecodeTrack` and
+`PosterFrame` keep their signatures. **Since v0.10.0 it replaces
+[`github.com/gen2brain/h265`](https://github.com/gen2brain/h265), which is no longer a
+dependency**, with no fallback to it. It decodes more than a `Frame` can carry; only
+what a `Frame` holds is returned:
 
 | Profile | State |
 | --- | --- |
 | Main, Main Still Picture, 4:2:0 8-bit | bit-exact against ffmpeg |
 | Main 10, 4:2:0 10-bit | bit-exact against ffmpeg |
-| Other chroma formats, bit depths other than 8 and 10, unequal luma and chroma depths | refused with `ErrUnsupported` |
+| 4:0:0, 4:2:2, 4:4:4, bit depths other than 8 and 10, unequal luma and chroma depths | refused with `ErrUnsupported`, naming the format (the decoder reads them; a `Frame` cannot carry them, and the API is not widened here) |
+| `cabac_bypass_alignment_enabled_flag`, 3D and screen content coding extensions | refused with `ErrUnsupported` |
+
+A `Frame` owns its planes: the pictures h265 returns are read-only views of its reference
+pictures, and each is copied into the `Frame` (packed, one byte a sample, or a little-endian
+word above eight bits), so what a caller does with a `Frame` never reaches the decoder.
 
 Measured, every picture's MD5 against `ffmpeg -f framemd5` (ffmpeg 9.0.2, one
 thread, native pixel format):
+
+* **Switch from gen2brain/h265 to h265, the whole JCT-VC suite** (HEVC_v1 and RExt, 196
+  bitstreams, `NewHEVC` and `DecodeAnnexB` of this package built on each): the output of 148
+  is **identical** (picture count and the MD5 of every plane, in output order), **0 are
+  lost** (nothing the previous decoder returned is refused or differs), **4 more** are
+  returned (`WPP_HIGH_TP_444_8BIT`, `WPP_AND_TILE_HIGH_TP_444_8BIT`,
+  `WPP_AND_TILE_AND_CABAC_BYPASS_ALIGN_0_HIGH_TP_444_14BIT` and
+  `WPP_AND_TILE_AND_CABAC_EXT_PREC_1_HIGH_TP_444_14BIT`, RExt High Throughput streams of
+  4:2:0 8 bits: the previous decoder refused them as an unimplemented tool). The other 44
+  are refused by both: 37 of the formats a `Frame` does not carry (4:0:0, 4:2:2, 4:4:4,
+  more than ten bits, `TSUNEQBD_A_MAIN10_Technicolor_2`'s unequal depths), which h265
+  itself decodes (`go-avkit/h265` reads the 41 RExt streams the previous decoder could not),
+  and 7 that use `cabac_bypass_alignment_enabled_flag`, which neither decodes.
 
 * **JCT-VC conformance suite HEVC_v1** (ITU-T H.265.1): 147 bitstreams. 143 match
   ffmpeg on every picture (`testdata/hevc-conformance`), and wherever the package
@@ -387,7 +409,31 @@ thread, native pixel format):
 * **7 real files** (MP4 and Matroska, 540x960 to 3840x1606, Main and Main 10), 200
   pictures each: `testdata/hevc-real-files.txt`, hashes only.
 
-Speed: slower than ffmpeg, see [Performance](#performance).
+Speed, `DecodeTrack` on the MP4 of four 1080p streams (x265 `medium` crf 23 from the h264
+bench sources: Main 8-bit, a fade with explicit weighted prediction, Main 10, and a second
+8-bit; commands and SHA-256s in go-avkit/h265's `tools/bench/README.md`), frames per second
+of CPU time, median of 7 rounds, the decoders run in turn and the order reversed every other
+round, against `ffmpeg 6.1.1 -threads 1` (x86) and 9.0.2 (M4). The picture MD5 of all four
+equals ffmpeg's. "Before" is decode v0.9.0, over gen2brain/h265. The edit list drops 2 of the
+240 frames (238, 118), which is why the counts differ from ffmpeg's.
+
+| 1080p, one core | decode (h265) | decode before (gen2brain) | ffmpeg | decode / ffmpeg | decode / before |
+| --- | --- | --- | --- | --- | --- |
+| x86, Ryzen 9 7950X, `taskset -c 5`, load 0.4 to 1.1: Main (240 frames) | 77.2 | 87.1 | 390.2 | 0.20 | 0.89 |
+| Main fade, weighted prediction (120) | 70.7 | 79.9 | 431.7 | 0.16 | 0.88 |
+| Main 10 (240) | 75.2 | 30.0 | 295.6 | 0.25 | 2.51 |
+| Main, second stream (240) | 88.9 | 95.5 | 430.9 | 0.21 | 0.93 |
+| M4 Max, indicative (load 7.8 to 9.8): Main (240) | 92.8 | 72.8 | 431.7 | 0.21 | 1.27 |
+| Main fade (120) | 99.2 | 67.6 | 485.8 | 0.20 | 1.47 |
+| Main 10 (240) | 87.6 | 31.4 | 125.1 | 0.70 | 2.79 |
+| Main, second stream (240) | 108.3 | 80.5 | 488.8 | 0.22 | 1.34 |
+
+On x86 the 8-bit streams are 7 to 12 percent slower than before and Main 10 is 2.5 times
+faster; on the M4 everything is faster. The cost on x86 is the copy out of the decoder:
+h265 returns 16-bit planes and a `Frame` has one byte a sample at 8 bits (the packing is
+about a tenth of a decode there); the decoder alone, `h265.Decoder`, is 91 to 104 frames per
+second on the same streams (see go-avkit/h265). The M4 rows are indicative: the 1-minute load
+was above 8, which the harness refuses on x86.
 
 Bibliography: ITU-T H.265 (V11, 01/2026), opened as the PDF; read and checked:
 Annex B (B.2, B.3: byte stream and its NAL unit extraction) and C.5.2.2 to C.5.2.4
@@ -444,13 +490,13 @@ runs three bomb SPSs under a 256 MiB memory limit and asserts a refusal and unde
 8 MiB allocated. `FuzzParseAVCC`, `FuzzDecodeSample` and `FuzzDecodeAnnexB` have a
 committed corpus (`testdata/fuzz`, from `go run ./tools/jvt seeds`) and run in CI;
 so do `FuzzParseHVCC`, `FuzzHEVCSample` and `FuzzHEVCAnnexB`. For HEVC the picture
-size is checked by the decoder at the first slice, from the SPS, before any plane is
+size is checked by the decoder when the SPS arrives, before any plane is
 allocated, and what an Annex B stream may hold waiting for its next start code is
 bounded by `MaxSampleBytes`; `TestHEVCSizeBomb` declares pictures up to 1048576
 square under a 256 MiB memory limit and asserts a refusal and under 32 MiB allocated.
-A picture over the limit is refused with `ErrUnsupported`, not `ErrOverLimit`,
-because gen2brain/h265 reports it with the error it uses for an unimplemented
-tool.
+A picture over the limit is refused with an error that matches both `ErrOverLimit`
+(it is a limit) and `ErrUnsupported` (what callers of the previous decoder, which could
+not tell a limit from an unimplemented tool, tested for).
 
 `PosterFrame` adds two bounds of its own, in `PosterConfig`: `MaxSamples` (default
 600) caps the samples decoded for one picture, counted from the keyframe it starts
@@ -517,8 +563,7 @@ rounds, median, the harness refusing to start at a 1-minute load of 8 or more.
 
 The profiles put the hot spots in the wrapped libraries, not in this package: in
 go.264 the interpolation and CABAC residual decoding on a pure-Go build (no arm64
-assembly kernels), in gen2brain/h265 the 10-bit motion compensation (its assembly is
-taken at 8 bits only). The H.264 decoder is go-avkit/h264, whose README keeps the
+assembly kernels); for HEVC see the table in [HEVC](#hevc), measured on v0.10.0. The H.264 decoder is go-avkit/h264, whose README keeps the
 mid-GOP table ([decode#10](https://github.com/go-avkit/decode/issues/10)): the
 IDR and 45 pictures after it at 720p took 257 ms as imported from go.264 and take
 179 ms in h264 v0.8.0, against about 58 ms for `ffmpeg -threads 1` once its

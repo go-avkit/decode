@@ -7,8 +7,8 @@
 // The first codec is H.264 (ITU-T H.264 | ISO/IEC 14496-10), through
 // github.com/go-avkit/h264/decoder (a decoder imported from oops1/go.264), the
 // second HEVC (ITU-T H.265), through
-// github.com/gen2brain/h265: pure Go decoders that are checked here, picture for
-// picture, against ffmpeg. See the README for the profiles that claim holds
+// github.com/go-avkit/h265 (written from the specification): pure Go decoders that
+// are checked here, picture for picture, against ffmpeg. See the README for the profiles that claim holds
 // for and the conformance bitstreams it was measured on.
 //
 // Input is what a container hands over: an AVCDecoderConfigurationRecord or an
@@ -23,8 +23,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/gen2brain/h265/hevc"
 	h264dec "github.com/go-avkit/h264/decoder"
+	"github.com/go-avkit/h265"
 )
 
 // Errors a decoder can refuse with. Each is matched with errors.Is.
@@ -42,9 +42,10 @@ var (
 	// ErrUnsupported means the stream uses a coding tool this decoder does
 	// not implement (see the README): for H.264 interlaced coding, a chroma
 	// format other than 4:2:0, a bit depth above 8, lossless transform bypass;
-	// for HEVC a chroma format other than 4:2:0, a bit depth other than 8 or
-	// 10, and, because the HEVC decoder reports both the same way, a picture
-	// larger than Config.MaxFrameMBs.
+	// for HEVC a chroma format other than 4:2:0 or a bit depth other than 8 or
+	// 10 (the decoder reads them, a Frame cannot carry them: the refusal names the
+	// format), and cabac_bypass_alignment_enabled_flag. A picture larger than
+	// Config.MaxFrameMBs matches ErrUnsupported too, besides ErrOverLimit.
 	ErrUnsupported = errors.New("decode: unsupported coding tool")
 	// ErrClosed means the decoder was used after Close.
 	ErrClosed = errors.New("decode: use of a closed decoder")
@@ -160,7 +161,7 @@ type Frame struct {
 type Decoder struct {
 	dec        *h264dec.Decoder
 	onlyPTS    *int64        // when set, only the H.264 picture presented at it is copied out
-	h265       *hevc.Decoder // set for HEVC, in which case dec is nil
+	h265       *h265.Decoder // set for HEVC, in which case dec is nil
 	cfg        Config
 	lengthSize int
 	annexB     []byte
@@ -168,6 +169,7 @@ type Decoder struct {
 	last       int64
 	nextIndex  int64
 	sampleMode bool
+	refusedSPS error // HEVC: the refusal of a sequence parameter set over the size limit
 	started    bool
 	closed     bool
 }
@@ -261,7 +263,7 @@ func (d *Decoder) Close() error {
 	d.closed = true
 	d.annexB, d.pending = nil, nil
 	if d.h265 != nil {
-		d.h265.Reset()
+		d.h265 = nil
 		return nil
 	}
 	d.dec = nil
