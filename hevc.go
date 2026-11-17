@@ -288,9 +288,9 @@ func (d *Decoder) hevcFrame(o h265.Output) (Frame, error) {
 		BitDepth: p.BitDepth[0],
 		Corrupt:  o.Corrupt,
 	}
-	packPlane(f.Y, &p.Planes[0], step)
-	packPlane(f.Cb, &p.Planes[1], step)
-	packPlane(f.Cr, &p.Planes[2], step)
+	packPlane(f.Y, &p.Planes[0])
+	packPlane(f.Cb, &p.Planes[1])
+	packPlane(f.Cr, &p.Planes[2])
 	switch {
 	case d.sampleMode:
 		f.PTS = int64(o.Tag)
@@ -306,29 +306,22 @@ func (d *Decoder) hevcFrame(o h265.Output) (Frame, error) {
 func planesFit(p *h265.DecodedPicture) bool {
 	for c := range 3 {
 		pl := &p.Planes[c]
-		if pl.Stride < pl.Width || len(pl.Pix) < (pl.Height-1)*pl.Stride+pl.Width {
+		if pl.Stride < pl.Width || pl.Len() < (pl.Height-1)*pl.Stride+pl.Width {
 			return false
 		}
 	}
 	return true
 }
 
-// packPlane copies a plane packed: one byte a sample for step 1, a little-endian word for 2.
-func packPlane(dst []byte, pl *h265.Plane, step int) {
+// packPlane copies a plane packed: the bytes of a byte plane as they are, one memmove a row, and
+// the samples of a 16-bit plane as little-endian words.
+func packPlane(dst []byte, pl *h265.Plane) {
 	for r := range pl.Height {
-		row := pl.Pix[r*pl.Stride : r*pl.Stride+pl.Width]
-		if step == 1 {
-			out := dst[r*pl.Width : r*pl.Width+pl.Width]
-			i := 0
-			for ; i+8 <= len(row); i += 8 { // eight samples a turn: one bounds check each for the two slices
-				s, o := row[i:i+8:i+8], out[i:i+8:i+8]
-				o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7] = byte(s[0]), byte(s[1]), byte(s[2]), byte(s[3]), byte(s[4]), byte(s[5]), byte(s[6]), byte(s[7])
-			}
-			for ; i < len(row); i++ {
-				out[i] = byte(row[i])
-			}
+		if pl.Pix8 != nil { // a byte plane: one memmove a row
+			copy(dst[r*pl.Width:(r+1)*pl.Width], pl.Pix8[r*pl.Stride:r*pl.Stride+pl.Width])
 			continue
 		}
+		row := pl.Pix16[r*pl.Stride : r*pl.Stride+pl.Width]
 		out := dst[r*pl.Width*2 : (r+1)*pl.Width*2]
 		i := 0
 		for ; i+4 <= len(row); i += 4 {
