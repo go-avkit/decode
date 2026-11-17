@@ -20,7 +20,14 @@ func hevcOutput(depth int) h265.Output {
 		for i := range pix {
 			pix[i] = base + uint16(i)
 		}
-		return h265.Plane{Width: w, Height: h, Stride: stride, Pix: pix}
+		if depth <= 8 { // an 8-bit picture is made of bytes
+			pix8 := make([]uint8, len(pix))
+			for i, v := range pix {
+				pix8[i] = uint8(v)
+			}
+			return h265.Plane{Width: w, Height: h, Stride: stride, Pix8: pix8}
+		}
+		return h265.Plane{Width: w, Height: h, Stride: stride, Pix16: pix}
 	}
 	base := uint16(18)
 	if depth > 8 {
@@ -59,10 +66,10 @@ func TestHEVCFrame(t *testing.T) {
 		names  string
 	}{
 		"4:2:2": {func(o *h265.Output) {
-			o.Picture.Planes[1], o.Picture.Planes[2] = h265.Plane{Width: 2, Height: 2, Stride: 2, Pix: make([]uint16, 4)}, h265.Plane{Width: 2, Height: 2, Stride: 2, Pix: make([]uint16, 4)}
+			o.Picture.Planes[1], o.Picture.Planes[2] = h265.Plane{Width: 2, Height: 2, Stride: 2, Pix8: make([]uint8, 4)}, h265.Plane{Width: 2, Height: 2, Stride: 2, Pix8: make([]uint8, 4)}
 		}, "4:2:2"},
 		"4:4:4": {func(o *h265.Output) {
-			o.Picture.Planes[1], o.Picture.Planes[2] = h265.Plane{Width: 4, Height: 2, Stride: 4, Pix: make([]uint16, 8)}, h265.Plane{Width: 4, Height: 2, Stride: 4, Pix: make([]uint16, 8)}
+			o.Picture.Planes[1], o.Picture.Planes[2] = h265.Plane{Width: 4, Height: 2, Stride: 4, Pix8: make([]uint8, 8)}, h265.Plane{Width: 4, Height: 2, Stride: 4, Pix8: make([]uint8, 8)}
 		}, "4:4:4"},
 		"4:0:0":          {func(o *h265.Output) { o.Picture.Components = 1 }, "4:0:0"},
 		"unequal depths": {func(o *h265.Output) { o.Picture.BitDepth[1] = 10 }, "8/10"},
@@ -82,8 +89,8 @@ func TestHEVCFrame(t *testing.T) {
 	// A picture that does not lie in its planes is a malformed one.
 	for name, mutate := range map[string]func(*h265.Output){
 		"an empty plane":     func(o *h265.Output) { o.Picture.Planes[0].Width = 0 },
-		"a short plane":      func(o *h265.Output) { o.Picture.Planes[0].Pix = o.Picture.Planes[0].Pix[:5] },
-		"a short chroma":     func(o *h265.Output) { o.Picture.Planes[2].Pix = o.Picture.Planes[2].Pix[:1] },
+		"a short plane":      func(o *h265.Output) { o.Picture.Planes[0].Pix8 = o.Picture.Planes[0].Pix8[:5] },
+		"a short chroma":     func(o *h265.Output) { o.Picture.Planes[2].Pix8 = o.Picture.Planes[2].Pix8[:1] },
 		"a stride too small": func(o *h265.Output) { o.Picture.Planes[1].Stride = 1 },
 		"odd chroma":         func(o *h265.Output) { o.Picture.Planes[1].Width = 1 },
 	} {
@@ -110,7 +117,7 @@ func TestHEVCFrame(t *testing.T) {
 func TestHEVCFrameIsOwned(t *testing.T) {
 	d, _ := NewHEVC(Config{}, 4)
 	o := hevcOutput(8)
-	before := slices.Clone(o.Picture.Planes[0].Pix)
+	before := slices.Clone(o.Picture.Planes[0].Pix8)
 	f, err := d.hevcFrame(o)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +125,7 @@ func TestHEVCFrameIsOwned(t *testing.T) {
 	for i := range f.Y {
 		f.Y[i] ^= 0xff
 	}
-	if !slices.Equal(o.Picture.Planes[0].Pix, before) {
+	if !slices.Equal(o.Picture.Planes[0].Pix8, before) {
 		t.Error("writing to the Frame changed the decoder's picture")
 	}
 }

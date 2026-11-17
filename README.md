@@ -356,7 +356,7 @@ track may return.
 ## HEVC
 
 The decoding is [`github.com/go-avkit/h265`](https://github.com/go-avkit/h265)
-v0.21.0 (BSD-3-Clause, pure Go, written from the specification with assembly kernels
+v0.22.0 (BSD-3-Clause, pure Go, written from the specification with assembly kernels
 from go-videodsp/kernels and a portable path), behind the same API as before:
 `NewHEVC`, `NewHVCC`, `NewTrack`, `DecodeSample`, `DecodeAnnexB`, `DecodeTrack` and
 `PosterFrame` keep their signatures. **Since v0.10.0 it replaces
@@ -419,23 +419,21 @@ equals ffmpeg's. "Before" is decode v0.9.0, over gen2brain/h265. The edit list d
 
 | 1080p, one core | decode (h265) | decode before (gen2brain) | ffmpeg | decode / ffmpeg | decode / before |
 | --- | --- | --- | --- | --- | --- |
-| x86, Ryzen 9 7950X, `taskset -c 5`, load 0.4 to 1.1: Main (240 frames) | 77.2 | 87.1 | 390.2 | 0.20 | 0.89 |
-| Main fade, weighted prediction (120) | 70.7 | 79.9 | 431.7 | 0.16 | 0.88 |
-| Main 10 (240) | 75.2 | 30.0 | 295.6 | 0.25 | 2.51 |
-| Main, second stream (240) | 88.9 | 95.5 | 430.9 | 0.21 | 0.93 |
-| M4 Max, indicative (load 7.8 to 9.8): Main (240) | 92.8 | 72.8 | 431.7 | 0.21 | 1.27 |
-| Main fade (120) | 99.2 | 67.6 | 485.8 | 0.20 | 1.47 |
-| Main 10 (240) | 87.6 | 31.4 | 125.1 | 0.70 | 2.79 |
-| Main, second stream (240) | 108.3 | 80.5 | 488.8 | 0.22 | 1.34 |
+| x86, Ryzen 9 7950X, `taskset -c 5`, load 0.3 to 1.1: Main (240 frames) | 95.8 | 87.2 | 396.0 | 0.24 | 1.10 |
+| Main fade, weighted prediction (120) | 85.0 | 79.9 | 430.1 | 0.20 | 1.06 |
+| Main 10 (240) | 75.1 | 29.9 | 295.2 | 0.25 | 2.51 |
+| Main, second stream (240) | 108.7 | 95.8 | 438.0 | 0.25 | 1.14 |
+| M4 Max, indicative (load 7 to 10): Main (240) | 94.5 | 66.0 | 392.2 | 0.24 | 1.43 |
+| Main fade (120) | 102.0 | 64.1 | 446.1 | 0.23 | 1.59 |
+| Main 10 (240) | 81.0 | 28.5 | 119.1 | 0.68 | 2.84 |
+| Main, second stream (240) | 109.4 | 73.1 | 446.9 | 0.24 | 1.50 |
 
-**On x86 the 8-bit streams are 7 to 12 percent slower than before, an open defect
-([#101](https://github.com/go-avkit/decode/issues/101)): the fix planned is native 8-bit
-planes in h265.** Main 10 is 2.5 times
-faster; on the M4 everything is faster. The cost on x86 is the copy out of the decoder:
-h265 returns 16-bit planes and a `Frame` has one byte a sample at 8 bits (the packing is
-about a tenth of a decode there); the decoder alone, `h265.Decoder`, is 91 to 104 frames per
-second on the same streams (see go-avkit/h265). The M4 rows are indicative: the 1-minute load
-was above 8, which the harness refuses on x86.
+With h265 v0.22.0 every stream is faster than before on x86 too (8-bit 6 to 14 percent, Main 10 2.5
+times), and 20 to 23 percent faster than v0.10.0 on the 8-bit streams (the earlier x86 slowdown,
+issue 101, is closed): h265 v0.22.0 decodes an 8-bit picture into bytes end to end (`Plane.Pix8`),
+so the `Frame` is filled by one memmove a row instead of a narrowing of 16-bit samples. The M4
+rows are indicative: the 1-minute load was 7 to 10, which the harness refuses on x86; against
+v0.10.0 on the same machine the 8-bit streams are 8 to 10 percent faster.
 
 Bibliography: ITU-T H.265 (V11, 01/2026), opened as the PDF; read and checked:
 Annex B (B.2, B.3: byte stream and its NAL unit extraction) and C.5.2.2 to C.5.2.4
