@@ -6,14 +6,14 @@ github.com/asticode/go-astits v1.17.0 h1:KrDxalNhZ/GJkbgVweD5xxCA9XoaW7tHuFiJB/s
 github.com/asticode/go-astits v1.17.0/go.mod h1:psImoC1BhcAWIsyM/RnbO1OgUW+XSf8fZpFvF5McDyo=
 github.com/at-wat/ebml-go v0.19.4 h1:6F767ThzH/JqNUsF79PwRFP0pwUF5ALXWJ6pXuiolI8=
 github.com/at-wat/ebml-go v0.19.4/go.mod h1:wu3fQj+DWo6SOOl9c4yDi+gFs9Oa96Z2B5qxo1OxFYY=
-github.com/gen2brain/h265 v0.2.4 h1:JUSbGkRAYZpd7ucCL192yx4ViEo75ZO6OEdm1TQt9qM=
-github.com/gen2brain/h265 v0.2.4/go.mod h1:kefpLxLhGpNCUG/q/aabJcD6GqB9Nhet3fNi9xX9Wzw=
 github.com/go-avkit/avkit v0.16.0 h1:QoFoIgAHy8xv+kdnROQ8P3GSqveV5/BJtxPa0i+ZM64=
 github.com/go-avkit/avkit v0.16.0/go.mod h1:itL/gmFP0/hIVAQgxn0JTTvlGgY9vi5uL8XI2sOQl/c=
 github.com/go-avkit/bitstream v0.4.0 h1:cpPNgKWeAjEpTzjORXPH4Advu2BdtCBHloQXSwgl+pk=
 github.com/go-avkit/bitstream v0.4.0/go.mod h1:aA50I8nXKyJu6ElfTHM957BRrx5JjgSYUxs++n5VM8o=
 github.com/go-avkit/h264 v0.9.0 h1:yrXbVFZCfZhG9okTJqITHdldVciXMw0ioPaH/NorWsQ=
 github.com/go-avkit/h264 v0.9.0/go.mod h1:LcFlgGaV0CHWk4oEpO3GWv+93vylXsuJeepcDW9Md3I=
+github.com/go-avkit/h265 v0.21.0 h1:uyOT7xyTLuEEquo/CyWlFvgRzzeCe59rHG2Gadyjp90=
+github.com/go-avkit/h265 v0.21.0/go.mod h1:3t3oazdlWsShXd6SLM3h7VmOJcEx2Bcfp+s0mmjnQiA=
 github.com/go-dsp/signal v0.2.0 h1:+566tdjkOtNctyqU+xzf7NRGYu4rR9GvCk4QtF9pYWY=
 github.com/go-dsp/signal v0.2.0/go.mod h1:V1WJie25RkckmxghlSe11czV9MfD7H8ba+QB0ZR1XCI=
 github.com/go-fft/fft v0.38.0 h1:bWrMFimhUI4KSYI7kgazf+ROephbiITtHPywdh3w7I0=
@@ -28,6 +28,8 @@ github.com/go-simd/floats v0.24.0 h1:17G1R1kyHRaRpSvod1/VfoogVn3F6h9FviTpb0alnog
 github.com/go-simd/floats v0.24.0/go.mod h1:Aq5a6oY5pUqm9Hpi+iV2nrNmaaUb0rwHvUHIerXWSvA=
 github.com/go-test/deep v1.1.0 h1:WOcxcdHcvdgThNXjw0t76K42FXTU7HpNQWHpA2HHNlg=
 github.com/go-test/deep v1.1.0/go.mod h1:5C2ZWiW0ErCdrYzpqxLbTX7MG14M9iiw8DgHncVwcsE=
+github.com/go-videodsp/kernels v0.17.0 h1:7MBpy90Lw0861kZxXca//36WpV9twbfsC6xN8OFMyIs=
+github.com/go-videodsp/kernels v0.17.0/go.mod h1:+nQCn5NvYhjT8DtUqSplgir5dB4D66rqiGd8R3fimBE=
 github.com/icza/bitio v1.1.0 h1:ysX4vtldjdi3Ygai5m1cWy4oLkhWTAi+SyO6HC8L9T0=
 github.com/icza/bitio v1.1.0/go.mod h1:0jGnlLAx8MKMr9VGnn/4YrvZiprkvBelsVIbA9Jjr9A=
 github.com/icza/mighty v0.0.0-20180919140131-cfd07d671de6 h1:8UsGZ2rr2ksmEru6lToqnXgA8Mz1DP11X4zSJ159C3k=
