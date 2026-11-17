@@ -428,7 +428,9 @@ equals ffmpeg's. "Before" is decode v0.9.0, over gen2brain/h265. The edit list d
 | Main 10 (240) | 87.6 | 31.4 | 125.1 | 0.70 | 2.79 |
 | Main, second stream (240) | 108.3 | 80.5 | 488.8 | 0.22 | 1.34 |
 
-On x86 the 8-bit streams are 7 to 12 percent slower than before and Main 10 is 2.5 times
+**On x86 the 8-bit streams are 7 to 12 percent slower than before, an open defect
+([#101](https://github.com/go-avkit/decode/issues/101)): the fix planned is native 8-bit
+planes in h265.** Main 10 is 2.5 times
 faster; on the M4 everything is faster. The cost on x86 is the copy out of the decoder:
 h265 returns 16-bit planes and a `Frame` has one byte a sample at 8 bits (the packing is
 about a tenth of a decode there); the decoder alone, `h265.Decoder`, is 91 to 104 frames per
