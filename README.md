@@ -567,7 +567,10 @@ assembly kernels); for HEVC see the table in [HEVC](#hevc), measured on v0.10.0.
 mid-GOP table ([decode#10](https://github.com/go-avkit/decode/issues/10)): the
 IDR and 45 pictures after it at 720p took 257 ms as imported from go.264 and take
 179 ms in h264 v0.8.0, against about 58 ms for `ffmpeg -threads 1` once its
-process start is taken off. The measurement is on arm64; an amd64 one is still needed.
+process start is taken off. Since decode v0.12.0 (h264 v0.11.0), through `DecodeTrack`
+on 1080p, one core, Apple M4 (indicative, load 9 to 11), alien takes 2.3 s instead of
+5.7 to 5.9 s and fade 0.8 s instead of 2.0 s, 2.5 times faster; ffmpeg is still 2.3 to
+2.8 times faster, and Zen 4 is not re-measured. The measurement is on arm64; an amd64 one is still needed.
 Only AAC's speed is measured (table in Audio above); FLAC, MP3 and Opus are not. The numbers and the profiles are in the
 comment on #2.
 
