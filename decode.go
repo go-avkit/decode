@@ -44,7 +44,7 @@ var (
 	// format other than 4:2:0, a bit depth above 8, lossless transform bypass;
 	// for HEVC a chroma format other than 4:2:0 or a bit depth other than 8 or
 	// 10 (the decoder reads them, a Frame cannot carry them: the refusal names the
-	// format), and cabac_bypass_alignment_enabled_flag. A picture larger than
+	// format). A picture larger than
 	// Config.MaxFrameMBs matches ErrUnsupported too, besides ErrOverLimit.
 	ErrUnsupported = errors.New("decode: unsupported coding tool")
 	// ErrClosed means the decoder was used after Close.

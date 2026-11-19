@@ -357,7 +357,7 @@ func (d *Decoder) classifyHEVC(err error) error {
 		// not tell the two apart.
 		return fmt.Errorf("%w: %w (picture size limit %d luma samples)", ErrOverLimit, errors.Join(ErrUnsupported, err),
 			int64(d.cfg.frameMBs())*256)
-	case errors.Is(err, h265.ErrBypassAlignment), errors.Is(err, h265.ErrNotReconstructed),
+	case errors.Is(err, h265.ErrNotReconstructed),
 		// the one value ErrUnsupportedSPS also stands for that is a coding tool and not a
 		// field out of range: an SPS extension of 3D or screen content coding
 		errors.Is(err, h265.ErrUnsupportedSPS) && strings.Contains(err.Error(), "extension"):

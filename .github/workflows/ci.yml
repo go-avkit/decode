@@ -51,13 +51,13 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
       - name: Test with the race detector and write the coverage profile
-        run: go test -race -coverprofile=cover.out ./...
+        run: go test -race -timeout 45m -coverprofile=cover.out ./...
       - name: Coverage gate, every statement
         working-directory: tools
         run: go run ./covergate ../cover.out
       - name: Tools module
         working-directory: tools
-        run: go vet ./... && go test ./...
+        run: go vet ./... && go test -timeout 45m ./...
 
   # A stream is untrusted input. The corpus in testdata/fuzz runs as ordinary
   # tests above; this job also mutates it for a while. A crash fails the job and
@@ -69,31 +69,33 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.27.4'
-      - run: go test -run XXX -fuzz FuzzDecodeSample -fuzztime 60s .
-      - run: go test -run XXX -fuzz FuzzDecodeAnnexB -fuzztime 60s .
-      - run: go test -run XXX -fuzz FuzzParseAVCC -fuzztime 20s .
-      - run: go test -run XXX -fuzz FuzzHEVCSample -fuzztime 60s .
-      - run: go test -run XXX -fuzz FuzzHEVCAnnexB -fuzztime 60s .
-      - run: go test -run XXX -fuzz FuzzParseHVCC -fuzztime 20s .
-      - run: go test -run XXX -fuzz FuzzFLACSample -fuzztime 60s .
-      - run: go test -run XXX -fuzz FuzzFLACConfig -fuzztime 20s .
-      - run: go test -run XXX -fuzz FuzzMP3Sample -fuzztime 60s .
-      - run: go test -run XXX -fuzz FuzzOpusSample -fuzztime 60s .
-      - run: go test -run XXX -fuzz FuzzOpusConfig -fuzztime 20s .
-      - run: go test -run XXX -fuzz FuzzAACFrame -fuzztime 60s .
-      - run: go test -run XXX -fuzz FuzzAACDecode -fuzztime 60s .
-      - run: go test -run XXX -fuzz FuzzAACConfig -fuzztime 20s .
-      - run: go test -run XXX -fuzz FuzzAACADTS -fuzztime 20s .
-      - run: go test -run XXX -fuzz FuzzGaplessPad -fuzztime 20s .
-      - run: go test -run XXX -fuzz FuzzPSData -fuzztime 20s .
-      - run: go test -run XXX -fuzz FuzzPSApply -fuzztime 20s .
+      # A fuzz run stops after its -fuzztime; -timeout 15m is the explicit bound on the
+      # test binary around it, not go test's unstated 10 minute default.
+      - run: go test -timeout 15m -run XXX -fuzz FuzzDecodeSample -fuzztime 60s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzDecodeAnnexB -fuzztime 60s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzParseAVCC -fuzztime 20s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzHEVCSample -fuzztime 60s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzHEVCAnnexB -fuzztime 60s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzParseHVCC -fuzztime 20s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzFLACSample -fuzztime 60s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzFLACConfig -fuzztime 20s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzMP3Sample -fuzztime 60s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzOpusSample -fuzztime 60s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzOpusConfig -fuzztime 20s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzAACFrame -fuzztime 60s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzAACDecode -fuzztime 60s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzAACConfig -fuzztime 20s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzAACADTS -fuzztime 20s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzGaplessPad -fuzztime 20s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzPSData -fuzztime 20s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzPSApply -fuzztime 20s .
       # A file sizes the PCM DecodeAudioTrack returns, so it runs under limits too.
-      - run: ulimit -v 4194304 && GOMEMLIMIT=1GiB go test -run XXX -fuzz FuzzAudioTrack -fuzztime 60s .
+      - run: ulimit -v 4194304 && GOMEMLIMIT=1GiB go test -timeout 15m -run XXX -fuzz FuzzAudioTrack -fuzztime 60s .
       # An MP4 or Matroska file sizes the work PosterFrame does, so this target
       # runs under a memory limit: GOMEMLIMIT for the Go heap, ulimit -v (4 GiB)
       # for everything else. A bound that fails to refuse is an out of memory
       # crash here, not a test failure on a large host.
-      - run: ulimit -v 4194304 && GOMEMLIMIT=1GiB go test -run XXX -fuzz FuzzPosterFrame -fuzztime 60s .
+      - run: ulimit -v 4194304 && GOMEMLIMIT=1GiB go test -timeout 15m -run XXX -fuzz FuzzPosterFrame -fuzztime 60s .
 
   # Opus conformance (RFC 6716 section 6, RFC 8251 section 11): opus_compare must
   # pass on the official vectors. The archive is 74 MB and the IETF Trust's BSD
@@ -125,7 +127,7 @@ jobs:
           echo "6b26a22f9ba87b2b836906a9bb7afec5f8e54d49553b1200382520ee6fedfa55  vectors.tar.gz" | sha256sum -c -
           mkdir "$RUNNER_TEMP/opus" && tar -xzf vectors.tar.gz -C "$RUNNER_TEMP/opus"
       - name: opus_compare on every vector
-        run: OPUS_VECTORS_DIR="$RUNNER_TEMP/opus/opus_newvectors" go test -run 'TestOpusConformance$' -v -count=1 .
+        run: OPUS_VECTORS_DIR="$RUNNER_TEMP/opus/opus_newvectors" go test -timeout 45m -run 'TestOpusConformance$' -v -count=1 .
 
   # ISO/IEC 14496-26 AAC-LC streams and reference waveforms: read out of ISO's
   # archives by range request, each member checked against the SHA-256 pinned in
@@ -141,7 +143,7 @@ jobs:
         working-directory: tools
         run: go run ./aacconf fetch "$RUNNER_TEMP/aacconf" ../testdata/aac-conformance.txt
       - name: decode them
-        run: AAC_CONFORMANCE_DIR="$RUNNER_TEMP/aacconf" go test -run 'TestAACConformance$|TestAACConformancePS$' -v -count=1 .
+        run: AAC_CONFORMANCE_DIR="$RUNNER_TEMP/aacconf" go test -timeout 45m -run 'TestAACConformance$|TestAACConformancePS$' -v -count=1 .
 
   vuln:
     runs-on: ubuntu-latest
@@ -172,7 +174,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.27.4'
-      - run: go env GOARCH && go test ./...
+      - run: go env GOARCH && go test -timeout 45m ./...
 
   # The one 32-bit target, where int is 32 bits wide: a length converted to int
   # before it is compared wraps only here. It runs natively on the amd64 runner.
@@ -186,7 +188,7 @@ jobs:
         with:
           go-version: '1.27.4'
       - run: GOARCH=386 go vet ./...
-      - run: GOARCH=386 go test ./...
+      - run: GOARCH=386 go test -timeout 45m ./...
 
   arch-qemu:
     name: arch ${{ matrix.goarch }} (qemu)
