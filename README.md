@@ -369,7 +369,8 @@ what a `Frame` holds is returned:
 | Main, Main Still Picture, 4:2:0 8-bit | bit-exact against ffmpeg |
 | Main 10, 4:2:0 10-bit | bit-exact against ffmpeg |
 | 4:0:0, 4:2:2, 4:4:4, bit depths other than 8 and 10, unequal luma and chroma depths | refused with `ErrUnsupported`, naming the format (the decoder reads them; a `Frame` cannot carry them, and the API is not widened here) |
-| `cabac_bypass_alignment_enabled_flag`, 3D and screen content coding extensions | refused with `ErrUnsupported` |
+| 3D and screen content coding extensions | refused with `ErrUnsupported` |
+| `cabac_bypass_alignment_enabled_flag`, multilayer (MV-HEVC) streams | decoded (the base layer only) |
 
 A `Frame` owns its planes: the pictures h265 returns are read-only views of its reference
 pictures, and each is copied into the `Frame` (packed, one byte a sample, or a little-endian
@@ -378,18 +379,23 @@ word above eight bits), so what a caller does with a `Frame` never reaches the d
 Measured, every picture's MD5 against `ffmpeg -f framemd5` (ffmpeg 9.0.2, one
 thread, native pixel format):
 
-* **Switch from gen2brain/h265 to h265, the whole JCT-VC suite** (HEVC_v1 and RExt, 196
-  bitstreams, `NewHEVC` and `DecodeAnnexB` of this package built on each): the output of 148
+* **h265 v0.23.0 against v0.22.0, the whole JCT-VC suite** (HEVC_v1 and RExt, 196
+  bitstreams, `NewHEVC` and `DecodeAnnexB` of this package built on each): the output of 152
   is **identical** (picture count and the MD5 of every plane, in output order), **0 are
-  lost** (nothing the previous decoder returned is refused or differs), **4 more** are
-  returned (`WPP_HIGH_TP_444_8BIT`, `WPP_AND_TILE_HIGH_TP_444_8BIT`,
-  `WPP_AND_TILE_AND_CABAC_BYPASS_ALIGN_0_HIGH_TP_444_14BIT` and
-  `WPP_AND_TILE_AND_CABAC_EXT_PREC_1_HIGH_TP_444_14BIT`, RExt High Throughput streams of
-  4:2:0 8 bits: the previous decoder refused them as an unimplemented tool). The other 44
-  are refused by both: 37 of the formats a `Frame` does not carry (4:0:0, 4:2:2, 4:4:4,
-  more than ten bits, `TSUNEQBD_A_MAIN10_Technicolor_2`'s unequal depths), which h265
-  itself decodes (`go-avkit/h265` reads the 41 RExt streams the previous decoder could not),
-  and 7 that use `cabac_bypass_alignment_enabled_flag`, which neither decodes.
+  lost**, **1 more** is returned
+  (`WPP_AND_TILE_AND_CABAC_BYPASS_ALIGN_1_HIGH_TP_444_14BIT`, 4:2:0 8 bits: h265 v0.22.0
+  refused its `cabac_bypass_alignment_enabled_flag`; v0.23.0 decodes it with the aligned
+  bypass decoding of 9.3.4.3.6, and its output MD5 is the `.yuv` MD5 the suite ships).
+  The other 43 are refused by both, all for a format a `Frame` does not carry (4:0:0,
+  4:2:2, 4:4:4, more than ten bits, `TSUNEQBD_A_MAIN10_Technicolor_2`'s unequal depths),
+  which h265 itself decodes: six of them also use `cabac_bypass_alignment_enabled_flag`
+  (the High Throughput 4:4:4 16 Intra streams, `GENERAL_16b_444_highThroughput` and
+  `WAVETILES_RExt_Sony_2`), which h265 decodes with all their picture hashes matching.
+  Earlier, from gen2brain/h265 to h265: 148 identical, 0 lost, 4 more returned.
+* **The 9 MV-HEVC conformance streams** (`MVHEVCS_A` to `_I`, JCT-VC `MV-HEVC`, units of
+  layers 1 to 5): a `Frame` is the base layer, and the other layers' units are skipped.
+  All 9 decode with v0.23.0 (v0.22.0 refused every one at the PPS of layer 0), and the MD5
+  of the output equals the base layer's `<name>_0.yuv` MD5 the suite ships.
 
 * **JCT-VC conformance suite HEVC_v1** (ITU-T H.265.1): 147 bitstreams. 143 match
   ffmpeg on every picture (`testdata/hevc-conformance`), and wherever the package

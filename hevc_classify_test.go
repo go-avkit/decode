@@ -18,7 +18,6 @@ func TestHEVCErrorClasses(t *testing.T) {
 		err  error
 		want []error
 	}{
-		"bypass alignment":     {h265.ErrBypassAlignment, []error{ErrUnsupported}},
 		"not implemented":      {h265.ErrNotReconstructed, []error{ErrUnsupported}},
 		"a coding extension":   {fmt.Errorf("%w: a 3D or screen content coding extension", h265.ErrUnsupportedSPS), []error{ErrUnsupported}},
 		"a field out of range": {fmt.Errorf("%w: sps_max_sub_layers_minus1 of 7", h265.ErrUnsupportedSPS), []error{ErrBitstream}},
