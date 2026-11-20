@@ -115,6 +115,12 @@ func TestFrameBytesRefusesAShapeThatIsNotAFrames(t *testing.T) {
 		"height over cap":   {1, 1 << 32, Chroma400, 8, 0},
 		"plane over cap":    {1 << 16, 1 << 15, Chroma400, 16, 0},
 		"chroma 0 on 4:2:0": {4, 4, Chroma420, 8, 0},
+		// w*h*bytes wraps a uint64 to 0 or a small size: only a check of each side before the
+		// product refuses these; a total compared after the fact would accept them
+		"4 x 2^62, 8 bits": {1 << 62, 4, Chroma400, 8, 0},
+		"2^63 x 2, 4:4:4":  {1 << 63, 2, Chroma444, 16, 16},
+		"4 x 2^62, 4:2:0":  {4, 1 << 62, Chroma420, 8, 8},
+		"2^32 x 2^32, 16":  {1 << 32, 1 << 32, Chroma400, 16, 0},
 	} {
 		if _, _, _, ok := frameBytes(tc.w, tc.h, tc.c, tc.depth, tc.dc); ok {
 			t.Errorf("%s: accepted", name)
