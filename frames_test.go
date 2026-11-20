@@ -116,7 +116,14 @@ func TestFramesBreak(t *testing.T) {
 			if err != nil || len(want) < 3 {
 				t.Fatalf("%d pictures, %v", len(want), err)
 			}
-			for stop := 1; stop <= len(want); stop += max(1, len(want)/5) {
+			// The last picture is always one stop: on a stream with a reorder
+			// delay it is given by Flush, so breaking there stops inside it.
+			var stops []int
+			for stop := 1; stop < len(want); stop += max(1, len(want)/5) {
+				stops = append(stops, stop)
+			}
+			stops = append(stops, len(want))
+			for _, stop := range stops {
 				n := 0
 				for f, err := range Frames(r, id, Config{}) {
 					if err != nil {
