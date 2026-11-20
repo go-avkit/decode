@@ -58,9 +58,9 @@ func TestHEVCAnnexB(t *testing.T) {
 				if f.PTS != int64(i) || f.Corrupt || f.Chroma != Chroma420 {
 					t.Fatalf("%s picture %d: PTS %d corrupt %v chroma %d", path, i, f.PTS, f.Corrupt, f.Chroma)
 				}
-				step := 1
-				if f.BitDepth == 10 {
-					step = 2
+				step := f.SampleBytes(0)
+				if f.BitDepthC != f.BitDepth || f.SampleBytes(1) != step || f.SampleBytes(2) != step {
+					t.Fatalf("%s picture %d: %d/%d bits", path, i, f.BitDepth, f.BitDepthC)
 				}
 				if len(f.Y) != f.Width*f.Height*step || f.YStride != f.Width*step || len(f.Cb) != len(f.Y)/4 || f.CStride != f.YStride/2 {
 					t.Fatalf("%s picture %d: planes %d/%d/%d for %dx%d at %d bits", path, i, len(f.Y), len(f.Cb), len(f.Cr), f.Width, f.Height, f.BitDepth)

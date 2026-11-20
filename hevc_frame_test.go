@@ -51,7 +51,7 @@ func TestHEVCFrame(t *testing.T) {
 	}
 	d.sampleMode = true // the tag of the first slice is the sample's time
 	f, err = d.hevcFrame(hevcOutput(10))
-	if err != nil || !slices.Equal(f.Y[:4], []byte{0x12, 0x01, 0x13, 0x01}) || f.BitDepth != 10 || f.PTS != 9 || f.YStride != 8 || f.CStride != 4 {
+	if err != nil || !slices.Equal(f.Y[:4], []byte{0x12, 0x01, 0x13, 0x01}) || f.BitDepth != 10 || f.BitDepthC != 10 || f.PTS != 9 || f.YStride != 8 || f.CStride != 4 {
 		t.Fatalf("10-bit: %v %+v", err, f)
 	}
 	o := hevcOutput(8)
