@@ -10,6 +10,29 @@ import (
 	"github.com/go-avkit/h265"
 )
 
+// TestHEVCFrameComponentsGuard (#109, hevc.go hevcFrame): no picture, and a picture of 0, 2 or 4
+// components, is refused as ErrUnsupported without a panic; 1 and 3 pass the guard (and an empty
+// picture is then refused as malformed).
+func TestHEVCFrameComponentsGuard(t *testing.T) {
+	d, _ := NewHEVC(Config{}, 4)
+	for name, pic := range map[string]*h265.DecodedPicture{
+		"nil": nil, "0 components": {Components: 0}, "2 components": {Components: 2}, "4 components": {Components: 4},
+	} {
+		noPanic(t, name, func() {
+			if _, err := d.hevcFrame(h265.Output{Picture: pic}); !errors.Is(err, ErrUnsupported) {
+				t.Errorf("%s: %v, want ErrUnsupported", name, err)
+			}
+		})
+	}
+	for _, n := range []int{1, 3} {
+		noPanic(t, "empty picture", func() {
+			if _, err := d.hevcFrame(h265.Output{Picture: &h265.DecodedPicture{Components: n}}); !errors.Is(err, ErrBitstream) {
+				t.Errorf("%d components, no planes: %v, want ErrBitstream", n, err)
+			}
+		})
+	}
+}
+
 // noPanic runs f and fails the test, with a message that names the case, when f panics: the
 // guards below were held only by the panic their absence caused (#109), which says nothing of
 // what they are for.

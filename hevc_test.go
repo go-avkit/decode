@@ -259,10 +259,15 @@ func TestHEVCRefusals(t *testing.T) {
 		t.Errorf("flushing a held slice: %v", err)
 	}
 
-	// 4:4:4 is valid HEVC this package does not decode.
+	// 4:4:4 is carried: three full planes a picture.
 	fs, ferr := decodeAll(t, readFile(t, "testdata/hevc/streams/yuv444_unsupported.265"))
-	if !errors.Is(ferr, ErrUnsupported) || len(fs) != 0 {
-		t.Errorf("4:4:4: %d pictures, %v", len(fs), ferr)
+	if ferr != nil || len(fs) == 0 {
+		t.Fatalf("4:4:4: %d pictures, %v", len(fs), ferr)
+	}
+	for i, f := range fs {
+		if f.Chroma != Chroma444 || len(f.Cb) != len(f.Y) || len(f.Cr) != len(f.Y) || f.CStride != f.YStride {
+			t.Errorf("4:4:4 picture %d: chroma %d, planes %d/%d/%d", i, f.Chroma, len(f.Y), len(f.Cb), len(f.Cr))
+		}
 	}
 	// And so is a picture over the size limit, which the HEVC decoder reports as
 	// it does an unimplemented tool.

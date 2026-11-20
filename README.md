@@ -8,7 +8,8 @@ Part of [go-avkit](https://go-avkit.github.io): [documentation](https://go-avkit
 
 Video and audio decoders for [avkit](https://github.com/go-avkit/avkit), pure Go,
 no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
-(ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10, 4:2:0. Audio: FLAC, MP3 and
+(ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10 in 4:2:0, and since v0.15.0 every
+chroma format (4:0:0, 4:2:2, 4:4:4) at 8 to 16 bits for HEVC. Audio: FLAC, MP3 and
 Opus, AAC-LC and HE-AAC v1 (SBR) since v0.6.0, and HE-AAC v2 (Parametric Stereo)
 since v0.7.0, with the full profile (procedure B, IPD/OPD) by default since v0.8.0; on one core it takes
 about 1.6 times ffmpeg's CPU time on an x86 server core and about 1.1 times on an Apple M4,
@@ -126,8 +127,10 @@ Streaming: `decode.NewTrack(trackConfig, cfg)` or `decode.NewAVCC(avcC, cfg)`,
 then `DecodeSample(sample.Data, pts)` per sample and `Flush()` at the end.
 Raw `.264` files: `decode.New(cfg, 4)` and `DecodeAnnexB`.
 
-`Frame` carries the planes, strides, size, `Chroma` format, `BitDepth` and
-`PTS`. Its field names match `go-videodsp/yuv.Picture` for 8-bit 4:2:0, so
+`Frame` carries the planes, strides, size, `Chroma` format, `BitDepth`, `BitDepthC` and
+`PTS`. A plane is one byte a sample at 8 bits and a little-endian 16-bit word at 9 to 16
+(`Frame.SampleBytes(plane)`); `Frame.ChromaSize()` is the size of Cb and Cr; a 4:0:0 frame has
+no Cb or Cr (nil, `CStride` 0, `BitDepthC` 0). Its field names match `go-videodsp/yuv.Picture` for 8-bit 4:2:0, so
 converting to RGBA is a field copy; `yuv.Picture` has no bit depth or time, which
 is why it is not used as is.
 
@@ -135,7 +138,12 @@ HEVC takes the same calls: `DecodeTrack` and `NewTrack` choose HEVC for a track
 whose sample entry is `hvc1` or `hev1`; `decode.NewHVCC(hvcC, cfg)` takes an
 hvcC record (`ParseHVCC` reads one), `decode.NewHEVC(cfg, 4)` takes in-band
 parameter sets and `DecodeAnnexB` a raw `.265` stream. Main 10 frames hold
-little-endian 16-bit samples (ffmpeg's `yuv420p10le`). Each picture's `PTS` is
+little-endian 16-bit samples (ffmpeg's `yuv420p10le`), and so does every plane above
+eight bits. **Behaviour change in v0.15.0:** a stream in 4:0:0, 4:2:2 or 4:4:4, or at a
+depth other than 8 and 10, or with unequal luma and chroma depths, used to be refused with
+`ErrUnsupported`; it now decodes, with no option to enable it, so a caller that assumed
+`Chroma420` and `BitDepth` 8 or 10 must read `Frame.Chroma` and `Frame.BitDepthC`. There is
+no change for 4:2:0 at 8 or 10 bits, whose output is byte for byte the same. Each picture's `PTS` is
 that of the sample holding its first slice, so it is exact whatever the
 reordering. `Frame.Corrupt` marks a picture the decoder lost a slice of.
 `Config.MaxFrameMBs` counts 256 luma samples for HEVC; `EnforceLevel` applies to
@@ -382,14 +390,16 @@ from go-videodsp/kernels and a portable path), behind the same API as before:
 `NewHEVC`, `NewHVCC`, `NewTrack`, `DecodeSample`, `DecodeAnnexB`, `DecodeTrack` and
 `PosterFrame` keep their signatures. **Since v0.10.0 it replaces
 [`github.com/gen2brain/h265`](https://github.com/gen2brain/h265), which is no longer a
-dependency**, with no fallback to it. It decodes more than a `Frame` can carry; only
-what a `Frame` holds is returned:
+dependency**, with no fallback to it. Since v0.15.0 a `Frame` carries every format h265 decodes
+except separate colour planes:
 
 | Profile | State |
 | --- | --- |
 | Main, Main Still Picture, 4:2:0 8-bit | bit-exact against ffmpeg |
 | Main 10, 4:2:0 10-bit | bit-exact against ffmpeg |
-| 4:0:0, 4:2:2, 4:4:4, bit depths other than 8 and 10, unequal luma and chroma depths | refused with `ErrUnsupported`, naming the format (the decoder reads them; a `Frame` cannot carry them, and the API is not widened here) |
+| 4:2:0, 4:2:2, 4:4:4 (also 4:0:0), 8 to 16 bits, each of luma and chroma, equal or not | decoded; each of the 47 range extension streams below equals the MD5 of the output the suite ships |
+| 4:4:4 coded as separate colour planes (`separate_colour_plane_flag`) | refused with `ErrUnsupported` ([go-avkit/h265#88](https://github.com/go-avkit/h265/issues/88)) |
+| A picture whose planes would take more than 2 GiB - 1 bytes | refused with `ErrOverLimit`, at the parameter set, before anything is allocated |
 | 3D and screen content coding extensions | refused with `ErrUnsupported` |
 | `cabac_bypass_alignment_enabled_flag`, multilayer (MV-HEVC) streams | decoded (the base layer only) |
 
@@ -424,15 +434,27 @@ thread, native pixel format):
   decided by the suite's own MD5, because ffmpeg disagrees with it and we agree:
   `SAODBLK_A_MainConcept_4`, `SAODBLK_B_MainConcept_4` (ffmpeg's output differs
   from picture 0, with or without its assembly) and `VPSSPSPPS_A_MainConcept_1`
-  (ffmpeg reports missing parameter sets and outputs 2 pictures of the 6). One,
-  `TSUNEQBD_A_MAIN10_Technicolor_2` (luma and chroma bit depths differ), is
-  refused here and by ffmpeg. The bitstreams are not in the repository (their
+  (ffmpeg reports missing parameter sets and outputs 2 pictures of the 6).
+  `TSUNEQBD_A_MAIN10_Technicolor_2` (luma 10 bits, chroma 9) is refused by ffmpeg and
+  decoded here since v0.15.0, its output equal to the suite's MD5. The bitstreams are not in the repository (their
   redistribution terms are not stated); `TestHEVCConformance` runs when
   `DECODE_HEVC_DIR` points at them (`go run ./tools/jvt --codec hevc fetch --all`).
+* **The range extension streams the formats of v0.15.0 come from** (`TestHEVCConformanceRExt`,
+  `DECODE_HEVC_DIR` as above): the MD5 of the whole output of each of 47 streams, 4:0:0 at 8, 12
+  and 16 bits, 4:2:2 at 10 and 12, 4:4:4 at 8, 10, 12 and 16 (including the high throughput and extended
+  precision profiles), and the unequal depths of `Bitdepth_A_RExt_Sony_1` (luma 12, chroma 8),
+  `Bitdepth_B_RExt_Sony_1` (8 and 12) and `TSUNEQBD_A_MAIN10_Technicolor_2` (10 and 9), equals the
+  MD5 the suite ships beside the bitstream: all 47. The suite writes one file depth for a whole
+  file, so for `Bitdepth_A` and `Bitdepth_B` (one depth 8, the other above) its hash is that of
+  every plane widened to 16-bit words, which the test compares; a `Frame` keeps the byte plane
+  packed. The three `CCP_*_RExt_QCOM_1` streams are not run: their bitstream is not named as its
+  directory. A picture does not say its chroma format, so a `Frame` is labelled from the shape of
+  its planes; where two formats share a shape (one row of 4:2:0 and of 4:2:2, one sample of
+  any) the label is the larger format, and the bytes are the same. Speed not measured.
 * **5 streams in `testdata/hevc/streams`** (made here with x265 from ffmpeg's
   `testsrc2`; intra, B pyramid, slices, wavefronts, weighted prediction, cropping,
-  Main and Main 10) run in CI against ffmpeg's MD5s, plus a 4:4:4 one that must be
-  refused.
+  Main and Main 10) run in CI against ffmpeg's MD5s, plus a 4:4:4 one that must decode in full
+  planes.
 * **7 real files** (MP4 and Matroska, 540x960 to 3840x1606, Main and Main 10), 200
   pictures each: `testdata/hevc-real-files.txt`, hashes only.
 

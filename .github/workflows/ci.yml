@@ -77,6 +77,8 @@ jobs:
       - run: go test -timeout 15m -run XXX -fuzz FuzzHEVCSample -fuzztime 60s .
       - run: go test -timeout 15m -run XXX -fuzz FuzzHEVCAnnexB -fuzztime 60s .
       - run: go test -timeout 15m -run XXX -fuzz FuzzParseHVCC -fuzztime 20s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzHEVCFrame -fuzztime 30s .
+      - run: go test -timeout 15m -run XXX -fuzz FuzzHEVCFormat -fuzztime 30s .
       - run: go test -timeout 15m -run XXX -fuzz FuzzFLACSample -fuzztime 60s .
       - run: go test -timeout 15m -run XXX -fuzz FuzzFLACConfig -fuzztime 20s .
       - run: go test -timeout 15m -run XXX -fuzz FuzzMP3Sample -fuzztime 60s .

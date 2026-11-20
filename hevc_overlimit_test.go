@@ -22,7 +22,7 @@ func TestHEVCFrameBytesAreBounded(t *testing.T) {
 	}{{89478480, false}, {89478488, true}} {
 		// the SPS, when it arrives
 		d, _ := NewHEVC(Config{MaxFrameMBs: 1 << 23}, 4)
-		u, ok := hevcUnit(formatSPS(width, tc.height, 1, 10, 10), 0)
+		u, ok := hevcUnit(formatSPS(width, tc.height, 1, 10, 10, 0), 0)
 		if !ok {
 			t.Fatal("SPS is not a unit")
 		}
