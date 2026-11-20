@@ -3,17 +3,17 @@ module github.com/go-avkit/decode
 go 1.27.4
 
 require (
-	github.com/go-avkit/avkit v0.16.0
+	github.com/go-avkit/avkit v0.19.1
 	github.com/go-avkit/bitstream v0.4.0
 	github.com/go-avkit/h264 v0.12.0
 	github.com/go-avkit/h265 v0.24.0
 	github.com/go-dsp/signal v0.2.0
-	github.com/go-fft/fft v0.38.0
-	github.com/go-simd/floats v0.24.0
+	github.com/go-fft/fft v0.43.0
+	github.com/go-simd/floats v0.28.0
 	github.com/mewkiz/flac v1.0.14
 	github.com/pion/opus v0.1.0
-	github.com/tphakala/go-mp3 v0.3.0
-	golang.org/x/sys v0.49.0
+	github.com/tphakala/go-mp3 v0.4.0
+	golang.org/x/sys v0.50.0
 )
 
 require (
