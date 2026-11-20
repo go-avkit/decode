@@ -39,6 +39,9 @@ func NewHEVC(cfg Config, lengthSize int) (*Decoder, error) {
 func newHEVC(cfg Config, lengthSize int) *Decoder {
 	return &Decoder{cfg: cfg, lengthSize: lengthSize, h265: h265.NewDecoder(h265.Options{
 		Limits: h265.Limits{MaxPixels: min(int64(cfg.frameMBs())*256, maxFrameSamples)},
+		// A Frame owns its planes (hevcFrame copies them), so the decoder's picture goes back
+		// to its pool the moment it is copied: no fresh allocation, and no page faults, per picture.
+		RecyclePictures: true,
 	})}
 }
 
@@ -203,6 +206,9 @@ func (d *Decoder) hevcFrames(outs []h265.Output) ([]Frame, error) {
 	var first error
 	for _, o := range outs {
 		f, err := hevcFramer(d, o)
+		if o.Picture != nil {
+			o.Picture.Release() // copied into f (or refused): the planes are the decoder's again
+		}
 		if err != nil {
 			if first == nil {
 				first = err
@@ -225,9 +231,8 @@ func hevcFormatError(chroma string, bitDepth, bitDepthC int) error {
 // picture of it is decoded. Units that are not a base-layer SPS, or an SPS that does not
 // parse (the decoder reports that), pass.
 func (d *Decoder) hevcFormat(u h265.Unit) error {
-	if u.Type != h265.UnitSPS || u.LayerID != 0 {
-		return nil
-	}
+	// ParseSPS refuses a unit that is no SPS and one of a layer above 0 (Annex F sets have
+	// another syntax), and both pass here like any SPS that does not parse.
 	s, err := h265.ParseSPS(u)
 	if err != nil {
 		return nil

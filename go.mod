@@ -6,7 +6,7 @@ require (
 	github.com/go-avkit/avkit v0.16.0
 	github.com/go-avkit/bitstream v0.4.0
 	github.com/go-avkit/h264 v0.11.0
-	github.com/go-avkit/h265 v0.23.0
+	github.com/go-avkit/h265 v0.24.0
 	github.com/go-dsp/signal v0.2.0
 	github.com/go-fft/fft v0.38.0
 	github.com/go-simd/floats v0.24.0
