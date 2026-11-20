@@ -110,8 +110,22 @@ Decisions in that table, and the alternatives set aside:
   would be `Chroma444` with three full planes: the output picture has three arrays either way.
   It stays refused with `ErrUnsupported` until h265 reconstructs it into three planes (it parses
   the flag, `sps.go:154-155`, and the slice's `colour_plane_id`; no witness has been decoded).
-* **No accessor methods** are added (a `SampleBytes(plane)` or `ChromaSize()`): the strides
-  already carry the bytes, and the table is three lines. Open question 2.
+* **Two accessors** (decision 3), value receivers, no allocation, so a caller never re-derives the
+  table:
+
+  ```go
+  // SampleBytes is the bytes per sample of plane 0 (Y), 1 (Cb) or 2 (Cr): 1 when that plane's
+  // depth is 8, 2 otherwise; 0 for a plane the frame does not have (Cb, Cr of Chroma400) and for
+  // any other index.
+  func (f Frame) SampleBytes(plane int) int
+
+  // ChromaSize is the width and height, in samples, of each of Cb and Cr: (⌈W/2⌉, ⌈H/2⌉) for
+  // Chroma420, (⌈W/2⌉, H) for Chroma422, (W, H) for Chroma444, (0, 0) for Chroma400.
+  func (f Frame) ChromaSize() (w, h int)
+  ```
+
+  Both are tested on every format and depth pair. The decoder's own sizing and the tests use them,
+  so the table lives in one place.
 
 ## Compatibility
 
@@ -279,13 +293,26 @@ Bounds, all in `int`, which is 32 bits on 386 (CI's `arch-386` lane, `ci.yml:182
 5. **H.264**, when go-avkit/h264 decodes a new format: decode's `frame` reads the format from
    h264's picture and fills the same `Frame`. A separate design in h264 for its picture type.
 
-## Open questions for the owner
+## Decisions
+
+The owner's answers to the open questions below (2026-11-20):
+
+1. **No opt-in flag.** The new formats are on by default; the release is a MINOR (v0.15.0) with a
+   "Behaviour change" note.
+2. **`BitDepthC` is 0 for 4:0:0** (nil `Cb`, `Cr`).
+3. **The accessors are added now**: `(Frame).SampleBytes(plane int) int` and
+   `(Frame).ChromaSize() (w, h int)`, as in "The layout", tested on every format. They ship with
+   the step that first sets a non-4:2:0 format (step 2); step 1 may carry them too.
+4. **Separate colour planes stay refused** (`ErrUnsupported`): no profile allows them
+   (go-avkit/h265#88).
+
+## Open questions for the owner (answered above)
 
 1. **Opt-in or not.** Accepting the new formats by default is the behaviour change of step 2.
    A `Config` flag keeping the refusal by default would make it purely additive, at the price of
    a permanent knob. Proposed: no flag, a MINOR release and a Behaviour change note.
 2. **Accessors.** Add `(Frame).SampleBytes(plane int)` and `(Frame).ChromaSize()` now, or leave the
-   table in the doc comment? Proposed: leave them out until a caller needs them.
+   table in the doc comment? Proposed then: leave them out. Decided: add them now (decision 3).
 3. **4:0:0 `BitDepthC`.** 0 (no chroma planes to describe) or the SPS's `bit_depth_chroma`, which
    the stream states even for monochrome? Proposed: 0.
 4. **Separate colour planes.** Keep refusing until h265 has a witness, or ask h265 for it now
