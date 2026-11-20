@@ -24,6 +24,27 @@ for _, f := range frames {                          // display order
 }
 ```
 
+**New:** `decode.Frames` is `DecodeTrack` as an iterator (`iter.Seq2[*Frame, error]`).
+It gives the same pictures, at the same times, H.264 and HEVC, edit list applied or
+ignored as `Config` says, one at a time as the decoder outputs them, so a long file
+is not held whole:
+
+```go
+for f, err := range decode.Frames(r, trackID, decode.Config{}) {
+    if err != nil {
+        return err // the last pair, after every picture decoded before it
+    }
+    use(f.Y, f.Cb, f.Cr, f.YStride, f.CStride, f.Width, f.Height, f.PTS)
+}
+```
+
+Each `*Frame` owns its planes and nothing is reused between iterations, so it may be
+kept, appended or sent to another goroutine; the price is one picture allocation per
+frame, which the garbage collector takes back once the loop lets go of it. `break`
+stops the decoding. An iterator and not a callback, because `break`, `return` and
+`defer` then work in the loop body and the error is part of the loop. Measured
+against `DecodeTrack`: see [Performance](#performance).
+
 One picture, for a poster or a thumbnail, without decoding the track:
 
 ```go
@@ -577,6 +598,13 @@ process start is taken off. Since decode v0.12.0 (h264 v0.11.0), through `Decode
 on 1080p, one core, Apple M4 (indicative, load 9 to 11), alien takes 2.3 s instead of
 5.7 to 5.9 s and fade 0.8 s instead of 2.0 s, 2.5 times faster; ffmpeg is still 2.3 to
 2.8 times faster, and Zen 4 is not re-measured. The measurement is on arm64; an amd64 one is still needed.
+`decode.Frames` against `DecodeTrack` on the same
+files, Ryzen 9 7950X (Zen 4), one core, `taskset -c 9`, 7 alternating rounds, median, the
+pictures dropped as they come, md5 of every plane equal: H.264 alien (1080p, 238
+pictures) 2.63 s to 2.53 s, fade (120) 1.05 s to 1.00 s, HEVC alien-main (238) 2.66 s to
+2.47 s; page faults 194 000 to 25 000, 100 000 to 18 000 and 515 000 to 339 000. The
+control, `DecodeTrack` twice, differs by under 1 %. What is saved is the holding of
+every picture: HEVC still allocates a picture per frame inside h265.
 Only AAC's speed is measured (table in Audio above); FLAC, MP3 and Opus are not. The numbers and the profiles are in the
 comment on #2.
 

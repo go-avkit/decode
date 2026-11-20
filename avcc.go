@@ -6,6 +6,7 @@ package decode
 import (
 	"encoding/binary"
 	"fmt"
+	"iter"
 
 	"github.com/go-avkit/avkit/container"
 )
@@ -214,61 +215,123 @@ func (d *Decoder) toAnnexB(data []byte) ([]byte, error) {
 // to end. An edit list this package does not apply is refused with ErrEditList.
 // Config.IgnoreEditList returns every picture at its track time instead.
 func DecodeTrack(r *container.Reader, trackID uint32, cfg Config) ([]Frame, error) {
+	var out []Frame
+	_, err := walkTrack(r, trackID, cfg, func(f Frame) bool {
+		out = append(out, f)
+		return true
+	})
+	return out, err
+}
+
+// Frames is DecodeTrack as a sequence: the same pictures, in the same order, at
+// the same presentation times (the edit list applied or not as Config says, H.264
+// and HEVC alike), handed over one at a time as they come out of the decoder
+// instead of all together at the end. A track of 1080p pictures held whole is
+// 3 MB a picture; ranging over Frames holds the few the decoder still needs, so
+// the memory of a long file stays flat.
+//
+//	for f, err := range decode.Frames(r, id, decode.Config{}) {
+//		if err != nil {
+//			return err
+//		}
+//		use(f)
+//	}
+//
+// An error ends the sequence: it comes as the last pair, with a nil Frame,
+// after every picture decoded before it (DecodeTrack returns those pictures
+// beside its error), and it is what DecodeTrack would return. Breaking out of
+// the loop stops the decoding and releases the decoder.
+//
+// Every Frame is the caller's: it owns its planes and nothing else refers to
+// them, so it can be kept past the next iteration, sent to another goroutine or
+// appended to a slice, as the Frames of DecodeTrack can. Nothing is reused
+// between iterations, which is what makes the default safe; the cost is the
+// allocation of a picture per frame, which the garbage collector gives back as
+// soon as the caller lets go of it.
+//
+// It is the shape of an iterator, a [iter.Seq2], and not a callback, because the
+// loop body is then ordinary code: break, return and continue work, a defer in
+// the caller's function sees them, and the error is a value of the loop and not a
+// second result to remember to check after it.
+func Frames(r *container.Reader, trackID uint32, cfg Config) iter.Seq2[*Frame, error] {
+	return func(yield func(*Frame, error) bool) {
+		stopped := false
+		_, err := walkTrack(r, trackID, cfg, func(f Frame) bool {
+			if !yield(&f, nil) {
+				stopped = true
+				return false
+			}
+			return true
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+
+// walkTrack decodes the track and gives every picture to emit, in order. It stops
+// when emit returns false, and then reports that it did, or on the first error.
+func walkTrack(r *container.Reader, trackID uint32, cfg Config, emit func(Frame) bool) (stopped bool, err error) {
 	tc, err := r.TrackConfig(trackID)
 	var samples []container.Sample
 	if err == nil {
 		samples, err = r.Samples(trackID)
 	}
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 	if tc = presented(r, tc, samples); cfg.IgnoreEditList || tc.EditList == nil {
-		return decodeSpan(tc, samples, 0, cfg, nil)
+		return walkSpan(tc, samples, 0, cfg, nil, emit)
 	}
 	runs, err := editRuns(tc, samples)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-	var out []Frame
 	for _, run := range runs {
-		fs, err := decodeSpan(tc, samples[run.first:run.end], run.dts, cfg, &run)
-		out = append(out, fs...)
-		if err != nil {
-			return out, err
+		stopped, err := walkSpan(tc, samples[run.first:run.end], run.dts, cfg, &run, emit)
+		if stopped || err != nil {
+			return stopped, err
 		}
 	}
-	return out, nil
+	return false, nil
 }
 
-// decodeSpan decodes samples, the first of which decodes at dts, with a decoder
-// of its own, and returns the pictures it outputs. With a run only the pictures
-// the run presents are returned, at their presentation time.
-func decodeSpan(tc container.TrackConfig, samples []container.Sample, dts int64, cfg Config, run *editRun) ([]Frame, error) {
+// walkSpan decodes samples, the first of which decodes at dts, with a decoder of
+// its own, and gives the pictures it outputs to emit. With a run only the
+// pictures the run presents are given, at their presentation time.
+func walkSpan(tc container.TrackConfig, samples []container.Sample, dts int64, cfg Config, run *editRun, emit func(Frame) bool) (stopped bool, err error) {
 	d, err := NewTrack(tc, cfg)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 	defer d.Close()
-	var out []Frame
-	keep := func(fs []Frame) {
+	keep := func(fs []Frame) bool {
 		for _, f := range fs {
-			if run == nil {
-				out = append(out, f)
-			} else if f.PTS >= run.lo && f.PTS < run.hi {
+			if run != nil {
+				if f.PTS < run.lo || f.PTS >= run.hi {
+					continue
+				}
 				f.PTS += run.shift
-				out = append(out, f)
+			}
+			if !emit(f) {
+				return false
 			}
 		}
+		return true
 	}
 	for _, s := range samples {
 		fs, err := d.DecodeSample(s.Data, dts+int64(s.CompositionOffset))
-		keep(fs)
+		if !keep(fs) {
+			return true, nil
+		}
 		if err != nil {
-			return out, err
+			return false, err
 		}
 		dts += int64(s.Duration)
 	}
 	fs, err := d.Flush()
-	keep(fs)
-	return out, err
+	if !keep(fs) {
+		return true, nil
+	}
+	return false, err
 }
