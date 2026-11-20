@@ -60,22 +60,13 @@ func TestHEVCFrame(t *testing.T) {
 		t.Error("a corrupt picture was reported whole")
 	}
 
-	// Formats a Frame cannot carry are refused by name.
+	// A picture that is no Frame's is refused by name.
 	refused := map[string]struct {
 		mutate func(*h265.Output)
 		names  string
 	}{
-		"4:2:2": {func(o *h265.Output) {
-			o.Picture.Planes[1], o.Picture.Planes[2] = h265.Plane{Width: 2, Height: 2, Stride: 2, Pix8: make([]uint8, 4)}, h265.Plane{Width: 2, Height: 2, Stride: 2, Pix8: make([]uint8, 4)}
-		}, "4:2:2"},
-		"4:4:4": {func(o *h265.Output) {
-			o.Picture.Planes[1], o.Picture.Planes[2] = h265.Plane{Width: 4, Height: 2, Stride: 4, Pix8: make([]uint8, 8)}, h265.Plane{Width: 4, Height: 2, Stride: 4, Pix8: make([]uint8, 8)}
-		}, "4:4:4"},
-		"4:0:0":          {func(o *h265.Output) { o.Picture.Components = 1 }, "4:0:0"},
-		"unequal depths": {func(o *h265.Output) { o.Picture.BitDepth[1] = 10 }, "8/10"},
-		"12 bits":        {func(o *h265.Output) { o.Picture.BitDepth = [3]int{12, 12, 12} }, "12/12"},
-		"16 bits":        {func(o *h265.Output) { o.Picture.BitDepth = [3]int{16, 16, 16} }, "16/16"},
-		"no picture":     {func(o *h265.Output) { o.Picture = nil }, "0/0"},
+		"2 components": {func(o *h265.Output) { o.Picture.Components = 2 }, "2 components"},
+		"no picture":   {func(o *h265.Output) { o.Picture = nil }, "0 components at 0/0"},
 	}
 	for name, c := range refused {
 		o := hevcOutput(8)
@@ -104,10 +95,10 @@ func TestHEVCFrame(t *testing.T) {
 	// Every picture of a batch is converted; the first error is the one returned.
 	good := hevcOutput(8)
 	wrong, again := hevcOutput(8), hevcOutput(8)
-	wrong.Picture.BitDepth = [3]int{12, 12, 12}
-	again.Picture.Components = 1
+	wrong.Picture.Components = 2
+	again.Picture.Components = 4
 	fs, err := d.hevcFrames([]h265.Output{wrong, good, again})
-	if len(fs) != 1 || !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "12/12") {
+	if len(fs) != 1 || !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "2 components") {
 		t.Errorf("a batch: %d pictures, %v", len(fs), err)
 	}
 }
@@ -152,24 +143,27 @@ func TestHEVCSampleHeaders(t *testing.T) {
 	}
 }
 
-// TestHEVCFormatIsRefusedAtTheParameterSet: a format a Frame cannot carry is refused when its SPS
-// arrives, before a picture of it is decoded.
-func TestHEVCFormatIsRefusedAtTheParameterSet(t *testing.T) {
-	raw := readFile(t, "testdata/hevc/streams/yuv444_unsupported.265")
+// TestHEVCSeparateColourPlanesAreRefusedAtTheParameterSet: 4:4:4 coded as three colour planes
+// (no profile allows it, go-avkit/h265#88) is refused when its SPS arrives, in a sample and in a
+// configuration record, and the same SPS without the flag is not.
+func TestHEVCSeparateColourPlanesAreRefusedAtTheParameterSet(t *testing.T) {
 	d, _ := NewHEVC(Config{}, 4)
 	defer d.Close()
-	fs, err := d.DecodeAnnexB(raw)
-	if err == nil {
-		var rest []Frame
-		rest, err = d.Flush()
-		fs = append(fs, rest...)
+	_, err := d.DecodeSample(prefixed([][]byte{formatSPS(64, 64, 3, 8, 8, 1)}, 4), 0)
+	if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "separate colour planes") {
+		t.Errorf("separate planes in a sample: %v", err)
 	}
-	if !errors.Is(err, ErrUnsupported) || len(fs) != 0 || !strings.Contains(err.Error(), "4:4:4") {
-		t.Errorf("4:4:4: %d pictures, %v", len(fs), err)
+	if _, err := NewHVCC(hvcC(nil, [][]byte{formatSPS(64, 64, 3, 8, 8, 1)}, nil, 4), Config{}); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("separate planes in a configuration record: %v", err)
 	}
-	// and in a configuration record
+	d2, _ := NewHEVC(Config{}, 4)
+	defer d2.Close()
+	if _, err := d2.DecodeSample(prefixed([][]byte{formatSPS(64, 64, 3, 8, 8, 0)}, 4), 0); errors.Is(err, ErrUnsupported) {
+		t.Errorf("4:4:4 refused: %v", err)
+	}
+	// and the real 4:4:4 stream is carried, in a configuration record too
 	vps, sps, pps, _, _ := hevcStream(t, "testdata/hevc/streams/yuv444_unsupported.265")
-	if _, err := NewHVCC(hvcC(vps, sps, pps, 4), Config{}); !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "4:4:4") {
+	if _, err := NewHVCC(hvcC(vps, sps, pps, 4), Config{}); err != nil {
 		t.Errorf("4:4:4 hvcC: %v", err)
 	}
 }

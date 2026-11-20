@@ -75,10 +75,14 @@ func FuzzHEVCAnnexB(f *testing.F) {
 }
 
 func TestHEVCFuzzCorpusIsCommitted(t *testing.T) {
-	for _, target := range []string{"FuzzParseHVCC", "FuzzHEVCSample", "FuzzHEVCAnnexB"} {
+	for target, least := range map[string]int{
+		"FuzzParseHVCC": 6, "FuzzHEVCSample": 6, "FuzzHEVCAnnexB": 6,
+		// the two seeds of the Frame conversion: a picture, and a parameter set
+		"FuzzHEVCFrame": 3, "FuzzHEVCFormat": 3,
+	} {
 		entries, err := os.ReadDir(filepath.Join("testdata", "fuzz", target))
-		if err != nil || len(entries) < 6 {
-			t.Errorf("%s: corpus of %d entries (%v), want the seeds from `jvt seeds`", target, len(entries), err)
+		if err != nil || len(entries) < least {
+			t.Errorf("%s: corpus of %d entries (%v), want at least %d (`jvt seeds` for the streams)", target, len(entries), err, least)
 		}
 	}
 }

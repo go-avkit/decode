@@ -12,8 +12,8 @@ import (
 
 // hevcStreams returns the committed HEVC bitstreams the decoder is expected to
 // decode, testdata/hevc/streams/NAME.265, each with the NAME.md5 that ffmpeg
-// -f framemd5 produced for it. yuv444_unsupported has none: it is the stream
-// the decoder must refuse.
+// -f framemd5 produced for it. yuv444_unsupported has none (the decoder
+// refused 4:4:4 when it was made); the tests that decode it check its shape.
 func hevcStreams(t *testing.T) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join("testdata", "hevc", "streams", "*.265"))
@@ -161,10 +161,11 @@ func nalFrom(typ int, rbsp []byte) []byte {
 
 // bigSPS is a sequence parameter set for a w x h Main profile 4:2:0 picture, and
 // bigPPS the picture parameter set that goes with it.
-func bigSPS(w, h uint64) []byte { return formatSPS(w, h, 1, 8, 8) }
+func bigSPS(w, h uint64) []byte { return formatSPS(w, h, 1, 8, 8, 0) }
 
-// formatSPS is bigSPS for a chroma_format_idc and the two bit depths (8 to 16).
-func formatSPS(w, h, chroma, depth, depthC uint64) []byte {
+// formatSPS is bigSPS for a chroma_format_idc, the two bit depths (8 to 16) and, for 4:4:4, the
+// separate_colour_plane_flag.
+func formatSPS(w, h, chroma, depth, depthC, separate uint64) []byte {
 	var s paramBits
 	s.u(0, 4) // vps id
 	s.u(0, 3) // max_sub_layers_minus1
@@ -177,7 +178,7 @@ func formatSPS(w, h, chroma, depth, depthC uint64) []byte {
 	s.ue(0)      // sps id
 	s.ue(chroma) // chroma_format_idc
 	if chroma == 3 {
-		s.u(0, 1) // separate_colour_plane_flag
+		s.u(separate, 1) // separate_colour_plane_flag
 	}
 	s.ue(w)
 	s.ue(h)

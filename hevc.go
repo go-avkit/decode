@@ -220,28 +220,30 @@ func (d *Decoder) hevcFrames(outs []h265.Output) ([]Frame, error) {
 	return out, first
 }
 
-// hevcFormatError is the refusal of a picture format a Frame cannot carry: it names it.
-func hevcFormatError(chroma string, bitDepth, bitDepthC int) error {
-	return fmt.Errorf("%w: HEVC %s at %d/%d bits, only 4:2:0 at 8 or 10 bits is decoded",
-		ErrUnsupported, chroma, bitDepth, bitDepthC)
+// hevcFormatError is the refusal of a picture a Frame cannot carry (no picture, or a number of
+// components that is no chroma format's): it names what the decoder gave.
+func hevcFormatError(components, bitDepth, bitDepthC int) error {
+	return fmt.Errorf("%w: HEVC picture of %d components at %d/%d bits is not a Frame",
+		ErrUnsupported, components, bitDepth, bitDepthC)
 }
 
-// hevcFormat refuses the sequence parameter set of a format a Frame cannot carry (4:0:0,
-// 4:2:2, 4:4:4, unequal luma and chroma bit depths, and anything but 8 or 10 bits), before a
-// picture of it is decoded. Units that are not a base-layer SPS, or an SPS that does not
-// parse (the decoder reports that), pass.
+// hevcFormat refuses the sequence parameter set of a picture a Frame cannot carry, before a
+// picture of it is decoded: 4:4:4 coded as separate colour planes (no profile allows it,
+// go-avkit/h265#88), and a Frame of more than maxFrameBytes. Every other chroma format and bit
+// depth the SPS can state (4:0:0 to 4:4:4, 8 to 16 bits each, the two apart) is carried. Units
+// that are not a base-layer SPS, or an SPS that does not parse (the decoder reports that), pass.
 func (d *Decoder) hevcFormat(u h265.Unit) error {
 	// ParseSPS refuses a unit that is no SPS and one of a layer above 0 (Annex F sets have
-	// another syntax), and both pass here like any SPS that does not parse.
+	// another syntax), and both pass here like any SPS that does not parse. It also bounds the
+	// chroma format to 0 to 3 and each depth to 8 to 16.
 	s, err := h265.ParseSPS(u)
 	if err != nil {
 		return nil
 	}
-	chroma := [4]string{"4:0:0", "4:2:0", "4:2:2", "4:4:4"}[s.ChromaFormat&3]
-	if s.ChromaFormat != 1 || s.BitDepthLuma != s.BitDepthChroma || (s.BitDepthLuma != 8 && s.BitDepthLuma != 10) {
-		return hevcFormatError(chroma, int(s.BitDepthLuma), int(s.BitDepthChroma))
+	if s.SeparatePlanes {
+		return fmt.Errorf("%w: HEVC 4:4:4 coded as separate colour planes", ErrUnsupported)
 	}
-	if _, _, _, ok := frameBytes(uint64(s.Width), uint64(s.Height), Chroma420, int(s.BitDepthLuma), int(s.BitDepthChroma)); !ok {
+	if _, _, _, ok := frameBytes(uint64(s.Width), uint64(s.Height), Chroma(s.ChromaFormat), int(s.BitDepthLuma), int(s.BitDepthChroma)); !ok {
 		return hevcOverLimit(int64(s.Width), int64(s.Height))
 	}
 	return nil
@@ -259,61 +261,70 @@ func hevcOverLimit(w, h int64) error {
 // yuv420p10le.
 func (d *Decoder) hevcFrame(o h265.Output) (Frame, error) {
 	p := o.Picture
-	chroma := "4:0:0"
-	var w, h, cw, ch int
-	if p != nil && p.Components > 0 {
-		w, h = p.Planes[0].Width, p.Planes[0].Height
-		if p.Components >= 3 {
-			cw, ch = p.Planes[1].Width, p.Planes[1].Height
-			switch {
-			case cw == w && ch == h:
-				chroma = "4:4:4"
-			case cw == w/2 && ch == h:
-				chroma = "4:2:2"
-			default:
-				chroma = "4:2:0"
-			}
-		}
-	}
-	if p == nil || p.Components != 3 || chroma != "4:2:0" || p.BitDepth[0] != p.BitDepth[1] || (p.BitDepth[0] != 8 && p.BitDepth[0] != 10) {
-		var bd, bdc int
+	if p == nil || (p.Components != 1 && p.Components != 3) {
+		var n, bd, bdc int
 		if p != nil {
-			bd, bdc = p.BitDepth[0], p.BitDepth[1]
+			n, bd, bdc = p.Components, p.BitDepth[0], p.BitDepth[1]
 		}
-		return Frame{}, hevcFormatError(chroma, bd, bdc)
+		return Frame{}, hevcFormatError(n, bd, bdc)
 	}
-	if w <= 0 || h <= 0 || cw != (w+1)/2 || ch != (h+1)/2 {
-		return Frame{}, fmt.Errorf("%w: picture %dx%d with chroma planes %dx%d does not lie in its planes",
-			ErrBitstream, w, h, cw, ch)
+	w, h := p.Planes[0].Width, p.Planes[0].Height
+	malformed := func() error {
+		return fmt.Errorf("%w: picture %dx%d with %d planes at %d/%d bits does not lie in its planes",
+			ErrBitstream, w, h, p.Components, p.BitDepth[0], p.BitDepth[1])
 	}
-	// The bytes are bounded, not the samples, in uint64: w*h*step wraps an int on a 32-bit host.
-	if _, _, _, ok := frameBytes(uint64(w), uint64(h), Chroma420, p.BitDepth[0], p.BitDepth[1]); !ok {
+	if w <= 0 || h <= 0 {
+		return Frame{}, malformed()
+	}
+	// The chroma format is the shape of the chroma planes. A picture of one chroma sample's
+	// width (a 1x1 picture) is the same bytes in 4:2:0, 4:2:2 and 4:4:4.
+	chroma, depthC := Chroma400, 0
+	if p.Components == 3 {
+		cw, ch := p.Planes[1].Width, p.Planes[1].Height
+		switch {
+		case cw == w && ch == h:
+			chroma = Chroma444
+		case cw == (w+1)/2 && ch == h:
+			chroma = Chroma422
+		case cw == (w+1)/2 && ch == (h+1)/2:
+			chroma = Chroma420
+		default:
+			return Frame{}, malformed()
+		}
+		depthC = p.BitDepth[1]
+		if p.Planes[2].Width != cw || p.Planes[2].Height != ch || p.BitDepth[2] != depthC {
+			return Frame{}, malformed()
+		}
+	}
+	// The bytes are bounded, not the samples, in uint64: w*h*bytes wraps an int on a 32-bit host.
+	// The depths are checked here too (8 to 16), where frameBytes refuses any other.
+	yBytes, cBytes, _, ok := frameBytes(uint64(w), uint64(h), chroma, p.BitDepth[0], depthC)
+	if !ok {
+		if p.BitDepth[0] < 8 || p.BitDepth[0] > 16 || (chroma != Chroma400 && (depthC < 8 || depthC > 16)) {
+			return Frame{}, malformed()
+		}
 		return Frame{}, hevcOverLimit(int64(w), int64(h))
 	}
 	if !planesFit(p) {
-		return Frame{}, fmt.Errorf("%w: picture %dx%d with chroma planes %dx%d does not lie in its planes",
-			ErrBitstream, w, h, cw, ch)
-	}
-	step := 1
-	if p.BitDepth[0] > 8 {
-		step = 2
+		return Frame{}, malformed()
 	}
 	f := Frame{
-		Y:         make([]byte, w*h*step),
-		Cb:        make([]byte, cw*ch*step),
-		Cr:        make([]byte, cw*ch*step),
-		YStride:   w * step,
-		CStride:   cw * step,
+		Y:         make([]byte, yBytes),
 		Width:     w,
 		Height:    h,
-		Chroma:    Chroma420,
+		Chroma:    chroma,
 		BitDepth:  p.BitDepth[0],
-		BitDepthC: p.BitDepth[1],
+		BitDepthC: depthC,
 		Corrupt:   o.Corrupt,
 	}
+	f.YStride = w * f.SampleBytes(0)
 	packPlane(f.Y, &p.Planes[0])
-	packPlane(f.Cb, &p.Planes[1])
-	packPlane(f.Cr, &p.Planes[2])
+	if chroma != Chroma400 {
+		f.Cb, f.Cr = make([]byte, cBytes), make([]byte, cBytes)
+		f.CStride = p.Planes[1].Width * f.SampleBytes(1)
+		packPlane(f.Cb, &p.Planes[1])
+		packPlane(f.Cr, &p.Planes[2])
+	}
 	switch {
 	case d.sampleMode:
 		f.PTS = int64(o.Tag)
@@ -324,12 +335,15 @@ func (d *Decoder) hevcFrame(o h265.Output) (Frame, error) {
 	return f, nil
 }
 
-// planesFit reports whether every row of the three planes of p lies inside its slice, as
-// the copy will read it.
+// planesFit reports whether every row of the planes of p lies inside its slice, as the copy will
+// read it, and whether each plane is of the kind its depth says (a byte plane iff the depth is
+// 8: packPlane picks its loop from the slice, the Frame was sized from the depth). The extent
+// is computed in int64, which cannot overflow where an int does on a 32-bit host.
 func planesFit(p *h265.DecodedPicture) bool {
-	for c := range 3 {
+	for c := range p.Components {
 		pl := &p.Planes[c]
-		if pl.Stride < pl.Width || pl.Len() < (pl.Height-1)*pl.Stride+pl.Width {
+		if pl.Is8() != (p.BitDepth[c] == 8) || pl.Stride < pl.Width ||
+			int64(pl.Len()) < int64(pl.Height-1)*int64(pl.Stride)+int64(pl.Width) {
 			return false
 		}
 	}

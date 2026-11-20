@@ -6,7 +6,6 @@ package decode
 import (
 	"crypto/md5"
 	"encoding/hex"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,11 +28,6 @@ var suiteOracle = map[string]string{
 	"SAODBLK_B_MainConcept_4":   "031043495e9b9f4ce120afa316aa5705",
 	"VPSSPSPPS_A_MainConcept_1": "1ddf74263cb4953cfdfcf99c563d88ea",
 }
-
-// suiteRefused is the one stream of the suite this decoder refuses, and ffmpeg
-// does too ("Luma bit depth (10) is different from chroma bit depth (9)"): its
-// luma and chroma bit depths differ.
-const suiteRefused = "TSUNEQBD_A_MAIN10_Technicolor_2"
 
 func conformanceStream(dir, name string) string {
 	for _, ext := range []string{".bit", ".bin", ".bitstream", ".hevc", ".h265", ".265"} {
@@ -64,7 +58,7 @@ func TestHEVCConformance(t *testing.T) {
 	if err != nil || len(manifests) < 140 {
 		t.Fatalf("manifests: %d, %v", len(manifests), err)
 	}
-	names := []string{suiteRefused}
+	var names []string
 	for _, m := range manifests {
 		names = append(names, strings.TrimSuffix(filepath.Base(m), ".md5"))
 	}
@@ -89,10 +83,6 @@ func TestHEVCConformance(t *testing.T) {
 				frames = append(frames, rest...)
 			}
 			switch {
-			case name == suiteRefused:
-				if !errors.Is(err, ErrUnsupported) || len(frames) != 0 {
-					t.Fatalf("%d pictures, %v, want a refusal", len(frames), err)
-				}
 			case err != nil:
 				t.Fatal(err)
 			case suiteOracle[name] != "":
