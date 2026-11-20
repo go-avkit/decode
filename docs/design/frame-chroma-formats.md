@@ -1,7 +1,9 @@
 # Frame: every chroma format and bit depth
 
 Status: design, no code. For the owner's review. Written 2026-11-20 against decode `main` at
-06eebc8 (h265 v0.23.0) and h265 `main` at 1eafca9.
+06eebc8 (h265 v0.23.0) and h265 `main` at 1eafca9; revised the same day for decode v0.14.0
+(`Frames`, 8898999) and h265 v0.24.0 (`Options.RecyclePictures`, `DecodedPicture.Release`).
+The `hevc.go` line numbers below are those of 06eebc8.
 
 ## Why
 
@@ -125,8 +127,11 @@ of `testdata/hevc-conformance`, the three `suiteOracle` MD5s, the H.264 manifest
 
 Additive: the field `BitDepthC` (set on every frame, H.264 included, where it is 8).
 
-**Behaviour change** — and the reason the release is a MINOR one (v0.14.0; below v1 a break is
-a minor bump):
+`Frames` (decode v0.14.0, `avcc.go:226-256`) yields the same `Frame` values as `DecodeTrack`,
+so it needs nothing of its own: every rule here applies to it unchanged.
+
+**Behaviour change** — and the reason the release is a MINOR one (v0.15.0, after v0.14.0; below
+v1 a break is a minor bump):
 
 1. Streams refused with `ErrUnsupported` now return frames whose `Chroma` is not `Chroma420`,
    whose `BitDepth` is 9 or 11 to 16, or whose `BitDepthC` differs from `BitDepth`. A caller that
@@ -174,6 +179,16 @@ README "A Frame owns its planes"). Per plane:
   (decode already imports `unsafe`, `aac_sbr_hf.go`). Big-endian hosts keep the loop; the
   choice is made once (`binary.NativeEndian`), and the s390x lane of CI (`ci.yml:161`, the
   byte-order gate) runs the loop's tests on a big-endian machine.
+
+**With h265's recycling** (v0.24.0, `recycle.go`; another decode PR turns it on): the copy
+stays, since a `Frame` owns its planes. What it adds is an order: every plane of every format is
+copied *before* `Release`, which empties the picture (`Planes` zeroed) and hands its memory to
+the next picture. The pool already covers every format: its key is the number of planes, each
+plane's size and whether it is a byte plane (`poolKey`, `shapeOf`), so a 4:0:0, 4:2:2, 4:4:4 or
+unequal-depth stream recycles like a 4:2:0 one. Step 2 builds on that PR and tests one stream of
+each layout row with recycling on, holding every `Frame` to the end and comparing each one's
+MD5 with the run without recycling, so a plane read after `Release` (or a `Frame` that aliases
+reused memory) shows as a mismatch. (h265's own poison switch is unexported and stays its test.)
 
 Measured in step 3, single core, interleaved rounds, fractal (x86) and an M4: the per-frame copy
 of a 1080p 4:2:0 10-bit and a 1080p 4:4:4 16-bit picture, the loop against the `memmove`, and
@@ -256,7 +271,8 @@ Bounds, all in `int`, which is 32 bits on 386 (CI's `arch-386` lane, `ci.yml:182
    and unequal depths per the table; the size cap at the SPS and per picture (fixing the 32-bit
    wrap above); the shape checks; unit tests, fuzz, bomb test; the conformance witnesses and the
    unequal-depth layout measurement; README's format table and conformance paragraph;
-   release v0.14.0 with the Behaviour change note.
+   release v0.15.0 with the Behaviour change note. It is rebased on the h265 v0.24.0 PR with
+   recycling on, and copies before `Release`.
 3. **16-bit `memmove`.** The little-endian copy, measured as above; lands only if faster.
 4. **Docs and landing.** The org landing page and the docs site say what decode now carries
    (one PR each in their repositories), checked on the published pages.
