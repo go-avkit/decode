@@ -44,7 +44,7 @@ func sameFrames(t *testing.T, got, want []Frame) {
 	for i := range got {
 		g, w := got[i], want[i]
 		if g.PTS != w.PTS || g.Width != w.Width || g.Height != w.Height || g.YStride != w.YStride ||
-			g.CStride != w.CStride || g.Chroma != w.Chroma || g.BitDepth != w.BitDepth || g.Corrupt != w.Corrupt ||
+			g.CStride != w.CStride || g.Chroma != w.Chroma || g.BitDepth != w.BitDepth || g.BitDepthC != w.BitDepthC || g.Corrupt != w.Corrupt ||
 			!bytes.Equal(g.Y, w.Y) || !bytes.Equal(g.Cb, w.Cb) || !bytes.Equal(g.Cr, w.Cr) {
 			t.Fatalf("picture %d differs from DecodeTrack's (PTS %d and %d)", i, g.PTS, w.PTS)
 		}
