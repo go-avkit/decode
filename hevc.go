@@ -241,7 +241,16 @@ func (d *Decoder) hevcFormat(u h265.Unit) error {
 	if s.ChromaFormat != 1 || s.BitDepthLuma != s.BitDepthChroma || (s.BitDepthLuma != 8 && s.BitDepthLuma != 10) {
 		return hevcFormatError(chroma, int(s.BitDepthLuma), int(s.BitDepthChroma))
 	}
+	if _, _, _, ok := frameBytes(uint64(s.Width), uint64(s.Height), Chroma420, int(s.BitDepthLuma), int(s.BitDepthChroma)); !ok {
+		return hevcOverLimit(int64(s.Width), int64(s.Height))
+	}
 	return nil
+}
+
+// hevcOverLimit is the refusal of a picture whose Frame would be over maxFrameBytes, the same on
+// every platform.
+func hevcOverLimit(w, h int64) error {
+	return fmt.Errorf("%w: a %dx%d picture would take more than %d bytes", ErrOverLimit, w, h, maxFrameBytes)
 }
 
 // hevcFrame copies a decoder picture into a Frame that owns its planes, packed (the picture
@@ -273,7 +282,15 @@ func (d *Decoder) hevcFrame(o h265.Output) (Frame, error) {
 		}
 		return Frame{}, hevcFormatError(chroma, bd, bdc)
 	}
-	if w <= 0 || h <= 0 || cw != (w+1)/2 || ch != (h+1)/2 || !planesFit(p) {
+	if w <= 0 || h <= 0 || cw != (w+1)/2 || ch != (h+1)/2 {
+		return Frame{}, fmt.Errorf("%w: picture %dx%d with chroma planes %dx%d does not lie in its planes",
+			ErrBitstream, w, h, cw, ch)
+	}
+	// The bytes are bounded, not the samples, in uint64: w*h*step wraps an int on a 32-bit host.
+	if _, _, _, ok := frameBytes(uint64(w), uint64(h), Chroma420, p.BitDepth[0], p.BitDepth[1]); !ok {
+		return Frame{}, hevcOverLimit(int64(w), int64(h))
+	}
+	if !planesFit(p) {
 		return Frame{}, fmt.Errorf("%w: picture %dx%d with chroma planes %dx%d does not lie in its planes",
 			ErrBitstream, w, h, cw, ch)
 	}
