@@ -161,7 +161,10 @@ func nalFrom(typ int, rbsp []byte) []byte {
 
 // bigSPS is a sequence parameter set for a w x h Main profile 4:2:0 picture, and
 // bigPPS the picture parameter set that goes with it.
-func bigSPS(w, h uint64) []byte {
+func bigSPS(w, h uint64) []byte { return formatSPS(w, h, 1, 8, 8) }
+
+// formatSPS is bigSPS for a chroma_format_idc and the two bit depths (8 to 16).
+func formatSPS(w, h, chroma, depth, depthC uint64) []byte {
 	var s paramBits
 	s.u(0, 4) // vps id
 	s.u(0, 3) // max_sub_layers_minus1
@@ -172,12 +175,15 @@ func bigSPS(w, h uint64) []byte {
 	s.u(0, 40)   // the rest of the 48 bits of flags and reserved bits
 	s.u(120, 8)  // level 4
 	s.ue(0)      // sps id
-	s.ue(1)      // chroma_format_idc
+	s.ue(chroma) // chroma_format_idc
+	if chroma == 3 {
+		s.u(0, 1) // separate_colour_plane_flag
+	}
 	s.ue(w)
 	s.ue(h)
-	s.u(0, 1) // conformance window
-	s.ue(0)
-	s.ue(0)
+	s.u(0, 1)       // conformance window
+	s.ue(depth - 8) // bit_depth_luma_minus8
+	s.ue(depthC - 8)
 	s.ue(4) // log2_max_pic_order_cnt_lsb_minus4
 	s.u(1, 1)
 	s.ue(0)
