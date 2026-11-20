@@ -33,8 +33,9 @@ func frameBytes(w, h uint64, c Chroma, depth, depthC int) (y, chroma, total uint
 	}
 	by := uint64(depthBytes(depth))
 	// A plane has at least one byte a sample, so a side over the cap is over it however short the
-	// other is; with both sides under it, w*h is below 2^62 and the products below cannot wrap.
-	if w > maxFrameBytes || h > maxFrameBytes || w > maxFrameBytes/h/by {
+	// other is. With both sides under it, w*h*2 is below 2^63 and 2*(cw*ch*2) below 2^64: no
+	// product below wraps, and the total is compared with the cap once, at the end.
+	if w > maxFrameBytes || h > maxFrameBytes {
 		return 0, 0, 0, false
 	}
 	y = w * h * by
@@ -46,9 +47,6 @@ func frameBytes(w, h uint64, c Chroma, depth, depthC int) (y, chroma, total uint
 		bc := uint64(depthBytes(depthC))
 		subW, subH := chromaDivisors(c)
 		cw, ch := (w+subW-1)/subW, (h+subH-1)/subH
-		if cw > maxFrameBytes/ch/bc {
-			return 0, 0, 0, false
-		}
 		chroma = cw * ch * bc
 		total += 2 * chroma
 	}
