@@ -462,6 +462,17 @@ so the `Frame` is filled by one memmove a row instead of a narrowing of 16-bit s
 rows are indicative: the 1-minute load was 7 to 10, which the harness refuses on x86; against
 v0.10.0 on the same machine the 8-bit streams are 8 to 10 percent faster.
 
+With h265 v0.24.0 the HEVC decoder reuses its pictures (`Options.RecyclePictures`): a picture
+goes back to the decoder's pool as soon as it is copied into the `Frame`, which owns its planes,
+so the decoder no longer allocates (and the kernel no longer faults in) a new picture for every
+frame. Minor page faults on alien-main (238 frames), 8-bit 1080p: `Frames` 333 a frame before,
+62 after (79293 to 14837); `DecodeTrack` 534 to 283 (127011 to 67343), which keeps every `Frame`
+it returns and so still faults those in. The output is unchanged: the MD5 of the 196 conformance
+streams through `NewHEVC` is identical to the previous release's (153 identical, 0 lost, 43 refused
+by both for a format a `Frame` does not carry), and equals ffmpeg's where it did. The counts were
+taken on an Apple M4 Max under a load of 47, where counts are exact and times are not, so no speed
+figure is given here; the x86 time and page-fault figures for h265's own decoder are in go-avkit/h265's README.
+
 Bibliography: ITU-T H.265 (V11, 01/2026), opened as the PDF; read and checked:
 Annex B (B.2, B.3: byte stream and its NAL unit extraction) and C.5.2.2 to C.5.2.4
 (output order DPB, bumping, cropping). ISO/IEC 14496-15 (hvcC) is paywalled and
