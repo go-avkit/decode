@@ -282,16 +282,17 @@ func (d *Decoder) hevcFrame(o h265.Output) (Frame, error) {
 		step = 2
 	}
 	f := Frame{
-		Y:        make([]byte, w*h*step),
-		Cb:       make([]byte, cw*ch*step),
-		Cr:       make([]byte, cw*ch*step),
-		YStride:  w * step,
-		CStride:  cw * step,
-		Width:    w,
-		Height:   h,
-		Chroma:   Chroma420,
-		BitDepth: p.BitDepth[0],
-		Corrupt:  o.Corrupt,
+		Y:         make([]byte, w*h*step),
+		Cb:        make([]byte, cw*ch*step),
+		Cr:        make([]byte, cw*ch*step),
+		YStride:   w * step,
+		CStride:   cw * step,
+		Width:     w,
+		Height:    h,
+		Chroma:    Chroma420,
+		BitDepth:  p.BitDepth[0],
+		BitDepthC: p.BitDepth[1],
+		Corrupt:   o.Corrupt,
 	}
 	packPlane(f.Y, &p.Planes[0])
 	packPlane(f.Cb, &p.Planes[1])

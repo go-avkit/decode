@@ -116,9 +116,8 @@ func (c Config) sampleBytes() int {
 // Chroma is the chroma sampling of a Frame.
 type Chroma uint8
 
-// The chroma formats of H.264 (chroma_format_idc). Only Chroma420 is
-// produced today; the others are named so that a Frame can describe the
-// profiles that are not decoded yet without an API change.
+// The chroma formats (chroma_format_idc of H.264 and H.265). HEVC produces all
+// four; H.264 produces Chroma420 only.
 const (
 	Chroma400 Chroma = iota
 	Chroma420
@@ -128,12 +127,23 @@ const (
 
 // Frame is one decoded picture, cropped to the stream's display window.
 //
-// The field names and meaning match go-videodsp/yuv.Picture for 8-bit 4:2:0 so
-// that converting is a field-by-field copy. A Frame owns its planes.
+// The field names and meaning match go-videodsp/yuv.Picture for Chroma420 with
+// both bit depths 8, so that converting is a field-by-field copy; it is not
+// for any other frame. A Frame owns its planes.
+//
+// Every plane is packed, its stride the width in samples times the bytes per
+// sample of that plane: one byte when the plane's depth is 8, a little-endian
+// 16-bit word for 9 to 16 (SampleBytes). Luma follows BitDepth, Cb and Cr
+// follow BitDepthC, and the two may differ. The chroma planes of a frame of
+// W x H luma samples are, each, (see ChromaSize):
+//
+//	Chroma420  ceil(W/2) x ceil(H/2)
+//	Chroma422  ceil(W/2) x H
+//	Chroma444  W x H
+//	Chroma400  none: Cb and Cr are nil, CStride is 0 and BitDepthC is 0
 type Frame struct {
-	// Y, Cb and Cr are the planes. A sample is one byte when BitDepth is 8
-	// and a little-endian 16-bit word above that. A Chroma400 frame has no
-	// Cb or Cr.
+	// Y, Cb and Cr are the planes, laid out as described above. A Chroma400
+	// frame has no Cb or Cr.
 	Y, Cb, Cr []byte
 	// YStride and CStride are the plane row lengths in bytes.
 	YStride, CStride int
@@ -141,8 +151,10 @@ type Frame struct {
 	Width, Height int
 	// Chroma is the chroma sampling.
 	Chroma Chroma
-	// BitDepth is the luma bit depth.
+	// BitDepth is the luma bit depth, 8 to 16.
 	BitDepth int
+	// BitDepthC is the chroma bit depth, 8 to 16, and 0 for a Chroma400 frame.
+	BitDepthC int
 	// PTS is the presentation time in the track timescale: the decode time of
 	// the sample plus its composition offset, as DecodeSample and, with
 	// Config.IgnoreEditList, DecodeTrack and PosterFrame give it; DecodeTrack and
@@ -154,6 +166,42 @@ type Frame struct {
 	// delivered. The picture is still returned, as far as it was decoded. It is
 	// never set for H.264.
 	Corrupt bool
+}
+
+// SampleBytes is the bytes per sample of plane 0 (Y), 1 (Cb) or 2 (Cr): 1 when
+// that plane's depth is 8, 2 otherwise. It is 0 for a plane the frame does not
+// have (Cb and Cr of a Chroma400 frame) and for any other index.
+func (f Frame) SampleBytes(plane int) int {
+	switch {
+	case plane == 0:
+		return depthBytes(f.BitDepth)
+	case (plane == 1 || plane == 2) && f.Chroma != Chroma400:
+		return depthBytes(f.BitDepthC)
+	}
+	return 0
+}
+
+// depthBytes is the bytes of one sample of a plane at depth bits.
+func depthBytes(depth int) int {
+	if depth == 8 {
+		return 1
+	}
+	return 2
+}
+
+// ChromaSize is the width and height, in samples, of each of Cb and Cr:
+// (ceil(Width/2), ceil(Height/2)) for Chroma420, (ceil(Width/2), Height) for
+// Chroma422, (Width, Height) for Chroma444 and (0, 0) for Chroma400.
+func (f Frame) ChromaSize() (w, h int) {
+	switch f.Chroma {
+	case Chroma420:
+		return (f.Width + 1) / 2, (f.Height + 1) / 2
+	case Chroma422:
+		return (f.Width + 1) / 2, f.Height
+	case Chroma444:
+		return f.Width, f.Height
+	}
+	return 0, 0
 }
 
 // Decoder decodes one H.264 or HEVC elementary stream. It is not safe for
@@ -304,16 +352,17 @@ func (d *Decoder) stamp() (pts int64) {
 func (d *Decoder) frame(p *h264dec.Frame, pts int64) Frame {
 	cw, ch := (p.Width+1)/2, (p.Height+1)/2
 	f := Frame{
-		Y:        make([]byte, p.Width*p.Height),
-		Cb:       make([]byte, cw*ch),
-		Cr:       make([]byte, cw*ch),
-		YStride:  p.Width,
-		CStride:  cw,
-		Width:    p.Width,
-		Height:   p.Height,
-		Chroma:   Chroma420,
-		BitDepth: 8,
-		PTS:      pts,
+		Y:         make([]byte, p.Width*p.Height),
+		Cb:        make([]byte, cw*ch),
+		Cr:        make([]byte, cw*ch),
+		YStride:   p.Width,
+		CStride:   cw,
+		Width:     p.Width,
+		Height:    p.Height,
+		Chroma:    Chroma420,
+		BitDepth:  8,
+		BitDepthC: 8,
+		PTS:       pts,
 	}
 	for y := 0; y < p.Height; y++ {
 		copy(f.Y[y*p.Width:], p.Y[y*p.StrideY:y*p.StrideY+p.Width])

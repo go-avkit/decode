@@ -44,7 +44,7 @@ func TestConformanceAnnexB(t *testing.T) {
 					t.Fatalf("chunk %d: %d pictures, ffmpeg has %d, or a picture differs", chunk, len(got), len(want))
 				}
 				for i, f := range got {
-					if f.PTS != int64(i) || f.BitDepth != 8 || f.Chroma != Chroma420 {
+					if f.PTS != int64(i) || f.BitDepth != 8 || f.BitDepthC != 8 || f.Chroma != Chroma420 {
 						t.Fatalf("picture %d: PTS %d depth %d chroma %d", i, f.PTS, f.BitDepth, f.Chroma)
 					}
 				}
