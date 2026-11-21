@@ -11,8 +11,8 @@ github.com/go-avkit/avkit v0.16.0 h1:QoFoIgAHy8xv+kdnROQ8P3GSqveV5/BJtxPa0i+ZM64
 github.com/go-avkit/avkit v0.16.0/go.mod h1:itL/gmFP0/hIVAQgxn0JTTvlGgY9vi5uL8XI2sOQl/c=
 github.com/go-avkit/bitstream v0.4.0 h1:cpPNgKWeAjEpTzjORXPH4Advu2BdtCBHloQXSwgl+pk=
 github.com/go-avkit/bitstream v0.4.0/go.mod h1:aA50I8nXKyJu6ElfTHM957BRrx5JjgSYUxs++n5VM8o=
-github.com/go-avkit/h264 v0.14.0 h1:Aqg127KYLt9v7eHtkVXE69KY9LghDpuT9PGu/YucAOc=
-github.com/go-avkit/h264 v0.14.0/go.mod h1:Y0SNpVFvbna3ChSAzftH9PAhdyiF45TObFukmWraEeU=
+github.com/go-avkit/h264 v0.15.0 h1:qS2p5P49/5IORABb/LX87Dsx3Ow65DsGv40GOVcstSU=
+github.com/go-avkit/h264 v0.15.0/go.mod h1:pV4PlD0loEiFsV9+A3tNZtCmbPjHoLTIKB7m1oGvREs=
 github.com/go-avkit/h265 v0.24.0 h1:87u8YUm+Bvr2W8lAM7KfAEwHh1Ho5zHlgZu14fZpq3s=
 github.com/go-avkit/h265 v0.24.0/go.mod h1:u5U+6CDxmxTmcwu+rzfqQ6WQgWmQKz0v6laZn7RBYeY=
 github.com/go-dsp/signal v0.2.0 h1:+566tdjkOtNctyqU+xzf7NRGYu4rR9GvCk4QtF9pYWY=
@@ -29,8 +29,8 @@ github.com/go-simd/floats v0.24.0 h1:17G1R1kyHRaRpSvod1/VfoogVn3F6h9FviTpb0alnog
 github.com/go-simd/floats v0.24.0/go.mod h1:Aq5a6oY5pUqm9Hpi+iV2nrNmaaUb0rwHvUHIerXWSvA=
 github.com/go-test/deep v1.1.0 h1:WOcxcdHcvdgThNXjw0t76K42FXTU7HpNQWHpA2HHNlg=
 github.com/go-test/deep v1.1.0/go.mod h1:5C2ZWiW0ErCdrYzpqxLbTX7MG14M9iiw8DgHncVwcsE=
-github.com/go-videodsp/kernels v0.20.0 h1:AZrUZQETpdVJaD4KzVD/ipHTdLR7PunL7xw4tAI7SMk=
-github.com/go-videodsp/kernels v0.20.0/go.mod h1:+nQCn5NvYhjT8DtUqSplgir5dB4D66rqiGd8R3fimBE=
+github.com/go-videodsp/kernels v0.21.0 h1:wXb5PliwZsrQqQyzvC9ga2+1bYjGHfO6WIXCIPLY2/U=
+github.com/go-videodsp/kernels v0.21.0/go.mod h1:+nQCn5NvYhjT8DtUqSplgir5dB4D66rqiGd8R3fimBE=
 github.com/icza/bitio v1.1.0 h1:ysX4vtldjdi3Ygai5m1cWy4oLkhWTAi+SyO6HC8L9T0=
 github.com/icza/bitio v1.1.0/go.mod h1:0jGnlLAx8MKMr9VGnn/4YrvZiprkvBelsVIbA9Jjr9A=
 github.com/icza/mighty v0.0.0-20180919140131-cfd07d671de6 h1:8UsGZ2rr2ksmEru6lToqnXgA8Mz1DP11X4zSJ159C3k=
