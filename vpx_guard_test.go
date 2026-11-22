@@ -110,3 +110,45 @@ func TestVPXFlushAndClose(t *testing.T) {
 		}
 	}
 }
+
+// A hidden frame yields nothing; a picture outside its planes is refused; Corrupt is carried.
+func TestVPXPicture(t *testing.T) {
+	d, err := NewVP9(fuzzConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	good := govpx.Image{
+		Width: 2, Height: 2,
+		Y: make([]byte, 4), U: make([]byte, 1), V: make([]byte, 1),
+		YStride: 2, UStride: 1, VStride: 1,
+	}
+	if fr, err := d.vpxPicture(govpx.Image{}, false, false, 0); fr != nil || err != nil {
+		t.Errorf("hidden frame: %v, %v, want nil, nil", fr, err)
+	}
+	if _, err := d.vpxPicture(govpx.Image{Width: 2, Height: 2}, true, false, 0); !errors.Is(err, ErrBitstream) {
+		t.Errorf("empty planes: %v, want ErrBitstream", err)
+	}
+	fr, err := d.vpxPicture(good, true, true, 5)
+	if err != nil || len(fr) != 1 || !fr[0].Corrupt || fr[0].PTS != 5 {
+		t.Errorf("good picture: %+v, %v", fr, err)
+	}
+	if fr, _ := d.vpxPicture(good, true, false, 5); len(fr) != 1 || fr[0].Corrupt {
+		t.Errorf("clean picture flagged corrupt: %+v", fr)
+	}
+}
+
+// A refusal of the govpx constructor is ErrConfig.
+func TestVPXConstructorRefusal(t *testing.T) {
+	boom := errors.New("boom")
+	old8, old9 := newGovpx8, newGovpx9
+	defer func() { newGovpx8, newGovpx9 = old8, old9 }()
+	newGovpx8 = func(govpx.DecoderOptions) (*govpx.VP8Decoder, error) { return nil, boom }
+	newGovpx9 = func(govpx.VP9DecoderOptions) (*govpx.VP9Decoder, error) { return nil, boom }
+	for name, mk := range map[string]func(Config) (*Decoder, error){"vp8": NewVP8, "vp9": NewVP9} {
+		d, err := mk(fuzzConfig)
+		if d != nil || !errors.Is(err, ErrConfig) || !errors.Is(err, boom) {
+			t.Errorf("%s: %v, %v, want ErrConfig wrapping the cause", name, d, err)
+		}
+	}
+}

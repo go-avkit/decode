@@ -32,17 +32,23 @@ func NewVP9(cfg Config) (*Decoder, error) {
 	return newVPX(cfg, true)
 }
 
+// The govpx constructors, replaceable so that a test can make one refuse.
+var (
+	newGovpx8 = govpx.NewVP8Decoder
+	newGovpx9 = govpx.NewVP9Decoder
+)
+
 func newVPX(cfg Config, vp9 bool) (*Decoder, error) {
 	// A cap per side; the area is bounded by Config.MaxFrameMBs in checkVPX, before the decoder sees a header.
 	d := &Decoder{cfg: cfg, lengthSize: 4, vpx: new(vpx)}
 	var err error
 	if vp9 {
 		side := int(min(int64(cfg.frameMBs())*16, 1<<16)) // VP9 sizes are 16 bits plus one
-		d.vpx.vp9, err = govpx.NewVP9Decoder(govpx.VP9DecoderOptions{MaxWidth: side, MaxHeight: side})
+		d.vpx.vp9, err = newGovpx9(govpx.VP9DecoderOptions{MaxWidth: side, MaxHeight: side})
 	} else {
 		side := int(min(int64(cfg.frameMBs())*16, 1<<14-1)) // VP8 sizes are 14 bits
 
-		d.vpx.vp8, err = govpx.NewVP8Decoder(govpx.DecoderOptions{MaxWidth: side, MaxHeight: side})
+		d.vpx.vp8, err = newGovpx8(govpx.DecoderOptions{MaxWidth: side, MaxHeight: side})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrConfig, err)
@@ -85,14 +91,20 @@ func (d *Decoder) vpxSample(data []byte, pts int64) ([]Frame, error) {
 	if err != nil {
 		return nil, classifyVPX(err)
 	}
+	return d.vpxPicture(img, ok, corrupted, pts)
+}
+
+// vpxPicture turns the decoder's output for one sample into the frames to return: none for a
+// hidden frame (references updated, nothing to show), one otherwise.
+func (d *Decoder) vpxPicture(img govpx.Image, ok, corrupted bool, pts int64) ([]Frame, error) {
 	if !ok {
-		return nil, nil // a hidden frame: references updated, nothing to show
+		return nil, nil
 	}
 	f, err := d.vpxFrame(img, pts)
-	f.Corrupt = corrupted
 	if err != nil {
 		return nil, err
 	}
+	f.Corrupt = corrupted
 	return []Frame{f}, nil
 }
 
@@ -107,10 +119,9 @@ func (d *Decoder) vpxFrame(img govpx.Image, pts int64) (Frame, error) {
 		!planeFits(img.V, img.VStride, cw, ch) {
 		return Frame{}, malformed()
 	}
-	yBytes, cBytes, _, ok := frameBytes(uint64(w), uint64(h), Chroma420, 8, 8)
-	if !ok {
-		return Frame{}, hevcOverLimit(int64(w), int64(h))
-	}
+	// planeFits holds stride >= w, so each plane has at least w*h (cw*ch) bytes: these products
+	// are lengths of slices that exist, and cannot overflow int.
+	yBytes, cBytes := w*h, cw*ch
 	f := Frame{
 		Y: make([]byte, yBytes), Cb: make([]byte, cBytes), Cr: make([]byte, cBytes),
 		YStride: w, CStride: cw, Width: w, Height: h,
