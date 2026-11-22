@@ -181,7 +181,13 @@ func psDropoutSpecs() []psStreamSpec {
 // TestPSOutputGolden: the decoded PCM is the recorded one, bit for bit.
 func TestPSOutputGolden(t *testing.T) {
 	golden := psGoldenPortable
+	route := runtime.GOARCH
+	if psRaceBuild {
+		route += "race"
+	}
 	switch {
+	case psGoldenRoutes[route] != nil:
+		golden = psGoldenRoutes[route]
 	case runtime.GOARCH == "arm64":
 		golden = psGoldenARM64
 	case psPairFused():

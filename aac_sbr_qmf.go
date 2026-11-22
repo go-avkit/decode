@@ -176,17 +176,9 @@ func (y *sbrSynthesis) begin(out []float32) []float32 {
 	return out[:sbrQMFSlots*sbrSynBands]
 }
 
-// slot synthesises the next slot of the frame: the real parts a and the reversed
+// slot32 synthesises the next slot of the frame: the real parts a and the reversed
 // imaginary parts b (b[63-k] the imaginary part of band k) of its 64 bands into the 64
 // samples o.
-func (y *sbrSynthesis) slot(o *[sbrSynBands]float32, a, b *[sbrSynBands]float64) {
-	for k := range y.a {
-		y.a[k], y.b[k] = float32(a[k]), float32(b[k])
-	}
-	y.slot32(o, &y.a, &y.b)
-}
-
-// slot32 is slot on float32 inputs.
 func (y *sbrSynthesis) slot32(o *[sbrSynBands]float32, a, b *[sbrSynBands]float32) {
 	sbrDCT4f.DCTPair(y.c[:], y.s[:], a[:], b[:], fft.NormBackward)
 	y.finish(o)
