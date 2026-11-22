@@ -11,11 +11,12 @@ import (
 )
 
 // sbrPairBound is the bound, relative to the largest subband sample of a frame, on the
-// difference between the analysis bank (its two transforms run as a DCTPair) and the
-// five-pass loop with one transform at a time: both are within the DCT-IV error bound
-// of the exact value (about 1e-15 relative, TestSBRQMFAnalysis), so they agree to a few
-// times that; 1e-14 leaves a margin of about forty over what is measured (2.4e-16).
-const sbrPairBound = 1e-14
+// difference between the analysis bank (float32 history, windows and window sums, see
+// aac_sbr_qmf_bound_test.go) and the five-pass loop, which stays in float64. The
+// per-slot 2-norm bound of the bank is asserted in TestSBRQMFAnalysis; this one is
+// relative to the frame's peak and empirical: 2^-21 = 4.8e-7 is about eight times what
+// is measured (5.7e-8), and a shifted window or history copy fails it by orders of magnitude.
+const sbrPairBound = 0x1p-21
 
 // fivePassAnalysis is the analysis bank as it was before the window sum became one
 // floats.MulAddRows call and the transforms a pair: the history oldest first, five

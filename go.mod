@@ -8,8 +8,8 @@ require (
 	github.com/go-avkit/h264 v0.15.0
 	github.com/go-avkit/h265 v0.24.0
 	github.com/go-dsp/signal v0.2.0
-	github.com/go-fft/fft v0.38.0
-	github.com/go-simd/floats v0.24.0
+	github.com/go-fft/fft v0.45.0
+	github.com/go-simd/floats v0.33.0
 	github.com/mewkiz/flac v1.0.14
 	github.com/pion/opus v0.1.0
 	github.com/thesyncim/govpx v0.0.0-20261018202535-159dce5b931a

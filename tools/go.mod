@@ -17,9 +17,9 @@ require (
 	github.com/go-avkit/h264 v0.15.0 // indirect
 	github.com/go-avkit/h265 v0.24.0 // indirect
 	github.com/go-dsp/signal v0.2.0 // indirect
-	github.com/go-fft/fft v0.38.0 // indirect
+	github.com/go-fft/fft v0.45.0 // indirect
 	github.com/go-numerics/special v0.4.0 // indirect
-	github.com/go-simd/floats v0.24.0 // indirect
+	github.com/go-simd/floats v0.33.0 // indirect
 	github.com/go-videodsp/kernels v0.21.0 // indirect
 	github.com/icza/bitio v1.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

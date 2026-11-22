@@ -373,8 +373,8 @@ func (s *sbrState) psPipelineFrame(d *sbrChanDSP, kx, m int, out [2][]float32) {
 		mx.step(n, &rows, &rr, dl)
 		psSynthesiseSlot(&rows, is34, &pl)
 		psSynthesiseSlot(&rr, is34, &pr)
-		d.syn.slot((*[sbrSynBands]float32)(outL[n*sbrSynBands:]), &pl.re, &pl.im)
-		mx.syn.slot((*[sbrSynBands]float32)(outR[n*sbrSynBands:]), &pr.re, &pr.im)
+		slotQuad(&d.syn, &mx.syn, (*[sbrSynBands]float32)(outL[n*sbrSynBands:]), (*[sbrSynBands]float32)(outR[n*sbrSynBands:]),
+			&pl.re, &pl.im, &pr.re, &pr.im)
 	}
 	h.end(&d.x)
 }

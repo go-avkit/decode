@@ -39,9 +39,16 @@ import (
 // dst.go states it), so the reversal is folded into the folding and the sign into the
 // last step, and the plan's second pass and wrapper are saved.
 //
-// Every stage runs in float64 and the synthesis rounds once, to float32, at the
-// output: the error of the banks is that one rounding plus about 1e-13 of the
-// signal. The plan is immutable and shared; the working memory of one channel
+// The banks run in float32 (go-avkit/decode#77): the history, the windows, the window
+// sums (floats.MulAddRows32, one fused step per tap) and, in the synthesis, the DCT-IV
+// pair (fft.DCTPlan32.DCTPair, relative 2-norm error at most eps32*log2(64) against
+// double-double, asserted by go-fft). This replaces the earlier contract of one
+// float32 rounding at the output. The error of a slot is bounded, per slot and in
+// 2-norm, by the sums derived in aac_sbr_qmf_bound_test.go from those parts, and the
+// tests assert it against the definition in float64 and against 256-bit arithmetic;
+// the chain of a whole stream is asserted to an empirical 2^-21 of its peak. The
+// output PCM is no longer bit identical across routes (arm64, amd64 with AVX2+FMA,
+// portable), see the goldens of aac_ps_golden_test.go. The plan is immutable and shared; the working memory of one channel
 // lives in its sbrAnalysis and sbrSynthesis, so decoders never share a buffer.
 
 // Sizes of the banks.
@@ -62,6 +69,10 @@ const (
 var (
 	sbrDCT4 = fft.NewDCTPlan(sbrSynBands, 4)
 
+	// sbrDCT4f is the float32 plan of the synthesis bank (single precision throughout
+	// where the CPU has AVX2 and FMA).
+	sbrDCT4f = fft.NewDCTPlan32(sbrSynBands, 4)
+
 	// sbrAnaWindow is the analysis window: every second tap of the prototype.
 	sbrAnaWindow = func() (w [sbrAnaTaps]float64) {
 		for i := range w {
@@ -69,13 +80,31 @@ var (
 		}
 		return w
 	}()
+
+	// the windows in float32, which the banks' window sums read
+	sbrAnaWindow32 = func() (w [sbrAnaTaps]float32) {
+		for i := range w {
+			w[i] = float32(sbrAnaWindow[i])
+		}
+		return w
+	}()
+	// the synthesis window carries the 1/64 of the definition, the 1/2 of the
+	// transforms' factor 2 and the 1/32768 back to +-1.0 (2^-22), so that the butterfly
+	// writes the unscaled values: scaling by a power of two is exact, the products and
+	// sums are the ones of the scaled values bit for bit
+	sbrQMFWindow32 = func() (w [640]float32) {
+		for i := range w {
+			w[i] = float32(sbrQMFWindow[i] / (128 * sbrPCMUnit))
+		}
+		return w
+	}()
 )
 
 // sbrAnalysis is the state of the analysis bank of one channel.
 type sbrAnalysis struct {
-	hist    [sbrAnaKeep + aacFrameLen]float64 // newest sample first, in 16-bit units
-	u, v, w [sbrSynBands]float64
-	c, s    [sbrSynBands]float64
+	hist    [sbrAnaKeep + aacFrameLen]float32 // newest sample first, in 16-bit units
+	u, v, w [sbrSynBands]float32
+	c, s    [sbrSynBands]float32
 }
 
 // process takes the 1024 core samples of a frame and writes the 32 subband
@@ -86,15 +115,15 @@ func (a *sbrAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]compl
 	// samples move behind the new frame, which is written backwards
 	copy(a.hist[aacFrameLen:], a.hist[:sbrAnaKeep])
 	for i, s := range in[:aacFrameLen] {
-		a.hist[aacFrameLen-1-i] = float64(s) * sbrPCMUnit
+		a.hist[aacFrameLen-1-i] = s * sbrPCMUnit // exact: a power of two
 	}
 	for l := 0; l < sbrQMFSlots; l++ {
 		// x[i] of the definition is h[i], h the 320 samples from the newest of the
 		// slot: u[n] = sum over j < 5 of c[n+64j] * x[n+64j], five rows of 64 that the
 		// kernel sums with the 64 results in registers, in the order of j
 		h := a.hist[aacFrameLen-32-32*l : aacFrameLen-32-32*l+sbrAnaTaps]
-		a.u = [sbrSynBands]float64{}
-		floats.MulAddRows(a.u[:], sbrAnaWindow[:], 64, h, 64, 5)
+		a.u = [sbrSynBands]float32{}
+		floats.MulAddRows32(a.u[:], sbrAnaWindow32[:], 64, h, 64, 5)
 		// fold the 64 sums onto the odd angles of the DCT-IV kernel: the angle
 		// (4n-1) is 2m+1 for m = 2n-1 up to n = 32, and for n >= 33 it is mirrored
 		// (256-(4n-1) = 2m+1 with m = 128-2n), which negates the cosine and keeps
@@ -108,10 +137,10 @@ func (a *sbrAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]compl
 		for n := 33; n < sbrSynBands; n++ {
 			a.v[128-2*n], a.w[2*n-65] = -a.u[n], a.u[n]
 		}
-		sbrDCT4.DCTPair(a.c[:], a.s[:], a.v[:], a.w[:], fft.NormBackward)
+		sbrDCT4.DCTMixedPair(a.c[:], a.s[:], a.v[:], a.w[:], fft.NormBackward)
 		for k := 0; k < sbrAnaBands; k += 2 {
-			low[k][first+l] = complex(a.c[k], a.s[k])
-			low[k+1][first+l] = complex(a.c[k+1], -a.s[k+1])
+			low[k][first+l] = complex(float64(a.c[k]), float64(a.s[k]))
+			low[k+1][first+l] = complex(float64(a.c[k+1]), -float64(a.s[k+1]))
 		}
 	}
 }
@@ -120,9 +149,9 @@ func (a *sbrAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]compl
 // v, newest first, in a buffer that moves back to its end once per frame so that a
 // slot never shifts it.
 type sbrSynthesis struct {
-	buf        [sbrSynKeep + sbrQMFSlots*128]float64
+	buf        [sbrSynKeep + sbrQMFSlots*128]float32
 	off        int // v[0] of the newest slot is buf[off]
-	a, b, c, s [sbrSynBands]float64
+	a, b, c, s [sbrSynBands]float32
 }
 
 // process turns the 32 slots of subband samples x (each of 64 bands, in 16-bit
@@ -131,9 +160,9 @@ func (y *sbrSynthesis) process(out []float32, x *[sbrQMFSlots][sbrSynBands]compl
 	out = y.begin(out)
 	for l := range x {
 		for k, z := range x[l] {
-			y.a[k], y.b[sbrSynBands-1-k] = real(z), imag(z)
+			y.a[k], y.b[sbrSynBands-1-k] = float32(real(z)), float32(imag(z))
 		}
-		y.slot((*[sbrSynBands]float32)(out[l*sbrSynBands:]), &y.a, &y.b)
+		y.slot32((*[sbrSynBands]float32)(out[l*sbrSynBands:]), &y.a, &y.b)
 	}
 }
 
@@ -151,28 +180,49 @@ func (y *sbrSynthesis) begin(out []float32) []float32 {
 // imaginary parts b (b[63-k] the imaginary part of band k) of its 64 bands into the 64
 // samples o.
 func (y *sbrSynthesis) slot(o *[sbrSynBands]float32, a, b *[sbrSynBands]float64) {
-	sbrDCT4.DCTPair(y.c[:], y.s[:], a[:], b[:], fft.NormBackward)
+	for k := range y.a {
+		y.a[k], y.b[k] = float32(a[k]), float32(b[k])
+	}
+	y.slot32(o, &y.a, &y.b)
+}
+
+// slot32 is slot on float32 inputs.
+func (y *sbrSynthesis) slot32(o *[sbrSynBands]float32, a, b *[sbrSynBands]float32) {
+	sbrDCT4f.DCTPair(y.c[:], y.s[:], a[:], b[:], fft.NormBackward)
+	y.finish(o)
+}
+
+// slotQuad is slot32 of two banks (the left and the right channel of a parameter
+// stereo frame) with their four transforms batched in one DCTQuad call.
+func slotQuad(y1, y2 *sbrSynthesis, o1, o2 *[sbrSynBands]float32, a1, b1, a2, b2 *[sbrSynBands]float64) {
+	for k := range y1.a {
+		y1.a[k], y1.b[k] = float32(a1[k]), float32(b1[k])
+		y2.a[k], y2.b[k] = float32(a2[k]), float32(b2[k])
+	}
+	sbrDCT4f.DCTQuad([4][]float32{y1.c[:], y1.s[:], y2.c[:], y2.s[:]},
+		[4][]float32{y1.a[:], y1.b[:], y2.a[:], y2.b[:]}, fft.NormBackward)
+	y1.finish(o1)
+	y2.finish(o2)
+}
+
+// finish takes the transforms in y.c and y.s to the slot's 64 output samples.
+func (y *sbrSynthesis) finish(o *[sbrSynBands]float32) {
 	y.off -= 128
 	v := y.buf[y.off : y.off+128]
-	// the 1/64 of the definition, the 1/2 of the transforms' factor 2 and the
-	// 1/32768 back to +-1.0: 2^-22, exact. The sine part is (-1)^n y.s[n].
-	const scale = 1.0 / (128 * sbrPCMUnit)
+	// the scale 2^-22 is in the window. The sine part is (-1)^n y.s[n].
 	for n := 0; n < sbrSynBands; n += 2 {
-		v[n] = (y.s[n] - y.c[n]) * scale
-		v[127-n] = (y.c[n] + y.s[n]) * scale
-		v[n+1] = (-y.s[n+1] - y.c[n+1]) * scale
-		v[126-n] = (y.c[n+1] - y.s[n+1]) * scale
+		v[n] = y.s[n] - y.c[n]
+		v[127-n] = y.c[n] + y.s[n]
+		v[n+1] = -y.s[n+1] - y.c[n+1]
+		v[126-n] = y.c[n+1] - y.s[n+1]
 	}
 	// ten products of 64 values: block n of the window against the 64 values of
 	// v that the definition's g takes at 128n (+64 for odd n)
 	// The even blocks are rows 256 apart of v against rows 128 apart of the window,
 	// and so are the odd blocks 192 on: two fused multiply-add kernels that keep the
 	// 64 sums in registers across their five rows, the even blocks first.
-	var acc [sbrSynBands]float64
+	*o = [sbrSynBands]float32{}
 	w := y.buf[y.off:]
-	floats.MulAddRows(acc[:], sbrQMFWindow[:], 128, w, 256, 5)
-	floats.MulAddRows(acc[:], sbrQMFWindow[64:], 128, w[192:], 256, 5)
-	for q, s := range acc {
-		o[q] = float32(s)
-	}
+	floats.MulAddRows32(o[:], sbrQMFWindow32[:], 128, w, 256, 5)
+	floats.MulAddRows32(o[:], sbrQMFWindow32[64:], 128, w[192:], 256, 5)
 }

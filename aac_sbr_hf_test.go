@@ -338,11 +338,14 @@ func sbrChain(t testing.TB, name string, frames int, ref bool) (out [][]float32,
 
 // TestSBRChain: over real HE-AAC streams (core signal, SBR data, tables, envelope
 // borders and inverse filtering modes as the encoder wrote them) the whole signal
-// path agrees with the exact reference path: the low band to 1e-13 of its peak, and
-// the output, beyond one float32 rounding, to 1e-9 of its peak (measured: none; the
-// margin is for the conditioning of the prediction-error estimate on tonal bands,
-// where a 1e-6 regularisation leaves six digits and the estimate itself is known to
-// 4e-10, see TestSBRPredictor).
+// path agrees with the exact reference path: the low band and the output, beyond one
+// float32 rounding, to sbrChainBound of their peaks. The banks run in float32
+// (aac_sbr_qmf_bound_test.go), so the reference and the decoder differ by the banks'
+// rounding, amplified by the envelope adjustment; measured 5e-8 of the peak on the low
+// band and 1.9e-7 on the output, and 2^-21 = 4.8e-7 keeps a margin of 2.5. The chain
+// bound is empirical, the per-bank bounds are the derived ones.
+const sbrChainBound = 0x1p-21
+
 func TestSBRChain(t *testing.T) {
 	for _, fx := range sbrFixtures {
 		_, st := sbrChain(t, fx.name, sbrRefFrames(12, 6), true)
@@ -351,7 +354,7 @@ func TestSBRChain(t *testing.T) {
 		if st.hfFrames < 4 {
 			t.Errorf("%s: high frequency generation ran in %d frames", fx.name, st.hfFrames)
 		}
-		if st.lowErr > 1e-13 || st.outErrRel > 1e-9 {
+		if st.lowErr > sbrChainBound || st.outErrRel > sbrChainBound {
 			t.Errorf("%s: low band error %.2e, output error %.2e", fx.name, st.lowErr, st.outErrRel)
 		}
 	}
