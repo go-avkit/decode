@@ -127,7 +127,11 @@ func TestAACDecodeHE(t *testing.T) {
 			}
 			for c := range got {
 				e, peak := sbrBeyondRounding(got[c], want[min(c, len(want)-1)])
-				if e.max > 1e-6*peak {
+				// float32 QMF banks (aac_sbr_qmf_bound_test.go): the chain differs from the
+				// float64 reference by the banks' rounding, measured up to 4e-6 beyond a
+				// float32 rounding on the implicit he44-ps stream (peak 0.67); 2^-17 is
+				// an empirical bound with a margin of 1.9.
+				if e.max > 0x1p-17 {
 					t.Errorf("%s, %s, channel %d: %.2e beyond a float32 rounding, peak %.3f", fx.name, sig, c, e.max, peak)
 				}
 			}

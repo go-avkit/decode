@@ -42,12 +42,25 @@ func TestSBRQMFAnalysis(t *testing.T) {
 	pcm := sbrTestPCM(frames, 1)
 	var d sbrChanDSP
 	ref := &refAnalysis{}
-	var worst, peak float64
+	var worst, peak, worstFrac float64
 	for f := 0; f < frames; f++ {
 		fr := pcm[f*aacFrameLen : (f+1)*aacFrameLen]
 		d.analyse(fr)
 		want := ref.frame(fr)
 		for l := 0; l < sbrQMFSlots; l++ {
+			h := make([]float64, sbrAnaTaps)
+			newest := f*aacFrameLen + 32*l + 31
+			for i := range h {
+				if newest-i >= 0 {
+					h[i] = ref.in[newest-i]
+				}
+			}
+			bound := sbrAnalysisBound(h)
+			e := sbrBandsError(func(k int) complex128 { return d.low[k][sbrHFGen+l] }, func(k int) complex128 { return want[l][k] })
+			if e > bound {
+				t.Errorf("frame %d slot %d: 2-norm error %.3e over the bands exceeds the bound %.3e", f, l, e, bound)
+			}
+			worstFrac = math.Max(worstFrac, e/bound)
 			for k := 0; k < sbrAnaBands; k++ {
 				got := d.low[k][sbrHFGen+l]
 				worst = math.Max(worst, cmplx.Abs(got-want[l][k]))
@@ -55,10 +68,7 @@ func TestSBRQMFAnalysis(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("analysis: largest difference to the definition %.3e, peak subband value %.3e (relative %.3e)", worst, peak, worst/peak)
-	if worst > 1e-12*peak {
-		t.Errorf("analysis differs from the definition by %.3e of a peak of %.3e", worst, peak)
-	}
+	t.Logf("analysis: largest difference to the definition %.3e, peak subband value %.3e (relative %.3e); worst slot at %.3f of its bound", worst, peak, worst/peak, worstFrac)
 
 	// one slot against 256 bits: the last slot of the last frame
 	x := make([]float64, sbrAnaTaps)
@@ -68,9 +78,8 @@ func TestSBRQMFAnalysis(t *testing.T) {
 	}
 	exact := bigAnalysisSlot(x)
 	var eOurs, eRef float64
-	for k := 0; k < sbrAnaBands; k++ {
-		eOurs = math.Max(eOurs, cmplx.Abs(d.low[k][sbrLowSlots-1]-exact[k]))
-	}
+	eOurs = sbrBandsError(func(k int) complex128 { return d.low[k][sbrLowSlots-1] }, func(k int) complex128 { return exact[k] })
+	bound := sbrAnalysisBound(x)
 	// the definition on the same history
 	r2 := &refAnalysis{}
 	for f := 0; f < frames; f++ {
@@ -81,9 +90,9 @@ func TestSBRQMFAnalysis(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("analysis, last slot against 256 bits: decoder %.3e, definition %.3e", eOurs, eRef)
-	if eOurs > 1e-12*peak || eRef > 1e-13*peak {
-		t.Errorf("against 256 bits: decoder %.3e, definition %.3e, peak %.3e", eOurs, eRef, peak)
+	t.Logf("analysis, last slot against 256 bits: decoder %.3e (bound %.3e), definition %.3e", eOurs, bound, eRef)
+	if eOurs > bound || eRef > 1e-13*peak {
+		t.Errorf("against 256 bits: decoder %.3e (bound %.3e), definition %.3e, peak %.3e", eOurs, bound, eRef, peak)
 	}
 }
 
@@ -100,7 +109,7 @@ func TestSBRQMFSynthesis(t *testing.T) {
 	var syn sbrSynthesis
 	ref := &refSynthesis{}
 	var all [][sbrSynBands]complex128
-	var worstRound, worstAbs, peak float64
+	var worstRound, worstAbs, peak, lastBound float64
 	for f := 0; f < frames; f++ {
 		var in [sbrQMFSlots][sbrSynBands]complex128
 		for l := range in {
@@ -113,19 +122,23 @@ func TestSBRQMFSynthesis(t *testing.T) {
 		for l := range in {
 			all = append(all, in[l])
 			want := ref.slot(&in[l])
+			bound := ref.bound()
+			lastBound = bound
+			var e2 float64
 			for q, w := range want {
 				got := float64(out[l*sbrSynBands+q])
 				peak = math.Max(peak, math.Abs(w))
 				worstAbs = math.Max(worstAbs, math.Abs(got-w))
-				// one rounding to float32 is at most half an ulp of the value
-				worstRound = math.Max(worstRound, math.Abs(got-w)-math.Abs(w)*0x1p-24)
+				e2 += (got - w) * (got - w)
 			}
+			e := math.Sqrt(e2)
+			if e > bound {
+				t.Errorf("frame %d slot %d: 2-norm error %.3e over the outputs exceeds the bound %.3e", f, l, e, bound)
+			}
+			worstRound = math.Max(worstRound, e/bound)
 		}
 	}
-	t.Logf("synthesis: largest difference to the definition %.3e, peak output %.3e; beyond one float32 rounding %.3e", worstAbs, peak, worstRound)
-	if worstRound > 1e-12*peak {
-		t.Errorf("synthesis differs from the definition by %.3e beyond a float32 rounding, peak %.3e", worstRound, peak)
-	}
+	t.Logf("synthesis: largest difference to the definition %.3e, peak output %.3e; worst slot at %.3f of its bound", worstAbs, peak, worstRound)
 
 	// the last output block against 256 bits, from the last 10 slots
 	var last [10][sbrSynBands]complex128
@@ -144,13 +157,15 @@ func TestSBRQMFSynthesis(t *testing.T) {
 		in2[sbrQMFSlots-1-b] = last[b]
 	}
 	syn2.process(out2, &in2)
-	var e float64
+	var e2 float64
 	for q := 0; q < 64; q++ {
-		e = math.Max(e, math.Abs(float64(out2[(sbrQMFSlots-1)*64+q])-exact[q])-math.Abs(exact[q])*0x1p-24)
+		d := float64(out2[(sbrQMFSlots-1)*64+q]) - exact[q]
+		e2 += d * d
 	}
-	t.Logf("synthesis, last block against 256 bits: beyond one float32 rounding %.3e", e)
-	if e > 1e-12*peak {
-		t.Errorf("against 256 bits: %.3e beyond a float32 rounding, peak %.3e", e, peak)
+	e := math.Sqrt(e2)
+	t.Logf("synthesis, last block against 256 bits: 2-norm error %.3e (bound %.3e)", e, lastBound)
+	if e > lastBound {
+		t.Errorf("against 256 bits: 2-norm error %.3e exceeds the bound %.3e", e, lastBound)
 	}
 }
 
