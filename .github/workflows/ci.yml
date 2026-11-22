@@ -59,6 +59,29 @@ jobs:
         working-directory: tools
         run: go vet ./... && go test -timeout 45m ./...
 
+  # govpx (VP8 and VP9) has Go 1.27 simd/archsimd kernels that are compiled only under
+  # GOEXPERIMENT=simd (amd64 AVX2, arm64); the lanes above run its scalar fallback. This
+  # lane runs the whole suite with the experiment on both architectures, so the SIMD
+  # path decodes every committed stream byte-for-byte as the scalar one does. A library
+  # cannot set GOEXPERIMENT for its importers: README, "Building with SIMD".
+  simd:
+    name: test, GOEXPERIMENT=simd (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    env:
+      GOEXPERIMENT: simd
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.4'
+      - run: go version && go env GOARCH GOEXPERIMENT
+      - run: go vet ./...
+      - run: go test -timeout 45m ./...
+
   # A stream is untrusted input. The corpus in testdata/fuzz runs as ordinary
   # tests above; this job also mutates it for a while. A crash fails the job and
   # go test prints the input it found, to be committed to the corpus with its fix.
