@@ -409,7 +409,19 @@ Equality with ffmpeg (its native decoders, `-f framemd5 -pix_fmt yuv420p`; govpx
 byte-exactness with libvpx): the 5 committed streams in `testdata/vpx` (VP8 with alt-ref frames,
 VP8 and VP9 at 161x97, VP9 with alt-ref superframes, VP9 with two tile columns; how they were
 made is in `testdata/vpx/README.md`) match on every picture, through `DecodeTrack`, `Frames` and
-`PosterFrame`. That is the whole of the claim: the libvpx test vectors were not run here.
+`PosterFrame`.
+
+libvpx's own decoder test vectors (`test/test_vectors.cc`: 376 streams; the per-picture md5
+files are committed in `testdata/libvpx`, the streams are not): `TestLibvpxVectors` runs when
+`LIBVPX_VECTORS_DIR` points at them (`go run ./vpxfetch` in `tools` downloads them) and skips
+loudly otherwise. Results: **333 match libvpx on every picture** (all 62 VP8 vectors, and 271 of
+the 303 VP9 profile 0 vectors); **11 are refused** (`vp91`, `vp92`, `vp93`: profiles 1 to 3, as
+`ErrUnsupported` naming the profile); **32 do not match**. Those 32 (`testdata/libvpx/govpx-failures.txt`:
+the `resize` streams, three `size-WxH` streams and `size-lf-1920x1080`) fail the same way with
+govpx alone, which answers `invalid VP9 data` part-way through (one on its first frame), so they
+are a govpx finding, not this package's; the test keeps asserting that they differ and fails
+when one starts to match. The `container` reader fails on 201 of the `.webm` vectors (the old
+files carry a FrameRate element it does not know), so the test cuts their blocks itself.
 
 ## HEVC
 
