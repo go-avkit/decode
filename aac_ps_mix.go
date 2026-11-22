@@ -3,7 +3,12 @@
 
 package decode
 
-import "math"
+import (
+	"math"
+	"unsafe"
+
+	"github.com/go-simd/floats"
+)
 
 // Parametric Stereo decorrelation and mixing (HE-AAC v2), stages 2 to 5 of
 // docs/aac-ps-design.md, written from docs/aac-ps-mixing.md sections 1 to 5 alone (a
@@ -193,9 +198,9 @@ var psLinkFracMil = [3]int{430, 750, 347}
 // psAllPass holds the constants of one all-pass row: the fractional pre-delay rotation
 // phi, and for each link the rotation q, the coefficient c = a*gamma and c*q.
 type psAllPass struct {
-	phi   complex128
-	q, cq [3]complex128
-	c     [3]float64
+	phi complex128
+	q   [3]complex128
+	c   [3]float64
 }
 
 // psDecLayout is the row classes and the all-pass constants of a layout.
@@ -206,7 +211,8 @@ type psDecLayout struct {
 	band             []uint8
 	runs             []psBandRun // the rows grouped by consecutive equal band, in row order
 	ap               [psMaxAllPass]psAllPass
-	image            [psMaxRows]bool // rows of negative centre frequency: they take the conjugate phases (section 6.2)
+	apRows           floats.AllPassRows // the constants of ap as one table per field, for floats.AllPass3
+	image            [psMaxRows]bool    // rows of negative centre frequency: they take the conjugate phases (section 6.2)
 }
 
 // psBandRun is rows [start, end) of one parameter band.
@@ -255,8 +261,16 @@ func newPSDecLayout(is34 bool) *psDecLayout {
 		for m := range ap.q {
 			ap.q[m] = psRotation(psLinkFracMil[m], f24)
 			ap.c[m] = psLinkDecay[m] * gamma
-			ap.cq[m] = complex(ap.c[m], 0) * ap.q[m]
 		}
+	}
+	rows := &dl.apRows
+	rows.Phi, rows.Q0, rows.Q1, rows.Q2 = make([]complex128, dl.nAP), make([]complex128, dl.nAP), make([]complex128, dl.nAP), make([]complex128, dl.nAP)
+	rows.C0, rows.C1, rows.C2 = make([]float64, dl.nAP), make([]float64, dl.nAP), make([]float64, dl.nAP)
+	for r := 0; r < dl.nAP; r++ {
+		a := &dl.ap[r]
+		rows.Phi[r] = a.phi
+		rows.Q0[r], rows.Q1[r], rows.Q2[r] = a.q[0], a.q[1], a.q[2]
+		rows.C0[r], rows.C1[r], rows.C2[r] = a.c[0], a.c[1], a.c[2]
 	}
 	for r := 0; r < dl.rows; r++ {
 		if r > 0 && dl.band[r] == dl.band[r-1] {
@@ -309,6 +323,12 @@ type psMixer struct {
 	in   [psHist + 1][psMaxRows]complex128
 	w    [3][psLinkMaxDelay + 1][psMaxAllPass]complex128
 	tick int
+
+	// the proved memory of the all-pass rows (allPassPlan) and its output
+	plan     *floats.AllPass3Plan
+	planFor  *psDecLayout
+	planSelf *psMixer
+	apOut    [psMaxAllPass]complex128
 
 	// the frame's scratch
 	gain, gainIm [sbrQMFSlots][psMaxBands]psGain
@@ -548,6 +568,29 @@ func (m *psMixer) begin(p *psState, top int) *psDecLayout {
 	return dl
 }
 
+// allPassPlan is the proved memory of the all-pass rows of layout dl: the input ring, the
+// three link rings and the output apOut of this mixer, proved disjoint once (floats.AllPass3Plan).
+// It is rebuilt when the layout changes, or when the mixer is a copy of another one (a plan
+// proves the memory of the mixer it was built for, not of a copy's).
+func (m *psMixer) allPassPlan(dl *psDecLayout) *floats.AllPass3Plan {
+	if m.plan != nil && m.planFor == dl && m.planSelf == m {
+		return m.plan
+	}
+	var w [3][]complex128
+	var ws [3]int
+	for l := range w {
+		w[l] = unsafe.Slice(&m.w[l][0][0], (psLinkDelay[l]+1)*psMaxAllPass)
+		ws[l] = psMaxAllPass
+	}
+	in := unsafe.Slice(&m.in[0][0], (psHist+1)*psMaxRows)
+	p, err := floats.NewAllPass3Plan(&dl.apRows, m.apOut[:dl.nAP], in, psMaxRows, w, ws)
+	if err != nil {
+		panic(err) // the layout tables and the mixer's arrays are fixed: a refusal is a bug
+	}
+	m.plan, m.planFor, m.planSelf = p, dl, m
+	return p
+}
+
 // step decorrelates and mixes slot n: rows holds the hybrid rows of the slot and is
 // overwritten with the left rows, rr receives the right rows. The slots of a frame come in
 // order, and each leaves its input and its link signals in the rings for the ones after.
@@ -559,32 +602,15 @@ func (m *psMixer) step(n int, rows, rr *[psMaxRows]complex128, dl *psDecLayout) 
 	s := &m.in[cur]
 	nAP := dl.nAP
 	// the all-pass rows: the three links along the rows of the slot, which are independent
-	var dec [psMaxAllPass]complex128
-	{
-		ap := dl.ap[:nAP]
-		inp := m.in[(t+ring-psPreDelay)%ring][:nAP]
-		old0, new0 := m.w[0][(t+1)%(psLinkDelay[0]+1)][:nAP], m.w[0][t%(psLinkDelay[0]+1)][:nAP]
-		old1, new1 := m.w[1][(t+1)%(psLinkDelay[1]+1)][:nAP], m.w[1][t%(psLinkDelay[1]+1)][:nAP]
-		old2, new2 := m.w[2][(t+1)%(psLinkDelay[2]+1)][:nAP], m.w[2][t%(psLinkDelay[2]+1)][:nAP]
-		out := dec[:nAP]
-		for k := range out {
-			a := &ap[k]
-			x := a.phi * inp[k]
-			// one product q*old per link serves both c*q*old and q*old
-			p := a.q[0] * old0[k]
-			c := x + complex(a.c[0]*real(p), a.c[0]*imag(p))
-			new0[k] = c
-			x = p - complex(a.c[0]*real(c), a.c[0]*imag(c))
-			p = a.q[1] * old1[k]
-			c = x + complex(a.c[1]*real(p), a.c[1]*imag(p))
-			new1[k] = c
-			x = p - complex(a.c[1]*real(c), a.c[1]*imag(c))
-			p = a.q[2] * old2[k]
-			c = x + complex(a.c[2]*real(p), a.c[2]*imag(p))
-			new2[k] = c
-			x = p - complex(a.c[2]*real(c), a.c[2]*imag(c))
-			out[k] = x
+	var dec *[psMaxAllPass]complex128
+	if nAP > 0 {
+		var old, cur [3]int
+		for l := range old {
+			old[l] = (t + 1) % (psLinkDelay[l] + 1)
+			cur[l] = t % (psLinkDelay[l] + 1)
 		}
+		m.allPassPlan(dl).Run((t+ring-psPreDelay)%ring, old, cur)
+		dec = &m.apOut
 	}
 	// the mixing: the decorrelated signal of an all-pass row, the delayed input of a delay row
 	gn, tn := &m.gain[n], &m.tg[n]
