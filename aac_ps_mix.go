@@ -583,7 +583,7 @@ func (m *psMixer) allPassPlan(dl *psDecLayout) *floats.AllPass3Plan {
 		ws[l] = psMaxAllPass
 	}
 	in := unsafe.Slice(&m.in[0][0], (psHist+1)*psMaxRows)
-	p, err := floats.NewAllPass3Plan(&dl.apRows, m.apOut[:dl.nAP], in, psMaxRows, w, ws)
+	p, err := floats.NewAllPass3TickPlan(&dl.apRows, m.apOut[:dl.nAP], in, psMaxRows, w, ws, psPreDelay)
 	if err != nil {
 		panic(err) // the layout tables and the mixer's arrays are fixed: a refusal is a bug
 	}
@@ -604,12 +604,7 @@ func (m *psMixer) step(n int, rows, rr *[psMaxRows]complex128, dl *psDecLayout) 
 	// the all-pass rows: the three links along the rows of the slot, which are independent
 	var dec *[psMaxAllPass]complex128
 	if nAP > 0 {
-		var old, cur [3]int
-		for l := range old {
-			old[l] = (t + 1) % (psLinkDelay[l] + 1)
-			cur[l] = t % (psLinkDelay[l] + 1)
-		}
-		m.allPassPlan(dl).Run((t+ring-psPreDelay)%ring, old, cur)
+		m.allPassPlan(dl).RunTick(t)
 		dec = &m.apOut
 	}
 	// the mixing: the decorrelated signal of an all-pass row, the delayed input of a delay row
