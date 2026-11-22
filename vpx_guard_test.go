@@ -85,3 +85,28 @@ func TestVP9FramesIndex(t *testing.T) {
 		}
 	}
 }
+
+// Flush has nothing to give back (no reordering) and Close releases the govpx decoder.
+func TestVPXFlushAndClose(t *testing.T) {
+	for name, mk := range map[string]func(Config) (*Decoder, error){"vp8": NewVP8, "vp9": NewVP9} {
+		d, err := mk(fuzzConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frames, err := d.Flush(); frames != nil || err != nil {
+			t.Errorf("%s: Flush = %v, %v, want nil, nil", name, frames, err)
+		}
+		if _, err := d.DecodeAnnexB([]byte{0}); !errors.Is(err, ErrUnsupported) {
+			t.Errorf("%s: DecodeAnnexB = %v, want ErrUnsupported", name, err)
+		}
+		if err := d.Close(); err != nil {
+			t.Errorf("%s: Close = %v", name, err)
+		}
+		if d.vpx != nil {
+			t.Errorf("%s: Close left the govpx decoder", name)
+		}
+		if err := d.Close(); err != nil {
+			t.Errorf("%s: second Close = %v", name, err)
+		}
+	}
+}
