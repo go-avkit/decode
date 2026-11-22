@@ -505,10 +505,11 @@ suite listing was opened.
 ## What is decoded (H.264)
 
 The decoding is [`github.com/go-avkit/h264/decoder`](https://github.com/go-avkit/h264)
-(v0.8.0; pure Go with assembly kernels), the decoding layer of
-[`oops1/go.264`](https://github.com/oops1/go.264) v1.12.0 (BSD-2-Clause) imported
-into go-avkit/h264, which runs the same conformance streams in its own CI. It
-has no hardware path. Fixes go into go-avkit/h264, and are offered upstream.
+(v0.15.0 at this writing; pure Go with assembly kernels), our own decoder. It
+started as the decoding layer of [`oops1/go.264`](https://github.com/oops1/go.264)
+v1.12.0 (BSD-2-Clause) imported into go-avkit/h264, which runs the same
+conformance streams in its own CI. `decode` no longer wraps go.264. It has no
+hardware path. Fixes go into go-avkit/h264, and are offered upstream.
 
 | Profile | State |
 | --- | --- |
@@ -525,12 +526,13 @@ has no hardware path. Fixes go into go-avkit/h264, and are offered upstream.
 Every picture's MD5 against `ffmpeg -f framemd5 -pix_fmt yuv420p`, single
 thread, and against the reference yuv shipped in the suite where there is one.
 
-* **ITU-T H.264.1 conformance suite**, AVCv1: 81 bitstreams tried, 73 match ffmpeg (and
-  the suite's yuv where it ships one): 69 with go.264 v1.12.0 as pinned here, and
-  4 more (MR2..MR5_TANDBERG) only with
-  [oops1/go.264#2](https://github.com/oops1/go.264/pull/2) "decoder: handle MMCO 5
-  and gaps in frame_num"; they are listed in `pendingUpstream` until it is
-  released. The other 8 are not claimed: 5 interlaced, 3 use FMO/ASO (ffmpeg
+* **ITU-T H.264.1 conformance suite**, AVCv1: 81 bitstreams tried, 73 are claimed
+  (match ffmpeg, and the suite's yuv where it ships one). Measured on
+  go-avkit/h264, whose decoding layer comes from go.264 v1.12.0: 69 match today
+  (h264's README states the same, 69 of its 73 streams), and 4 more
+  (MR2..MR5_TANDBERG) need MMCO 5 and frame_num gaps, which that layer does not
+  handle ([oops1/go.264#2](https://github.com/oops1/go.264/pull/2)); they are
+  listed in `pendingUpstream` until h264 carries the fix. The other 8 are not claimed: 5 interlaced, 3 use FMO/ASO (ffmpeg
   cannot decode two of them either). ffmpeg's MD5s are in `testdata/jvt`; the
   bitstreams are not in the repository (their redistribution terms are not
   stated), so `TestJVTConformance` runs when `DECODE_JVT_DIR` points at them
@@ -621,9 +623,9 @@ rounds, median, the harness refusing to start at a 1-minute load of 8 or more.
 | HEVC Main 10 2160p (real clip, 3840x1606, 60 frames) | 10.3 | 27.9 | 0.37 |
 | the committed H.264 and HEVC streams (each repeated 100 times) | | | 0.21 to 0.41 |
 
-The profiles put the hot spots in the wrapped libraries, not in this package: in
-go.264 the interpolation and CABAC residual decoding on a pure-Go build (no arm64
-assembly kernels); for HEVC see the table in [HEVC](#hevc), measured on v0.10.0. The H.264 decoder is go-avkit/h264, whose README keeps the
+The profiles put the hot spots in the libraries, not in this package: for H.264,
+measured on the old go.264 wrapper (v0.3.0), the interpolation and CABAC residual
+decoding on a pure-Go build (no arm64 assembly kernels; h264 has them now); for HEVC see the table in [HEVC](#hevc), measured on v0.10.0. The H.264 decoder is go-avkit/h264, whose README keeps the
 mid-GOP table ([decode#10](https://github.com/go-avkit/decode/issues/10)): the
 IDR and 45 pictures after it at 720p took 257 ms as imported from go.264 and take
 179 ms in h264 v0.8.0, against about 58 ms for `ffmpeg -threads 1` once its
