@@ -152,3 +152,97 @@ func TestVPXConstructorRefusal(t *testing.T) {
 		}
 	}
 }
+
+// bitString packs a string of 0 and 1 (spaces ignored), most significant bit first, zero padded.
+func bitString(s string) []byte {
+	var out []byte
+	n := 0
+	for _, c := range s {
+		if c == ' ' {
+			continue
+		}
+		if n%8 == 0 {
+			out = append(out, 0)
+		}
+		if c == '1' {
+			out[n/8] |= 0x80 >> (n % 8)
+		}
+		n++
+	}
+	return out
+}
+
+// vp9FrameSize on the header shapes the streams do not carry.
+func TestVP9FrameSizeShapes(t *testing.T) {
+	sync := "100110000100100101000010" // 24 bits, the value does not matter to the reader
+	size := func(w, h int) string {
+		return bitString16(w-1) + bitString16(h-1)
+	}
+	cases := []struct {
+		name    string
+		bits    string
+		w, h    int
+		ok      bool
+		profile int // nonzero: an ErrUnsupported naming it
+	}{
+		{"profile 3", "10 11 0", 0, 0, false, 3},
+		{"profile 2", "10 01 0", 0, 0, false, 2},
+		{"show existing frame", "10 00 1 000", 0, 0, false, 0},
+		{"intra only, hidden", "10 00 0 1 0 0 1 00 " + sync + " 00000001 " + size(100, 50), 100, 50, true, 0},
+		{"key frame truncated", "10 00 0 0 1 0", 1, 1, false, 0}, // past the end the reader gives zeros: 1x1, and ok is false,
+	}
+	for _, c := range cases {
+		w, h, ok, err := vp9FrameSize(bitString(c.bits))
+		if c.profile != 0 {
+			if !errors.Is(err, ErrUnsupported) || !bytes.Contains([]byte(err.Error()), []byte{'0' + byte(c.profile)}) {
+				t.Errorf("%s: %v, want ErrUnsupported naming profile %d", c.name, err, c.profile)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if w != c.w || h != c.h || ok != c.ok {
+			t.Errorf("%s: %d x %d ok=%v, want %d x %d ok=%v", c.name, w, h, ok, c.w, c.h, c.ok)
+		}
+	}
+}
+
+func bitString16(v int) string {
+	s := ""
+	for i := 15; i >= 0; i-- {
+		if v>>i&1 == 1 {
+			s += "1"
+		} else {
+			s += "0"
+		}
+	}
+	return s
+}
+
+// classifyVPX maps govpx's errors onto this package's, and leaves any other alone.
+func TestClassifyVPX(t *testing.T) {
+	other := errors.New("other")
+	for _, c := range []struct {
+		in   error
+		want error
+	}{
+		{govpx.ErrVP9NotImplemented, ErrUnsupported},
+		{govpx.ErrFrameRejected, ErrOverLimit},
+		{govpx.ErrClosed, ErrClosed},
+		{govpx.ErrInvalidData, ErrBitstream},
+		{govpx.ErrInvalidVP9Data, ErrBitstream},
+		{govpx.ErrNeedKeyFrame, ErrBitstream},
+		{other, other},
+	} {
+		if got := classifyVPX(c.in); !errors.Is(got, c.want) {
+			t.Errorf("classifyVPX(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+	if got := classifyVPX(other); got != other {
+		t.Errorf("an unknown error was wrapped: %v", got)
+	}
+	if got := classifyVPX(govpx.ErrClosed); got != ErrClosed {
+		t.Errorf("ErrClosed = %v", got)
+	}
+}
