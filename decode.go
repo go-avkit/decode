@@ -5,7 +5,7 @@
 // demuxes into pictures.
 //
 // The first codec is H.264 (ITU-T H.264 | ISO/IEC 14496-10), through
-// github.com/go-avkit/h264/decoder (a decoder imported from oops1/go.264), the
+// github.com/go-avkit/h264/decoder (go-avkit/h264, whose decoding layer was imported from oops1/go.264), the
 // second HEVC (ITU-T H.265), through
 // github.com/go-avkit/h265 (written from the specification): pure Go decoders that
 // are checked here, picture for picture, against ffmpeg. See the README for the profiles that claim holds
