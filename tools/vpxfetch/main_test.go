@@ -93,6 +93,53 @@ func TestFetchRefusals(t *testing.T) {
 	}
 }
 
+func TestFetchRefusalsAreNamed(t *testing.T) {
+	cc := filepath.Join(t.TempDir(), "v.cc")
+	os.WriteFile(cc, []byte(sampleCC), 0o644)
+	for _, args := range [][]string{{"--cc", cc}, {"--dir", t.TempDir()}} {
+		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "are required") {
+			t.Errorf("%v: %v, want the missing flag named", args, err)
+		}
+	}
+	absent := filepath.Join(t.TempDir(), "absent.cc")
+	if _, err := run(t, "--cc", absent, "--dir", t.TempDir()); err == nil || !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("absent --cc: %v, want the read error", err)
+	}
+	file := filepath.Join(t.TempDir(), "afile")
+	os.WriteFile(file, nil, 0o644)
+	if _, err := run(t, "--cc", cc, "--dir", filepath.Join(file, "sub"), "--base", "http://127.0.0.1:1/"); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("--dir under a file: %v, want the mkdir error", err)
+	}
+}
+
+func TestFetchFailures(t *testing.T) {
+	// A server that promises more than it sends.
+	short := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.Write([]byte("only a few bytes"))
+	}))
+	defer short.Close()
+	dir := t.TempDir()
+	if err := fetch(http.DefaultClient, short.URL+"/", dir, "a.ivf"); err == nil || !strings.Contains(err.Error(), "a.ivf") {
+		t.Errorf("a truncated body gave %v, want an error naming the file", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, "a.ivf*")); len(left) != 0 {
+		t.Errorf("a truncated download left %v", left)
+	}
+	// A directory that is not there: the temporary file cannot be created.
+	missing := filepath.Join(t.TempDir(), "missing")
+	if err := fetch(http.DefaultClient, short.URL+"/", missing, "a.ivf"); err == nil {
+		t.Error("an absent directory: want an error")
+	}
+	// A server that is gone.
+	gone := httptest.NewServer(http.NotFoundHandler())
+	url := gone.URL + "/"
+	gone.Close()
+	if err := fetch(http.DefaultClient, url, t.TempDir(), "a.ivf"); err == nil || strings.Contains(err.Error(), "HTTP") {
+		t.Errorf("an unreachable server gave %v, want a connection error", err)
+	}
+}
+
 func TestMainExits(t *testing.T) {
 	old := osExit
 	defer func() { osExit = old }()
