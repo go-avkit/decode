@@ -5,6 +5,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -101,14 +103,22 @@ func TestFetchRefusalsAreNamed(t *testing.T) {
 			t.Errorf("%v: %v, want the missing flag named", args, err)
 		}
 	}
+	// ⛔ Judged by the *fs.PathError's fields, not its text: the text is the
+	// operating system's ("no such file or directory" on Unix, "The system
+	// cannot find the file specified." on Windows), and matching the Unix
+	// wording turned windows-latest red on decode#121.
 	absent := filepath.Join(t.TempDir(), "absent.cc")
-	if _, err := run(t, "--cc", absent, "--dir", t.TempDir()); err == nil || !strings.Contains(err.Error(), "no such file") {
-		t.Errorf("absent --cc: %v, want the read error", err)
+	_, err := run(t, "--cc", absent, "--dir", t.TempDir())
+	var pe *fs.PathError
+	if !errors.As(err, &pe) || pe.Op != "open" || pe.Path != absent || !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("absent --cc: %v, want the read error naming %s", err, absent)
 	}
 	file := filepath.Join(t.TempDir(), "afile")
 	os.WriteFile(file, nil, 0o644)
-	if _, err := run(t, "--cc", cc, "--dir", filepath.Join(file, "sub"), "--base", "http://127.0.0.1:1/"); err == nil || !strings.Contains(err.Error(), "not a directory") {
-		t.Errorf("--dir under a file: %v, want the mkdir error", err)
+	_, err = run(t, "--cc", cc, "--dir", filepath.Join(file, "sub"), "--base", "http://127.0.0.1:1/")
+	// MkdirAll names the ancestor that is in the way, on every system.
+	if !errors.As(err, &pe) || pe.Op != "mkdir" || pe.Path != file {
+		t.Errorf("--dir under a file: %v, want the mkdir error naming %s", err, file)
 	}
 }
 
