@@ -423,6 +423,36 @@ are a govpx finding, not this package's; the test keeps asserting that they diff
 when one starts to match. The `container` reader fails on 201 of the `.webm` vectors (the old
 files carry a FrameRate element it does not know), so the test cuts their blocks itself.
 
+### Building with SIMD
+
+govpx has native-SIMD kernels (Go 1.27 `simd/archsimd`, no assembly) for the VP9 8-tap convolve,
+the VP8 and VP9 loop filters, the VP8 six-tap and the transforms. They are compiled **only** when
+the program is built with `GOEXPERIMENT=simd` (amd64 with AVX2, or arm64); otherwise govpx runs
+its scalar Go code, which is what a plain `go build` gives you. A library cannot set
+`GOEXPERIMENT` for the programs that import it, so the choice is yours at build time:
+
+```sh
+GOEXPERIMENT=simd go build ./...
+```
+
+It needs the Go 1.27 toolchain (CI uses 1.27.4; the go.mod floor is 1.27.1) and changes nothing
+in the API or the output. govpx exports no way to ask which path is active, so this package does
+not either.
+
+Measured on one core of an AMD Zen 4 (amd64; ABBA rounds, one test binary per mode, same
+commit, `BenchmarkDecode*` whole-file decodes, median time per frame):
+
+| clip | scalar | `GOEXPERIMENT=simd` | speed-up |
+|---|---|---|---|
+| VP8 1080p | 15.04 ms | 3.03 ms | 4.96x |
+| VP9 720p | 7.26 ms | 2.67 ms | 2.71x |
+| VP9 1080p | 10.78 ms | 5.20 ms | 2.07x |
+| VP9 tiles 4x4 | 34.94 ms | 10.08 ms | 3.47x |
+
+`TestLibvpxVectors` with the experiment on gives the same results as without: 377 PASS on amd64
+and all PASS on arm64 (Apple M-series). CI runs the whole suite with it on amd64 and arm64 (the
+`simd` job), next to the plain lanes. Details: [#125](https://github.com/go-avkit/decode/issues/125).
+
 ## HEVC
 
 The decoding is [`github.com/go-avkit/h265`](https://github.com/go-avkit/h265)
