@@ -112,8 +112,8 @@ func isAVC(tc container.TrackConfig) bool {
 }
 
 // NewTrack returns a decoder for an avkit container track: an HEVC decoder for a
-// track whose sample entry is hvc1 or hev1, an H.264 decoder for avc1 to avc4 (or
-// no codec stated). Any other sample entry is refused by name with a *CodecError.
+// track whose sample entry is hvc1 or hev1, a VP8 decoder for vp08, a VP9 one for vp09, an H.264
+// decoder for avc1 to avc4 (or no codec stated). Any other sample entry is refused by name with a *CodecError.
 // Samples are length-prefixed with four-byte lengths, which is what
 // container.Reader hands over for MP4 and Matroska. The track's parameter sets
 // are decoded first.
@@ -123,6 +123,10 @@ func NewTrack(tc container.TrackConfig, cfg Config) (*Decoder, error) {
 		return newHEVCWithSets(cfg, 4, tc.VPS, tc.SPS, tc.PPS)
 	case isAVC(tc):
 		return newWithSets(cfg, 4, tc.SPS, tc.PPS)
+	case isVP8(tc):
+		return NewVP8(cfg)
+	case isVP9(tc):
+		return NewVP9(cfg)
 	}
 	return nil, &CodecError{Codec: tc.Codec}
 }

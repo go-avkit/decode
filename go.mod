@@ -12,6 +12,7 @@ require (
 	github.com/go-simd/floats v0.24.0
 	github.com/mewkiz/flac v1.0.14
 	github.com/pion/opus v0.1.0
+	github.com/thesyncim/govpx v0.0.0-20261018202535-159dce5b931a
 	github.com/tphakala/go-mp3 v0.3.0
 	golang.org/x/sys v0.49.0
 )
