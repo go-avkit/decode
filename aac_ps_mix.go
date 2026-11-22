@@ -570,18 +570,19 @@ func (m *psMixer) step(n int, rows, rr *[psMaxRows]complex128, dl *psDecLayout) 
 		for k := range out {
 			a := &ap[k]
 			x := a.phi * inp[k]
-			old := old0[k]
-			c := x + a.cq[0]*old
+			// one product q*old per link serves both c*q*old and q*old
+			p := a.q[0] * old0[k]
+			c := x + complex(a.c[0]*real(p), a.c[0]*imag(p))
 			new0[k] = c
-			x = a.q[0]*old - complex(a.c[0]*real(c), a.c[0]*imag(c))
-			old = old1[k]
-			c = x + a.cq[1]*old
+			x = p - complex(a.c[0]*real(c), a.c[0]*imag(c))
+			p = a.q[1] * old1[k]
+			c = x + complex(a.c[1]*real(p), a.c[1]*imag(p))
 			new1[k] = c
-			x = a.q[1]*old - complex(a.c[1]*real(c), a.c[1]*imag(c))
-			old = old2[k]
-			c = x + a.cq[2]*old
+			x = p - complex(a.c[1]*real(c), a.c[1]*imag(c))
+			p = a.q[2] * old2[k]
+			c = x + complex(a.c[2]*real(p), a.c[2]*imag(p))
 			new2[k] = c
-			x = a.q[2]*old - complex(a.c[2]*real(c), a.c[2]*imag(c))
+			x = p - complex(a.c[2]*real(c), a.c[2]*imag(c))
 			out[k] = x
 		}
 	}
