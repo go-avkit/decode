@@ -105,12 +105,12 @@ func TestWalkSpanRefusesUnknownCodec(t *testing.T) {
 		}
 	}()
 	emitted := 0
-	stopped, err := walkSpan(container.TrackConfig{Codec: "vp09"}, nil, 0, Config{}, nil, func(Frame) bool {
+	stopped, err := walkSpan(container.TrackConfig{Codec: "av01"}, nil, 0, Config{}, nil, func(Frame) bool {
 		emitted++
 		return true
 	})
 	var ce *CodecError
-	if !errors.As(err, &ce) || ce.Codec != "vp09" || stopped || emitted != 0 {
-		t.Fatalf("stopped %v, %d emitted, err %v; want a *CodecError for vp09", stopped, emitted, err)
+	if !errors.As(err, &ce) || ce.Codec != "av01" || stopped || emitted != 0 {
+		t.Fatalf("stopped %v, %d emitted, err %v; want a *CodecError for av01", stopped, emitted, err)
 	}
 }

@@ -28,6 +28,7 @@ require (
 	github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 // indirect
 	github.com/pion/opus v0.1.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/thesyncim/govpx v0.0.0-20261018202535-159dce5b931a // indirect
 	github.com/tphakala/go-mp3 v0.3.0 // indirect
 	github.com/tphakala/simd v1.16.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect

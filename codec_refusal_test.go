@@ -20,8 +20,6 @@ import (
 // (testsrc2 160x90, 15 fps, 1 s), refused with the codec in the message.
 func TestUnsupportedVideoCodecFiles(t *testing.T) {
 	for _, tc := range []struct{ file, codec string }{
-		{"vp9.webm", "vp09"},
-		{"vp8.webm", "vp08"},
 		{"mp4v.mp4", "mp4v"},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
@@ -55,7 +53,7 @@ func TestUnsupportedVideoCodecFiles(t *testing.T) {
 // HEVC, and a few it does not, is named by NewTrack, whatever bytes follow.
 func TestUnsupportedVideoCodecs(t *testing.T) {
 	for _, codec := range []string{
-		"vp08", "vp09", "av01", "mjpg", "mp4v", "jpeg", "apch", "s263", "svc1", "mvc1",
+		"vp07", "vp10", "av01", "mjpg", "mp4v", "jpeg", "apch", "s263", "svc1", "mvc1",
 		"dvh1", "hvc2", "avc5", "mp4a", "Opus", "xxxx", "VP90", " ",
 	} {
 		t.Run(codec, func(t *testing.T) {
@@ -73,7 +71,7 @@ func TestUnsupportedVideoCodecs(t *testing.T) {
 // still reach their decoder (a bad parameter set is ErrConfig or a decode error,
 // never a CodecError).
 func TestSupportedVideoCodecsAreNotRefused(t *testing.T) {
-	for _, codec := range []string{"", "avc1", "avc2", "avc3", "avc4", "hvc1", "hev1"} {
+	for _, codec := range []string{"", "avc1", "avc2", "avc3", "avc4", "hvc1", "hev1", "vp08", "vp09"} {
 		_, err := NewTrack(container.TrackConfig{Codec: codec, SPS: [][]byte{{0xFF}}}, Config{})
 		var ce *CodecError
 		if errors.As(err, &ce) {
@@ -109,7 +107,7 @@ func FuzzNewTrack(f *testing.F) {
 		if d != nil {
 			d.Close()
 		}
-		if isAVC(tc) || isHEVC(tc) {
+		if isAVC(tc) || isHEVC(tc) || isVP8(tc) || isVP9(tc) {
 			return
 		}
 		var ce *CodecError

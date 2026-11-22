@@ -9,7 +9,8 @@ Part of [go-avkit](https://go-avkit.github.io): [documentation](https://go-avkit
 Video and audio decoders for [avkit](https://github.com/go-avkit/avkit), pure Go,
 no cgo. Video: **H.264** (ITU-T H.264 | ISO/IEC 14496-10) and **HEVC / H.265**
 (ITU-T H.265 | ISO/IEC 23008-2), Main and Main 10 in 4:2:0, and since v0.15.0 every
-chroma format (4:0:0, 4:2:2, 4:4:4) at 8 to 16 bits for HEVC. Audio: FLAC, MP3 and
+chroma format (4:0:0, 4:2:2, 4:4:4) at 8 to 16 bits for HEVC, and **VP8** and **VP9**
+(profile 0, 8-bit 4:2:0) through [govpx](https://github.com/thesyncim/govpx) (see [VP8 and VP9](#vp8-and-vp9)). Audio: FLAC, MP3 and
 Opus, AAC-LC and HE-AAC v1 (SBR) since v0.6.0, and HE-AAC v2 (Parametric Stereo)
 since v0.7.0, with the full profile (procedure B, IPD/OPD) by default since v0.8.0; on one core it takes
 about 1.6 times ffmpeg's CPU time on an x86 server core and about 1.1 times on an Apple M4,
@@ -59,11 +60,11 @@ before `t` (in presentation time, as `DecodeTrack` labels the pictures: see
 past the end gives the last picture, one before the first presentation time gives
 the first, a negative or NaN `t` is `ErrTime`. Decoding starts at the last sync
 sample at or before the picture's sample (the first sample if none is flagged) and
-stops as soon as the picture is out. H.264 (`avc1`, `avc3`) and HEVC (`hvc1`,
-`hev1`); another codec (VP8, VP9, AV1, MPEG-4 Part 2, ...) is refused by name,
-before any sample is read, with a `*CodecError` (`codec "vp09" is not supported`,
+stops as soon as the picture is out. H.264 (`avc1`, `avc3`), HEVC (`hvc1`,
+`hev1`), VP8 (`vp08`) and VP9 (`vp09`); another codec (AV1, MPEG-4 Part 2, ...) is refused by name,
+before any sample is read, with a `*CodecError` (`codec "av01" is not supported`,
 `errors.As` gives the fourcc, `errors.Is(err, ErrUnsupported)` holds) in
-`DecodeTrack`, `NewTrack` and `PosterFrame`: a VP9 file is not reported as corrupt.
+`DecodeTrack`, `NewTrack` and `PosterFrame`: an AV1 file is not reported as corrupt.
 
 ## Edit lists
 
@@ -381,6 +382,34 @@ ffmpeg together with the PCM it decodes them to, so the tests need no ffmpeg.
 Bounds: `AudioConfig` limits the channel count, the block size (checked from the
 frame header, before the subframes are allocated), a coded sample and the PCM a
 track may return.
+
+## VP8 and VP9
+
+`DecodeTrack`, `Frames`, `PosterFrame` and `NewTrack` choose the decoder for a track whose sample
+entry is `vp08` or `vp09`; `decode.NewVP8(cfg)` and `decode.NewVP9(cfg)` take samples directly
+(one VP8 frame, or one VP9 frame or superframe, as MP4 and Matroska store them: no parameter
+sets, no length prefix, and `DecodeAnnexB` is `ErrUnsupported`). The decoding is
+[`github.com/thesyncim/govpx`](https://github.com/thesyncim/govpx) (BSD-3, pure Go, a port of
+libvpx; it is a dependency of this module, its decoder only). The pictures come out in decoding
+order (these codecs do not reorder), hidden frames (alt-ref) update the references and give no
+picture, and `Frame.PTS` is the sample's.
+
+| | decoded | refused |
+|---|---|---|
+| VP8 | every key and inter frame, any size up to `MaxFrameMBs` | |
+| VP9 profile 0 | 8-bit 4:2:0, tiles, superframes | profiles 1 (4:4:4, 4:2:2, 4:4:0), 2 (10 and 12 bits) and 3: `ErrUnsupported` naming the profile, because govpx decodes profile 0 only |
+
+Bounds: the size a frame header declares is read here (VP8 key frame, VP9 uncompressed header of
+every frame of a superframe) and refused as `ErrOverLimit` when it is over `Config.MaxFrameMBs`
+or its Frame is over 2^31-1 bytes, before govpx allocates anything (`TestVPXSizeBomb`, under a
+memory limit). Fuzzed (`FuzzVP8Sample`, `FuzzVP9Sample`, `FuzzVP9FrameSize`, corpus committed):
+govpx did not panic on any of the inputs tried, so there is no `recover` around it.
+
+Equality with ffmpeg (its native decoders, `-f framemd5 -pix_fmt yuv420p`; govpx claims
+byte-exactness with libvpx): the 5 committed streams in `testdata/vpx` (VP8 with alt-ref frames,
+VP8 and VP9 at 161x97, VP9 with alt-ref superframes, VP9 with two tile columns; how they were
+made is in `testdata/vpx/README.md`) match on every picture, through `DecodeTrack`, `Frames` and
+`PosterFrame`. That is the whole of the claim: the libvpx test vectors were not run here.
 
 ## HEVC
 

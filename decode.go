@@ -7,7 +7,8 @@
 // The first codec is H.264 (ITU-T H.264 | ISO/IEC 14496-10), through
 // github.com/go-avkit/h264/decoder (go-avkit/h264, whose decoding layer was imported from oops1/go.264), the
 // second HEVC (ITU-T H.265), through
-// github.com/go-avkit/h265 (written from the specification): pure Go decoders that
+// github.com/go-avkit/h265 (written from the specification), and VP8 and VP9 (profile 0) come
+// through github.com/thesyncim/govpx, a port of libvpx: pure Go decoders that
 // are checked here, picture for picture, against ffmpeg. See the README for the profiles that claim holds
 // for and the conformance bitstreams it was measured on.
 //
@@ -52,7 +53,7 @@ var (
 )
 
 // CodecError is returned when a track's sample entry names a video codec this
-// package does not decode (VP8, VP9, AV1, MPEG-4 Part 2, ...). It names the
+// package does not decode (AV1, MPEG-4 Part 2, ...). It names the
 // codec, as the container states it, so that a sound file is not reported as a
 // corrupt one: the samples are never handed to a parser of another codec. It
 // matches ErrUnsupported with errors.Is; errors.As reaches the fourcc.
@@ -62,7 +63,7 @@ type CodecError struct {
 }
 
 func (e *CodecError) Error() string {
-	return fmt.Sprintf("decode: codec %q is not supported (H.264 and HEVC are decoded)", e.Codec)
+	return fmt.Sprintf("decode: codec %q is not supported (H.264, HEVC, VP8 and VP9 are decoded)", e.Codec)
 }
 
 // Is reports a CodecError as ErrUnsupported.
@@ -204,12 +205,13 @@ func (f Frame) ChromaSize() (w, h int) {
 	return 0, 0
 }
 
-// Decoder decodes one H.264 or HEVC elementary stream. It is not safe for
+// Decoder decodes one H.264, HEVC, VP8 or VP9 elementary stream. It is not safe for
 // concurrent use.
 type Decoder struct {
 	dec        *h264dec.Decoder
 	onlyPTS    *int64        // when set, only the H.264 picture presented at it is copied out
 	h265       *h265.Decoder // set for HEVC, in which case dec is nil
+	vpx        *vpx          // set for VP8 and VP9, in which case dec is nil
 	cfg        Config
 	lengthSize int
 	annexB     []byte
@@ -259,6 +261,9 @@ func (d *Decoder) DecodeSample(data []byte, pts int64) ([]Frame, error) {
 	if d.h265 != nil {
 		return d.hevcSample(data, pts)
 	}
+	if d.vpx != nil {
+		return d.vpxSample(data, pts)
+	}
 	annexB, err := d.toAnnexB(data)
 	if err != nil {
 		return nil, err
@@ -282,6 +287,9 @@ func (d *Decoder) DecodeAnnexB(data []byte) ([]Frame, error) {
 	if d.h265 != nil {
 		return d.hevcAnnexB(data)
 	}
+	if d.vpx != nil {
+		return nil, fmt.Errorf("%w: VP8 and VP9 have no Annex B form; use DecodeSample", ErrUnsupported)
+	}
 	return d.run(data)
 }
 
@@ -299,6 +307,9 @@ func (d *Decoder) Flush() ([]Frame, error) {
 	if d.h265 != nil {
 		return d.hevcFlush()
 	}
+	if d.vpx != nil {
+		return nil, nil // VP8 and VP9 pictures are never held for reordering
+	}
 	pics, err := d.dec.Flush()
 	return d.collect(pics, err)
 }
@@ -312,6 +323,15 @@ func (d *Decoder) Close() error {
 	d.annexB, d.pending = nil, nil
 	if d.h265 != nil {
 		d.h265 = nil
+		return nil
+	}
+	if d.vpx != nil {
+		if d.vpx.vp9 != nil {
+			d.vpx.vp9.Close()
+		} else {
+			d.vpx.vp8.Close()
+		}
+		d.vpx = nil
 		return nil
 	}
 	d.dec = nil
