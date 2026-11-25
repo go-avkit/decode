@@ -38,8 +38,7 @@ func FuzzVP9FrameSize(f *testing.F) {
 		if len(b) == 0 {
 			return
 		}
-		sizes, _ := vp9Sizes(b)
-		for _, s := range sizes {
+		for _, s := range vp9Sizes(b) {
 			if s[0] < 1 || s[0] > 1<<16 || s[1] < 1 || s[1] > 1<<16 {
 				t.Fatalf("size %v", s)
 			}

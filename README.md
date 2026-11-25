@@ -397,7 +397,7 @@ picture, and `Frame.PTS` is the sample's.
 | | decoded | refused |
 |---|---|---|
 | VP8 | every key and inter frame, any size up to `MaxFrameMBs` | |
-| VP9 profile 0 | 8-bit 4:2:0, tiles, superframes | profiles 1 (4:4:4, 4:2:2, 4:4:0), 2 (10 and 12 bits) and 3: `ErrUnsupported` naming the profile, because govpx decodes profile 0 only |
+| VP9 profiles 0 to 3 | 8, 10 and 12 bits; 4:2:0, 4:2:2 and 4:4:4; tiles, superframes (Frames above 8 bits are little-endian 16-bit words) | 4:4:0 (profiles 1 and 3): `ErrUnsupported` naming 4:4:0, because `Frame` has no such sampling |
 
 Bounds: the size a frame header declares is read here (VP8 key frame, VP9 uncompressed header of
 every frame of a superframe) and refused as `ErrOverLimit` when it is over `Config.MaxFrameMBs`
@@ -414,14 +414,15 @@ made is in `testdata/vpx/README.md`) match on every picture, through `DecodeTrac
 libvpx's own decoder test vectors (`test/test_vectors.cc`: 376 streams; the per-picture md5
 files are committed in `testdata/libvpx`, the streams are not): `TestLibvpxVectors` runs when
 `LIBVPX_VECTORS_DIR` points at them (`go run ./vpxfetch` in `tools` downloads them) and skips
-loudly otherwise. Results: **333 match libvpx on every picture** (all 62 VP8 vectors, and 271 of
-the 303 VP9 profile 0 vectors); **11 are refused** (`vp91`, `vp92`, `vp93`: profiles 1 to 3, as
-`ErrUnsupported` naming the profile); **32 do not match**. Those 32 (`testdata/libvpx/govpx-failures.txt`:
-the `resize` streams, three `size-WxH` streams and `size-lf-1920x1080`) fail the same way with
-govpx alone, which answers `invalid VP9 data` part-way through (one on its first frame), so they
-are a govpx finding, not this package's; the test keeps asserting that they differ and fails
-when one starts to match. The `container` reader fails on 201 of the `.webm` vectors (the old
-files carry a FrameRate element it does not know), so the test cuts their blocks itself.
+loudly otherwise. With the directory set, a vector missing from it fails the test. Results with
+govpx v0.3.1: **373 match libvpx on every picture** (all VP8 vectors, and all VP9 vectors of
+profiles 0 to 3 except the 4:4:0 ones), **3 are refused** (the `yuv440` vectors, as `ErrUnsupported`
+naming 4:4:0), **0 differ**, with and without `GOEXPERIMENT=simd`. There is no list of known
+failures: until govpx v0.3.1 (out-of-frame coefficient contexts at partial frame edges, fixed in
+govpx PR 136) 32 profile 0 vectors failed (the `resize` streams, three `size-WxH` streams and
+`size-lf-1920x1080`), and any vector that differs now fails the test. The `container` reader fails
+on 201 of the `.webm` vectors (the old files carry a FrameRate element it does not know), so the
+test cuts their blocks itself.
 
 ### Building with SIMD
 

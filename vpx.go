@@ -26,8 +26,9 @@ func NewVP8(cfg Config) (*Decoder, error) {
 }
 
 // NewVP9 returns a VP9 decoder (VP9 bitstream specification v0.6). A sample is one VP9 frame or
-// superframe. Only profile 0 (8-bit 4:2:0), the one govpx decodes, is accepted: another
-// profile is ErrUnsupported. Config.MaxFrameMBs bounds the picture in 16x16 macroblocks.
+// superframe. Profiles 0 to 3 are decoded (8, 10 and 12 bits; 4:2:0, 4:2:2 and 4:4:4); a 4:4:0
+// stream is ErrUnsupported, because Frame cannot describe it. Config.MaxFrameMBs
+// bounds the picture in 16x16 macroblocks.
 func NewVP9(cfg Config) (*Decoder, error) {
 	return newVPX(cfg, true)
 }
@@ -111,54 +112,101 @@ func (d *Decoder) vpxPicture(img govpx.Image, ok, corrupted bool, pts int64) ([]
 // vpxFrame copies the decoder's picture, whose planes alias decoder storage, into a Frame.
 func (d *Decoder) vpxFrame(img govpx.Image, pts int64) (Frame, error) {
 	w, h := img.Width, img.Height
-	cw, ch := (w+1)/2, (h+1)/2
+	var chroma Chroma
+	switch img.Subsampling {
+	case govpx.Subsampling420:
+		chroma = Chroma420
+	case govpx.Subsampling422:
+		chroma = Chroma422
+	case govpx.Subsampling444:
+		chroma = Chroma444
+	default: // 4:4:0, which Frame cannot describe
+		return Frame{}, fmt.Errorf("%w: VP9 4:4:0 chroma sampling (Frame has 4:0:0, 4:2:0, 4:2:2 and 4:4:4)", ErrUnsupported)
+	}
+	depth := 8
+	switch img.BitDepth {
+	case 0, 8:
+	case 10, 12:
+		depth = int(img.BitDepth)
+	default:
+		return Frame{}, fmt.Errorf("%w: VP9 bit depth %d", ErrBitstream, img.BitDepth)
+	}
+	f := Frame{
+		YStride: w * depthBytes(depth), Width: w, Height: h,
+		Chroma: chroma, BitDepth: depth, BitDepthC: depth, PTS: pts,
+	}
+	cw, ch := f.ChromaSize()
+	f.CStride = cw * depthBytes(depth)
 	malformed := func() error {
 		return fmt.Errorf("%w: picture %dx%d does not lie in its planes", ErrBitstream, w, h)
 	}
-	if w <= 0 || h <= 0 || !planeFits(img.Y, img.YStride, w, h) || !planeFits(img.U, img.UStride, cw, ch) ||
-		!planeFits(img.V, img.VStride, cw, ch) {
+	var ok bool
+	if depth == 8 {
+		ok = w > 0 && h > 0 && planeFits(img.Y, img.YStride, w, h) && planeFits(img.U, img.UStride, cw, ch) &&
+			planeFits(img.V, img.VStride, cw, ch)
+	} else {
+		ok = w > 0 && h > 0 && planeFits(img.Y16, img.YStride, w, h) && planeFits(img.U16, img.UStride, cw, ch) &&
+			planeFits(img.V16, img.VStride, cw, ch)
+	}
+	if !ok {
 		return Frame{}, malformed()
 	}
-	// planeFits holds stride >= w, so each plane has at least w*h (cw*ch) bytes: these products
+	// planeFits holds stride >= w, so each plane has at least w*h (cw*ch) samples: these products
 	// are lengths of slices that exist, and cannot overflow int.
-	yBytes, cBytes := w*h, cw*ch
-	f := Frame{
-		Y: make([]byte, yBytes), Cb: make([]byte, cBytes), Cr: make([]byte, cBytes),
-		YStride: w, CStride: cw, Width: w, Height: h,
-		Chroma: Chroma420, BitDepth: 8, BitDepthC: 8, PTS: pts,
-	}
-	for y := range h {
-		copy(f.Y[y*w:(y+1)*w], img.Y[y*img.YStride:y*img.YStride+w])
-	}
-	for y := range ch {
-		copy(f.Cb[y*cw:(y+1)*cw], img.U[y*img.UStride:y*img.UStride+cw])
-		copy(f.Cr[y*cw:(y+1)*cw], img.V[y*img.VStride:y*img.VStride+cw])
+	f.Y, f.Cb, f.Cr = make([]byte, f.YStride*h), make([]byte, f.CStride*ch), make([]byte, f.CStride*ch)
+	if depth == 8 {
+		packPlane8(f.Y, img.Y, img.YStride, w, h)
+		packPlane8(f.Cb, img.U, img.UStride, cw, ch)
+		packPlane8(f.Cr, img.V, img.VStride, cw, ch)
+	} else {
+		packPlane16(f.Y, img.Y16, img.YStride, w, h)
+		packPlane16(f.Cb, img.U16, img.UStride, cw, ch)
+		packPlane16(f.Cr, img.V16, img.VStride, cw, ch)
 	}
 	d.nextIndex++
 	return f, nil
 }
 
+func packPlane8(dst, src []byte, stride, w, h int) {
+	for y := range h {
+		copy(dst[y*w:(y+1)*w], src[y*stride:y*stride+w])
+	}
+}
+
+// packPlane16 writes samples as little-endian 16-bit words, the Frame layout.
+func packPlane16(dst []byte, src []uint16, stride, w, h int) {
+	for y := range h {
+		row := src[y*stride : y*stride+w]
+		out := dst[y*w*2:]
+		for x, v := range row {
+			out[2*x], out[2*x+1] = byte(v), byte(v>>8)
+		}
+	}
+}
+
 // planeFits reports whether h rows of w samples at stride lie in p, computed in int64.
-func planeFits(p []byte, stride, w, h int) bool {
+func planeFits[S ~[]E, E byte | uint16](p S, stride, w, h int) bool {
 	return stride >= w && w > 0 && h > 0 && int64(len(p)) >= int64(h-1)*int64(stride)+int64(w)
 }
 
 // checkVPX refuses, before the decoder allocates anything, a frame that declares a picture over
-// Config.MaxFrameMBs or a Frame over maxFrameBytes, and a VP9 profile govpx does not decode.
+// Config.MaxFrameMBs or a Frame over maxFrameBytes (at the largest VP9 sampling and depth).
 func (d *Decoder) checkVPX(data []byte) error {
 	var sizes [][2]int
 	if d.vpx.vp9 != nil {
-		var err error
-		if sizes, err = vp9Sizes(data); err != nil {
-			return err
-		}
+		sizes = vp9Sizes(data)
 	} else if w, h, ok := vp8KeySize(data); ok {
 		sizes = [][2]int{{w, h}}
 	}
 	for _, s := range sizes {
 		w, h := s[0], s[1]
 		mbs := int64((w+15)/16) * int64((h+15)/16)
-		if _, _, _, ok := frameBytes(uint64(w), uint64(h), Chroma420, 8, 8); !ok {
+		// The largest picture VP9 can declare is 4:4:4 at 12 bits; VP8 is 4:2:0 at 8.
+		c, depth := Chroma420, 8
+		if d.vpx.vp9 != nil {
+			c, depth = Chroma444, 12
+		}
+		if _, _, _, ok := frameBytes(uint64(w), uint64(h), c, depth, depth); !ok {
 			return hevcOverLimit(int64(w), int64(h))
 		}
 		if mbs > int64(d.cfg.frameMBs()) {
@@ -179,19 +227,15 @@ func vp8KeySize(data []byte) (w, h int, ok bool) {
 }
 
 // vp9Sizes lists the explicit picture sizes of the frames of a VP9 packet (a frame, or a
-// superframe, Annex B of the specification), and refuses a profile other than 0.
-func vp9Sizes(data []byte) ([][2]int, error) {
+// superframe, Annex B of the specification).
+func vp9Sizes(data []byte) [][2]int {
 	var out [][2]int
 	for _, fr := range vp9Frames(data) {
-		w, h, ok, err := vp9FrameSize(fr)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
+		if w, h, ok := vp9FrameSize(fr); ok {
 			out = append(out, [2]int{w, h})
 		}
 	}
-	return out, nil
+	return out
 }
 
 // vp9Frames splits a superframe by its index (VP9 specification Annex B); a packet without a
@@ -227,29 +271,39 @@ func vp9Frames(data []byte) [][]byte {
 // vp9FrameSize reads the explicit frame_size of an uncompressed header (clause 6.2); ok is false
 // when the frame carries none (show_existing_frame, or a size copied from a reference), which an
 // earlier frame already bounded. A header that ends early is left to the decoder to refuse.
-func vp9FrameSize(fr []byte) (w, h int, ok bool, err error) {
+func vp9FrameSize(fr []byte) (w, h int, ok bool) {
 	r := bitReader{b: fr}
 	if r.u(2) != 2 { // frame_marker
-		return 0, 0, false, nil
+		return 0, 0, false
 	}
 	profile := r.u(1) | r.u(1)<<1
 	if profile == 3 {
-		r.u(1)
-	}
-	if profile != 0 {
-		return 0, 0, false, fmt.Errorf("%w: VP9 profile %d (only profile 0, 8-bit 4:2:0, is decoded)", ErrUnsupported, profile)
+		r.u(1) // reserved_zero
 	}
 	if r.u(1) == 1 { // show_existing_frame
-		return 0, 0, false, nil
+		return 0, 0, false
 	}
 	key, show, errRes := r.u(1) == 0, r.u(1), r.u(1)
 	var intraOnly uint32
+	// colorConfig skips color_config (clause 6.2.2), whose length depends on the profile.
+	colorConfig := func() {
+		if profile >= 2 {
+			r.u(1) // ten_or_twelve_bit
+		}
+		odd := profile == 1 || profile == 3
+		if r.u(3) != 7 { // color_space, not sRGB
+			r.u(1) // color_range
+			if odd {
+				r.u(3) // subsampling_x, subsampling_y, reserved_zero
+			}
+		} else if odd {
+			r.u(1) // reserved_zero
+		}
+	}
 	switch {
 	case key:
-		r.u(24)          // sync code
-		if r.u(3) != 7 { // color_space, not sRGB (sRGB is 4:4:4, profile 1)
-			r.u(1) // color_range
-		}
+		r.u(24) // sync code
+		colorConfig()
 	default:
 		if show == 0 {
 			intraOnly = r.u(1)
@@ -260,7 +314,10 @@ func vp9FrameSize(fr []byte) (w, h int, ok bool, err error) {
 		switch {
 		case intraOnly == 1:
 			r.u(24) // sync code
-			r.u(8)  // refresh_frame_flags
+			if profile > 0 {
+				colorConfig()
+			}
+			r.u(8) // refresh_frame_flags
 		default:
 			r.u(8) // refresh_frame_flags
 			for range 3 {
@@ -268,13 +325,13 @@ func vp9FrameSize(fr []byte) (w, h int, ok bool, err error) {
 			}
 			for range 3 { // size_with_refs: found_ref
 				if r.u(1) == 1 {
-					return 0, 0, false, nil
+					return 0, 0, false
 				}
 			}
 		}
 	}
 	w, h = int(r.u(16))+1, int(r.u(16))+1
-	return w, h, !r.over, nil
+	return w, h, !r.over
 }
 
 // bitReader reads bits most significant first; past the end it reads zeros and sets over.

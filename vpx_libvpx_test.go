@@ -170,22 +170,6 @@ func libvpxDecode(name string, samples [][]byte) (sums []string, err error) {
 	return sums, nil
 }
 
-// govpxFailuresFile lists, one name per line, the vectors that govpx itself (driven directly,
-// without this package) fails to decode like libvpx: all are profile 0 streams where VP9 changes the
-// frame size (resize, reference scaling) or are size-WxH or lf-1920x1080 streams; govpx answers
-// "invalid VP9 data" part-way (one at the first frame). The test keeps asserting that they still
-// differ, so a govpx fix is noticed and the line removed.
-const govpxFailuresFile = "testdata/libvpx/govpx-failures.txt"
-
-func govpxFailures(t testing.TB) map[string]bool {
-	t.Helper()
-	m := map[string]bool{}
-	for _, n := range strings.Fields(string(readFile(t, govpxFailuresFile))) {
-		m[n] = true
-	}
-	return m
-}
-
 func libvpxNames(t testing.TB) []string {
 	t.Helper()
 	m, err := filepath.Glob(filepath.Join(libvpxManifests, "*.md5"))
@@ -202,28 +186,35 @@ func libvpxNames(t testing.TB) []string {
 // TestLibvpxVectors decodes libvpx's decoder test vectors and compares every picture's md5 with the
 // one libvpx states. The streams are not in this repository: set LIBVPX_VECTORS_DIR to a directory
 // holding them, as `go run ./tools/vpxfetch` (in tools) downloads them. VP8 vectors (vp80) and VP9
-// profile 0 vectors (vp90) must match picture for picture; the profile 1 to 3 vectors (vp91, vp92,
-// vp93) must be refused as ErrUnsupported, which is what govpx decodes.
+// profile 0 to 3 vectors (vp90 to vp93) must match picture for picture, except the 4:4:0 ones,
+// which must be refused as ErrUnsupported (Frame has no 4:4:0).
 func TestLibvpxVectors(t *testing.T) {
 	dir := os.Getenv("LIBVPX_VECTORS_DIR")
 	if dir == "" {
 		t.Skip("LIBVPX_VECTORS_DIR is not set: the libvpx test vectors were NOT run")
 	}
+	matched, refused := 0, 0
+	defer func() {
+		t.Logf("libvpx vectors: %d match libvpx's md5s, %d 4:4:0 refused, of %d", matched, refused, libvpxVectors)
+	}()
 	for _, name := range libvpxNames(t) {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(dir, name)
 			if !fileExists(path) {
-				t.Skipf("%s is not in %s: this vector was NOT run", name, dir)
+				// With the directory named, a vector that is missing is a hole in the guard, not a skip.
+				t.Fatalf("%s is not in %s: this vector was NOT run (go run ./tools/vpxfetch downloads them)", name, dir)
 			}
 			samples, err := libvpxSamples(path)
 			if err != nil {
 				t.Fatal(err)
 			}
 			got, err := libvpxDecode(name, samples)
-			if strings.HasPrefix(name, "vp91") || strings.HasPrefix(name, "vp92") || strings.HasPrefix(name, "vp93") {
-				if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "profile") {
-					t.Fatalf("a profile 1-3 vector gave %v after %d pictures, want ErrUnsupported naming the profile", err, len(got))
+			if strings.Contains(name, "yuv440") {
+				// 4:4:0 has no Chroma value: refused on the first picture, nothing decoded.
+				if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "4:4:0") || len(got) != 0 {
+					t.Fatalf("a 4:4:0 vector gave %v after %d pictures, want ErrUnsupported naming 4:4:0", err, len(got))
 				}
+				refused++
 				return
 			}
 			want := libvpxReference(t, name)
@@ -244,16 +235,11 @@ func TestLibvpxVectors(t *testing.T) {
 			if len(got) > len(want) {
 				problems = append(problems, fmt.Sprintf("%d pictures, libvpx has %d", len(got), len(want)))
 			}
-			switch {
-			case govpxFailures(t)[name] && len(problems) == 0:
-				t.Errorf("%s now matches libvpx: remove it from %s", name, govpxFailuresFile)
-			case govpxFailures(t)[name]:
-				// Reproduced with govpx alone (see the file's comment): the finding stays asserted.
-				t.Logf("KNOWN govpx defect: %s", strings.Join(problems, "; "))
-			case len(problems) > 0:
+			// No vector is allowed to differ: there is no list of known failures.
+			if len(problems) > 0 {
 				t.Error(strings.Join(problems, "; "))
-			default:
-				t.Logf("match: %d pictures", len(got))
+			} else {
+				matched++
 			}
 		})
 	}
@@ -271,22 +257,6 @@ func TestLibvpxManifestsAreCommitted(t *testing.T) {
 		}
 		if got := libvpxReference(t, n); len(got) == 0 {
 			t.Errorf("%s: empty manifest", n)
-		}
-	}
-}
-
-func TestGovpxFailuresAreVectors(t *testing.T) {
-	all := map[string]bool{}
-	for _, n := range libvpxNames(t) {
-		all[n] = true
-	}
-	f := govpxFailures(t)
-	if len(f) != 32 {
-		t.Errorf("%d known govpx failures, want 32", len(f))
-	}
-	for n := range f {
-		if !all[n] || !strings.HasPrefix(n, "vp90-") {
-			t.Errorf("%s is not a profile 0 vector of the manifests", n)
 		}
 	}
 }

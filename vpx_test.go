@@ -126,14 +126,29 @@ func TestVPXPoster(t *testing.T) {
 	}
 }
 
-// TestVP9OtherProfilesRefused: profiles 1 (4:4:4) and 2 (10 bits) are refused as
-// ErrUnsupported, naming the profile, before govpx sees them.
-func TestVP9OtherProfilesRefused(t *testing.T) {
-	for name, profile := range map[string]string{"vp9_profile1": "profile 1", "vp9_profile2": "profile 2"} {
-		r, id := vpxTrack(t, name)
+// TestVP9OtherProfilesDecode: profile 1 (4:4:4, 8 bits) and profile 2 (4:2:0, 10 bits) streams
+// decode to Frames of that sampling and depth, planes packed (little-endian words above 8 bits).
+// Picture equality for profiles 1 to 3 is TestLibvpxVectors, against libvpx's own md5s.
+func TestVP9OtherProfilesDecode(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		chroma Chroma
+		depth  int
+	}{{"vp9_profile1", Chroma444, 8}, {"vp9_profile2", Chroma420, 10}} {
+		r, id := vpxTrack(t, c.name)
 		frames, err := DecodeTrack(r, id, Config{})
-		if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), profile) || len(frames) != 0 {
-			t.Errorf("%s: %d pictures, err %v; want ErrUnsupported naming %s", name, len(frames), err, profile)
+		if err != nil || len(frames) == 0 {
+			t.Fatalf("%s: %d pictures, err %v", c.name, len(frames), err)
+		}
+		for i, f := range frames {
+			cw, ch := f.ChromaSize()
+			sb := f.SampleBytes(0)
+			if f.Chroma != c.chroma || f.BitDepth != c.depth || f.BitDepthC != c.depth ||
+				f.YStride != f.Width*sb || len(f.Y) != f.YStride*f.Height ||
+				f.CStride != cw*sb || len(f.Cb) != f.CStride*ch || len(f.Cr) != len(f.Cb) {
+				t.Fatalf("%s picture %d: chroma %d depth %d/%d, %dx%d strides %d/%d planes %d/%d/%d",
+					c.name, i, f.Chroma, f.BitDepth, f.BitDepthC, f.Width, f.Height, f.YStride, f.CStride, len(f.Y), len(f.Cb), len(f.Cr))
+			}
 		}
 	}
 }
@@ -265,16 +280,16 @@ func TestVPXSizeBomb(t *testing.T) {
 
 // TestVP9FrameSize pins the header reader, including the superframe index.
 func TestVP9FrameSize(t *testing.T) {
-	w, h, ok, err := vp9FrameSize(vp9Key(1920, 1080))
-	if err != nil || !ok || w != 1920 || h != 1080 {
-		t.Fatalf("%d x %d ok %v err %v", w, h, ok, err)
+	w, h, ok := vp9FrameSize(vp9Key(1920, 1080))
+	if !ok || w != 1920 || h != 1080 {
+		t.Fatalf("%d x %d ok %v", w, h, ok)
 	}
 	// a superframe of two frames of 12 bytes each, one-byte sizes
 	a, b := vp9Key(100, 50), vp9Key(200, 60)
 	n := len(a)
 	sf := append(append(append([]byte{}, a...), b...), 0xc1, byte(n), byte(len(b)), 0xc1)
-	sizes, err := vp9Sizes(sf)
-	if err != nil || len(sizes) != 2 || sizes[0] != [2]int{100, 50} || sizes[1] != [2]int{200, 60} {
-		t.Fatalf("superframe sizes %v, %v", sizes, err)
+	sizes := vp9Sizes(sf)
+	if len(sizes) != 2 || sizes[0] != [2]int{100, 50} || sizes[1] != [2]int{200, 60} {
+		t.Fatalf("superframe sizes %v", sizes)
 	}
 }
