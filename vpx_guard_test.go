@@ -179,26 +179,22 @@ func TestVP9FrameSizeShapes(t *testing.T) {
 		return bitString16(w-1) + bitString16(h-1)
 	}
 	cases := []struct {
-		name    string
-		bits    string
-		w, h    int
-		ok      bool
-		profile int // nonzero: an ErrUnsupported naming it
+		name string
+		bits string
+		w, h int
+		ok   bool
 	}{
-		{"profile 3", "10 11 0", 0, 0, false, 3},
-		{"profile 2", "10 01 0", 0, 0, false, 2},
-		{"show existing frame", "10 00 1 000", 0, 0, false, 0},
-		{"intra only, hidden", "10 00 0 1 0 0 1 00 " + sync + " 00000001 " + size(100, 50), 100, 50, true, 0},
-		{"key frame truncated", "10 00 0 0 1 0", 1, 1, false, 0}, // past the end the reader gives zeros: 1x1, and ok is false,
+		{"profile 3 show existing", "10 11 0 1 000", 0, 0, false},
+		{"profile 2 key frame", "10 01 0 0 1 0 " + sync + " 0 001 0 " + size(30, 20), 30, 20, true},
+		{"profile 1 key frame, 4:4:4", "10 10 0 0 1 0 " + sync + " 001 0 000 " + size(40, 24), 40, 24, true},
+		{"profile 1 key frame, sRGB", "10 10 0 0 1 0 " + sync + " 111 0 " + size(16, 16), 16, 16, true},
+		{"profile 3 intra only, hidden", "10 11 0 0 1 0 0 1 00 " + sync + " 1 001 0 000 00000001 " + size(64, 32), 64, 32, true},
+		{"show existing frame", "10 00 1 000", 0, 0, false},
+		{"intra only, hidden", "10 00 0 1 0 0 1 00 " + sync + " 00000001 " + size(100, 50), 100, 50, true},
+		{"key frame truncated", "10 00 0 0 1 0", 1, 1, false}, // past the end the reader gives zeros: 1x1, and ok is false,
 	}
 	for _, c := range cases {
 		w, h, ok, err := vp9FrameSize(bitString(c.bits))
-		if c.profile != 0 {
-			if !errors.Is(err, ErrUnsupported) || !bytes.Contains([]byte(err.Error()), []byte{'0' + byte(c.profile)}) {
-				t.Errorf("%s: %v, want ErrUnsupported naming profile %d", c.name, err, c.profile)
-			}
-			continue
-		}
 		if err != nil {
 			t.Errorf("%s: %v", c.name, err)
 		}
