@@ -194,10 +194,7 @@ func planeFits[S ~[]E, E byte | uint16](p S, stride, w, h int) bool {
 func (d *Decoder) checkVPX(data []byte) error {
 	var sizes [][2]int
 	if d.vpx.vp9 != nil {
-		var err error
-		if sizes, err = vp9Sizes(data); err != nil {
-			return err
-		}
+		sizes = vp9Sizes(data)
 	} else if w, h, ok := vp8KeySize(data); ok {
 		sizes = [][2]int{{w, h}}
 	}
@@ -231,18 +228,14 @@ func vp8KeySize(data []byte) (w, h int, ok bool) {
 
 // vp9Sizes lists the explicit picture sizes of the frames of a VP9 packet (a frame, or a
 // superframe, Annex B of the specification).
-func vp9Sizes(data []byte) ([][2]int, error) {
+func vp9Sizes(data []byte) [][2]int {
 	var out [][2]int
 	for _, fr := range vp9Frames(data) {
-		w, h, ok, err := vp9FrameSize(fr)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
+		if w, h, ok := vp9FrameSize(fr); ok {
 			out = append(out, [2]int{w, h})
 		}
 	}
-	return out, nil
+	return out
 }
 
 // vp9Frames splits a superframe by its index (VP9 specification Annex B); a packet without a
@@ -278,17 +271,17 @@ func vp9Frames(data []byte) [][]byte {
 // vp9FrameSize reads the explicit frame_size of an uncompressed header (clause 6.2); ok is false
 // when the frame carries none (show_existing_frame, or a size copied from a reference), which an
 // earlier frame already bounded. A header that ends early is left to the decoder to refuse.
-func vp9FrameSize(fr []byte) (w, h int, ok bool, err error) {
+func vp9FrameSize(fr []byte) (w, h int, ok bool) {
 	r := bitReader{b: fr}
 	if r.u(2) != 2 { // frame_marker
-		return 0, 0, false, nil
+		return 0, 0, false
 	}
 	profile := r.u(1) | r.u(1)<<1
 	if profile == 3 {
 		r.u(1) // reserved_zero
 	}
 	if r.u(1) == 1 { // show_existing_frame
-		return 0, 0, false, nil
+		return 0, 0, false
 	}
 	key, show, errRes := r.u(1) == 0, r.u(1), r.u(1)
 	var intraOnly uint32
@@ -332,13 +325,13 @@ func vp9FrameSize(fr []byte) (w, h int, ok bool, err error) {
 			}
 			for range 3 { // size_with_refs: found_ref
 				if r.u(1) == 1 {
-					return 0, 0, false, nil
+					return 0, 0, false
 				}
 			}
 		}
 	}
 	w, h = int(r.u(16))+1, int(r.u(16))+1
-	return w, h, !r.over, nil
+	return w, h, !r.over
 }
 
 // bitReader reads bits most significant first; past the end it reads zeros and sets over.

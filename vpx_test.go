@@ -280,16 +280,16 @@ func TestVPXSizeBomb(t *testing.T) {
 
 // TestVP9FrameSize pins the header reader, including the superframe index.
 func TestVP9FrameSize(t *testing.T) {
-	w, h, ok, err := vp9FrameSize(vp9Key(1920, 1080))
-	if err != nil || !ok || w != 1920 || h != 1080 {
-		t.Fatalf("%d x %d ok %v err %v", w, h, ok, err)
+	w, h, ok := vp9FrameSize(vp9Key(1920, 1080))
+	if !ok || w != 1920 || h != 1080 {
+		t.Fatalf("%d x %d ok %v", w, h, ok)
 	}
 	// a superframe of two frames of 12 bytes each, one-byte sizes
 	a, b := vp9Key(100, 50), vp9Key(200, 60)
 	n := len(a)
 	sf := append(append(append([]byte{}, a...), b...), 0xc1, byte(n), byte(len(b)), 0xc1)
-	sizes, err := vp9Sizes(sf)
-	if err != nil || len(sizes) != 2 || sizes[0] != [2]int{100, 50} || sizes[1] != [2]int{200, 60} {
-		t.Fatalf("superframe sizes %v, %v", sizes, err)
+	sizes := vp9Sizes(sf)
+	if len(sizes) != 2 || sizes[0] != [2]int{100, 50} || sizes[1] != [2]int{200, 60} {
+		t.Fatalf("superframe sizes %v", sizes)
 	}
 }

@@ -57,6 +57,40 @@ func TestVPXFrameRefusesShortPlanes(t *testing.T) {
 	}
 }
 
+// vpxFrame maps 4:2:2 and 16-bit pictures, and refuses 4:4:0, a bad depth and short 16-bit planes.
+func TestVPXFrameSamplings(t *testing.T) {
+	d, err := NewVP9(fuzzConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	img := govpx.Image{
+		Width: 4, Height: 2, Subsampling: govpx.Subsampling422, BitDepth: 10,
+		Y16: make([]uint16, 8), U16: make([]uint16, 4), V16: make([]uint16, 4),
+		YStride: 4, UStride: 2, VStride: 2,
+	}
+	img.Y16[1] = 0x0203
+	f, err := d.vpxFrame(img, 1)
+	if err != nil || f.Chroma != Chroma422 || f.BitDepth != 10 || f.Y[2] != 3 || f.Y[3] != 2 || len(f.Cb) != 8 {
+		t.Fatalf("4:2:2 10-bit: %+v, %v", f, err)
+	}
+	short := img
+	short.V16 = short.V16[:3]
+	if _, err := d.vpxFrame(short, 0); !errors.Is(err, ErrBitstream) {
+		t.Errorf("short 16-bit plane: %v, want ErrBitstream", err)
+	}
+	bad := img
+	bad.BitDepth = 9
+	if _, err := d.vpxFrame(bad, 0); !errors.Is(err, ErrBitstream) {
+		t.Errorf("bit depth 9: %v, want ErrBitstream", err)
+	}
+	e440 := img
+	e440.Subsampling = govpx.Subsampling440
+	if _, err := d.vpxFrame(e440, 0); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("4:4:0: %v, want ErrUnsupported", err)
+	}
+}
+
 // vp9Frames: the superframe index is honoured exactly at its edges.
 func TestVP9FramesIndex(t *testing.T) {
 	const m = 0xc1 // marker, one size byte, two frames
@@ -194,10 +228,7 @@ func TestVP9FrameSizeShapes(t *testing.T) {
 		{"key frame truncated", "10 00 0 0 1 0", 1, 1, false}, // past the end the reader gives zeros: 1x1, and ok is false,
 	}
 	for _, c := range cases {
-		w, h, ok, err := vp9FrameSize(bitString(c.bits))
-		if err != nil {
-			t.Errorf("%s: %v", c.name, err)
-		}
+		w, h, ok := vp9FrameSize(bitString(c.bits))
 		if w != c.w || h != c.h || ok != c.ok {
 			t.Errorf("%s: %d x %d ok=%v, want %d x %d ok=%v", c.name, w, h, ok, c.w, c.h, c.ok)
 		}
