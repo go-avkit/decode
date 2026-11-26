@@ -159,6 +159,29 @@ func TestVPXRecycleIgnores(t *testing.T) {
 	if n := len(d.vpx.free); n != 0 {
 		t.Fatalf("an empty and a resliced Frame left %d sets", n)
 	}
+	one := make([]byte, 4)
+	cases := map[string]Frame{
+		"no luma":       {Cb: make([]byte, 1), Cr: make([]byte, 1)},
+		"no cb":         {Y: make([]byte, 4), Cr: make([]byte, 1)},
+		"no cr":         {Y: make([]byte, 4), Cb: make([]byte, 1)},
+		"aliased y cb":  {Y: one, Cb: one, Cr: make([]byte, 4)},
+		"aliased y cr":  {Y: one, Cb: make([]byte, 4), Cr: one},
+		"aliased cb cr": {Y: make([]byte, 4), Cb: one, Cr: one},
+	}
+	for name, f := range cases {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s: Recycle panicked: %v", name, r)
+				}
+			}()
+			d.Recycle(f)
+		}()
+		if n := len(d.vpx.free); n != 0 {
+			t.Errorf("%s: kept %d sets", name, n)
+			d.vpx.free = nil
+		}
+	}
 	for range 2 * maxFreePlanes {
 		d.Recycle(planes())
 	}
