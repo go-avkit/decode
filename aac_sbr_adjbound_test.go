@@ -26,7 +26,7 @@ const aacSBRAdjustBound = 0x1p-17
 // sbrFixtureOut decodes the first frames of an HE-AAC fixture through the SBR path
 // (analysis, generation, adjustment, synthesis, without PS), with the oracle's
 // adjustment or the decoder's.
-func sbrFixtureOut(t testing.TB, name string, frames int, oracle bool) [][]float32 {
+func sbrFixtureOut(t testing.TB, name string, frames int, oracle bool, corrupt ...func(*sbrState)) [][]float32 {
 	t.Helper()
 	if oracle {
 		defer installAdjOracle()()
@@ -57,6 +57,9 @@ func sbrFixtureOut(t testing.TB, name string, frames int, oracle bool) [][]float
 		var got [2][]float32
 		for c := 0; c < n; c++ {
 			got[c] = make([]float32, sbrQMFSlots*sbrSynBands)
+		}
+		for _, f := range corrupt {
+			f(s)
 		}
 		s.frame(n, [2][]float32{pcm[0][:], pcm[1][:]}, got)
 		for c := 0; c < n; c++ {
@@ -98,6 +101,41 @@ func TestSBRAdjustBound(t *testing.T) {
 	// oracle was not the one that ran
 	if worst == 0 {
 		t.Error("the oracle's output is the decoder's to the bit: the hook did not route")
+	}
+}
+
+// TestSBRAdjustEmptyEnvelope: borders of a corrupt stream that leave an envelope with no
+// slots, or out of order, are skipped without a panic or a non-finite sample.
+func TestSBRAdjustEmptyEnvelope(t *testing.T) {
+	hit := 0
+	for _, corrupt := range []func(*sbrState){
+		func(s *sbrState) { // an empty envelope
+			for ch := range s.ch {
+				if c := &s.ch[ch]; c.numEnv >= 2 {
+					c.tEnv[1] = c.tEnv[0]
+					hit++
+				}
+			}
+		},
+		func(s *sbrState) { // borders going backwards
+			for ch := range s.ch {
+				if c := &s.ch[ch]; c.numEnv >= 2 && c.tEnv[0] > 0 {
+					c.tEnv[1] = c.tEnv[0] - 1
+					hit++
+				}
+			}
+		},
+	} {
+		for _, ch := range sbrFixtureOut(t, "he44-st.aac", 16, false, corrupt) {
+			for i, v := range ch {
+				if v != v || math.IsInf(float64(v), 0) {
+					t.Fatalf("sample %d is %v", i, v)
+				}
+			}
+		}
+	}
+	if hit == 0 {
+		t.Skip("no frame of the fixture has two envelopes to corrupt")
 	}
 }
 
