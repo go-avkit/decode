@@ -190,9 +190,17 @@ func TestVPXRecycleIgnores(t *testing.T) {
 	}
 	f := planes()
 	d.Close()
-	d.Recycle(f) // after Close: no panic, nothing kept
 	h264 := newDecoder(Config{}, 4)
-	h264.Recycle(f) // H.264: no-op
+	for name, dec := range map[string]*Decoder{"after Close": d, "H.264": h264} {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s: Recycle panicked: %v", name, r)
+				}
+			}()
+			dec.Recycle(f) // no-op, nothing kept
+		}()
+	}
 }
 
 // TestVPXNoRecycleOwnsPlanes: without Recycle every picture has its own planes.
