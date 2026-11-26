@@ -450,6 +450,22 @@ commit, `BenchmarkDecode*` whole-file decodes, median time per frame):
 | VP9 1080p | 10.78 ms | 5.20 ms | 2.07x |
 | VP9 tiles 4x4 | 34.94 ms | 10.08 ms | 3.47x |
 
+Against ffmpeg 6.1.1 `-threads 1` (its native decoders and libvpx), on one core of a Ryzen 9
+7950X (Zen 4, core 11, 1-minute load at most 1.2), both Go binaries built with
+`GOEXPERIMENT=simd`, 5 rounds of go, native, libvpx, libvpx, native, go (ABBA), median time per
+frame. The clips are 300 frames of `testsrc2` 1080p (VP8 with libvpx, VP9 with libvpx-vp9, 4 Mb/s,
+`-cpu-used 4`) and the libvpx vector `vp90-2-22-svc_1280x720_1.webm` (400 frames). The two Go
+samples of a round (A/A) agree within 1.6 %:
+
+| clip | v0.17.1 (govpx v0.3.1) | v0.17.2 (govpx v0.5.2) | ffmpeg native | ffmpeg libvpx | v0.17.1 / native | v0.17.2 / native |
+|---|---|---|---|---|---|---|
+| VP8 1080p | 3.30 ms | 3.06 ms | 1.62 ms | 1.59 ms | 2.04x | 1.89x |
+| VP9 720p | 2.67 ms | 2.37 ms | 0.95 ms | 0.89 ms | 2.81x | 2.49x |
+| VP9 1080p | 5.14 ms | 4.13 ms | 1.72 ms | 1.65 ms | 2.98x | 2.40x |
+
+govpx v0.5.2 is 7 % (VP8), 11 % (VP9 720p) and 20 % (VP9 1080p) faster than v0.3.1, and decode
+is still 1.9 to 2.5 times slower than ffmpeg's native decoder on one core.
+
 `TestLibvpxVectors` with the experiment on gives the same results as without: 377 PASS on amd64
 and all PASS on arm64 (Apple M-series). CI runs the whole suite with it on amd64 and arm64 (the
 `simd` job), next to the plain lanes. Details: [#125](https://github.com/go-avkit/decode/issues/125).
