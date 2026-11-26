@@ -1,0 +1,165 @@
+// Copyright (c) 2026, go-avkit
+// SPDX-License-Identifier: BSD-3-Clause
+
+package decode
+
+import (
+	"encoding/binary"
+	"math"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/go-avkit/avkit/container"
+)
+
+// aacSBRAdjustBound is the stated bound of the binary32 envelope adjustment: over the
+// conformance and corpus streams the PCM (binary32, full scale 1) differs from the PCM
+// of the float64 adjustment of v0.17.1 (the oracle, aac_sbr_adjf64_test.go) by at most
+// this much. Measured values are in the pull request that introduced the path.
+const aacSBRAdjustBound = 0x1p-17
+
+// sbrFixtureOut decodes the first frames of an HE-AAC fixture through the SBR path
+// (analysis, generation, adjustment, synthesis, without PS), with the oracle's
+// adjustment or the decoder's.
+func sbrFixtureOut(t testing.TB, name string, frames int, oracle bool) [][]float32 {
+	t.Helper()
+	if oracle {
+		defer installAdjOracle()()
+	}
+	cfg, fr := aacADTSFrames(t, filepath.Join("testdata", "aac", name))
+	p, err := newAACParser(cfg, DefaultMaxAudioChannels)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.enableSBR()
+	synth := newAACSynth(cfg.rateIndex, cfg.channels)
+	n := cfg.channels
+	out := make([][]float32, n)
+	var s *sbrState
+	for fi := 0; fi < min(frames, len(fr)); fi++ {
+		els, err := p.parseFrame(fr[fi])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var pcm [2][aacFrameLen]float32
+		synth.element(&els[0], 0, [2][]float32{pcm[0][:], pcm[1][:]})
+		if els[0].sbr != nil {
+			s = els[0].sbr
+		}
+		if s == nil {
+			t.Fatalf("%s: no SBR data in frame %d", name, fi)
+		}
+		var got [2][]float32
+		for c := 0; c < n; c++ {
+			got[c] = make([]float32, sbrQMFSlots*sbrSynBands)
+		}
+		s.frame(n, [2][]float32{pcm[0][:], pcm[1][:]}, got)
+		for c := 0; c < n; c++ {
+			out[c] = append(out[c], got[c]...)
+		}
+	}
+	return out
+}
+
+// sbrMaxDiff is the largest absolute difference of two PCM buffers, and the peak of the
+// second.
+func sbrMaxDiff(a, b []float32) (worst, peak float64) {
+	for i := range min(len(a), len(b)) {
+		worst = math.Max(worst, math.Abs(float64(a[i])-float64(b[i])))
+		peak = math.Max(peak, math.Abs(float64(b[i])))
+	}
+	return worst, peak
+}
+
+// TestSBRAdjustBound: the binary32 adjustment against its float64 oracle, on the
+// repository's HE-AAC fixtures: the PCM differs by at most aacSBRAdjustBound of full scale.
+func TestSBRAdjustBound(t *testing.T) {
+	var worst float64
+	for _, fx := range []struct {
+		name   string
+		frames int
+	}{{"he44-st.aac", 64}, {"he32-st.aac", 64}, {"he48-mono.aac", 64}} {
+		got, want := sbrFixtureOut(t, fx.name, fx.frames, false), sbrFixtureOut(t, fx.name, fx.frames, true)
+		for c := range got {
+			d, peak := sbrMaxDiff(got[c], want[c])
+			t.Logf("%s channel %d: max |PCM difference| %.3e (peak %.3f)", fx.name, c, d, peak)
+			worst = math.Max(worst, d)
+		}
+	}
+	if worst > aacSBRAdjustBound {
+		t.Errorf("PCM differs from the float64 adjustment by %.3e, the bound is %.3e", worst, aacSBRAdjustBound)
+	}
+}
+
+// aacFloatPCM decodes the first audio track of an MP4 to its binary32 samples.
+func aacFloatPCM(t testing.TB, path string) []float32 {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := container.NewReader(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := FirstAudioTrack(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	au, err := DecodeAudioTrack(r, id, AudioConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pcm []float32
+	for _, a := range au {
+		if a.Format != SampleF32 {
+			t.Fatalf("%s: format %v", path, a.Format)
+		}
+		for i := 0; i+4 <= len(a.Data); i += 4 {
+			pcm = append(pcm, math.Float32frombits(binary.LittleEndian.Uint32(a.Data[i:])))
+		}
+	}
+	return pcm
+}
+
+// TestSBRAdjustBoundStreams is TestSBRAdjustBound through the whole decoder (PS
+// included) on the ISO conformance streams (AAC_CONFORMANCE_DIR) and the corpus file
+// AAC_BENCH_FILE, the streams the bound is stated over.
+func TestSBRAdjustBoundStreams(t *testing.T) {
+	var files []string
+	if dir := os.Getenv("AAC_CONFORMANCE_DIR"); dir != "" {
+		m, err := filepath.Glob(filepath.Join(dir, "compressedMp4", "*.mp4"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, m...)
+	}
+	if f := os.Getenv("AAC_BENCH_FILE"); f != "" {
+		files = append(files, f)
+	}
+	if len(files) == 0 {
+		t.Skip("neither AAC_CONFORMANCE_DIR nor AAC_BENCH_FILE is set")
+	}
+	var worst float64
+	var at string
+	for _, f := range files {
+		got := aacFloatPCM(t, f)
+		restore := installAdjOracle()
+		want := aacFloatPCM(t, f)
+		restore()
+		if len(got) != len(want) {
+			t.Fatalf("%s: %d samples against %d", f, len(got), len(want))
+		}
+		d, peak := sbrMaxDiff(got, want)
+		t.Logf("%-40s max |PCM difference| %.3e (peak %.3f)", strings.TrimSuffix(filepath.Base(f), ".mp4"), d, peak)
+		if d > worst {
+			worst, at = d, f
+		}
+	}
+	t.Logf("largest over %d streams: %.3e (2^%.2f) in %s", len(files), worst, math.Log2(worst), filepath.Base(at))
+	if worst > aacSBRAdjustBound {
+		t.Errorf("PCM differs from the float64 adjustment by %.3e in %s, the bound is %.3e", worst, at, aacSBRAdjustBound)
+	}
+}

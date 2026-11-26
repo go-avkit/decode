@@ -90,6 +90,7 @@ type sbrState struct {
 	ch             [2]sbrChannel
 	dsp            [2]*sbrChanDSP      // signal state of the channels (aac_sbr_hf.go)
 	refill         [2]bool             // a header reset: the smoothing history is refilled at the next adjustment
+	adjOracle      sbrAdjOracle        // test hook: the float64 adjustment replaces the binary32 one (aac_sbr_adjf64_test.go)
 	buf            [sbrMaxPayload]byte // the payload being parsed
 }
 
@@ -98,6 +99,9 @@ type sbrState struct {
 func newSBRState(coreRate int) *sbrState {
 	s := &sbrState{}
 	s.t.rate = 2 * coreRate
+	if sbrNewAdjOracle != nil {
+		s.adjOracle = sbrNewAdjOracle()
+	}
 	s.turnoff()
 	return s
 }
