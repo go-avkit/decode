@@ -13,11 +13,13 @@ import (
 // paths) start to finish, one fresh decoder per iteration, and reports ns/frame and frames/s next
 // to the usual ns/op and allocations. The codec is read from the container (IVF fourcc VP80 or
 // VP90, WebM CodecID V_VP8 or V_VP9), never from the file name. It skips when the variable is unset.
+// With VPX_BENCH_RECYCLE set, every picture is given back with Recycle once it is decoded.
 func vpxBench(b *testing.B, vp9 bool) {
 	list := os.Getenv("VPX_BENCH_FILES")
 	if list == "" {
 		b.Skip("VPX_BENCH_FILES is not set: no VP8/VP9 stream to decode")
 	}
+	recycle := os.Getenv("VPX_BENCH_RECYCLE") != ""
 	ran := 0
 	for _, path := range strings.Split(list, ",") {
 		path = strings.TrimSpace(path)
@@ -61,6 +63,11 @@ func vpxBench(b *testing.B, vp9 bool) {
 						b.Fatalf("sample %d: %v", j, err)
 					}
 					pictures += len(frames)
+					if recycle {
+						for _, f := range frames {
+							d.Recycle(f)
+						}
+					}
 				}
 				d.Close()
 			}

@@ -130,7 +130,8 @@ const (
 //
 // The field names and meaning match go-videodsp/yuv.Picture for Chroma420 with
 // both bit depths 8, so that converting is a field-by-field copy; it is not
-// for any other frame. A Frame owns its planes.
+// for any other frame. A Frame owns its planes, for as long as the caller keeps it, unless the
+// caller gives them back with (*Decoder).Recycle, which is optional and VP8 and VP9 only.
 //
 // Every plane is packed, its stride the width in samples times the bytes per
 // sample of that plane: one byte when the plane's depth is 8, a little-endian

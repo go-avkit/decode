@@ -6,6 +6,7 @@ package decode
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/go-avkit/avkit/container"
 	"github.com/thesyncim/govpx"
@@ -16,6 +17,66 @@ import (
 type vpx struct {
 	vp8 *govpx.VP8Decoder
 	vp9 *govpx.VP9Decoder
+	// free holds the planes of Frames given back with Recycle, at most maxFreePlanes sets.
+	free []planeSet
+}
+
+// planeSet is the three planes of one picture.
+type planeSet struct{ y, cb, cr []byte }
+
+// maxFreePlanes bounds what Recycle keeps: a few pictures are enough to decode and show in turn.
+const maxFreePlanes = 4
+
+// planes returns the planes of a picture: a set given back with Recycle whose sizes match
+// (ny luma bytes, nc bytes in each chroma plane), otherwise fresh zeroed ones. The caller
+// overwrites every byte, so a recycled set needs no clearing. It takes a set out of the free list,
+// so a set is handed out once per Recycle. A nil v allocates.
+func (v *vpx) planes(ny, nc int) (y, cb, cr []byte) {
+	if v != nil {
+		for i, s := range v.free {
+			if len(s.y) == ny && len(s.cb) == nc && len(s.cr) == nc {
+				v.free = slices.Delete(v.free, i, i+1)
+				return s.y, s.cb, s.cr
+			}
+		}
+	}
+	return make([]byte, ny), make([]byte, nc), make([]byte, nc)
+}
+
+// Recycle gives the planes of f back to the decoder, which may write a later picture into them.
+//
+// It is optional. A decoder whose Recycle is never called allocates fresh planes for every
+// picture, and every Frame it returns owns its planes for as long as the caller keeps it (see
+// Frame). Calling Recycle(f) transfers f's planes back: from that call on the caller must not read
+// or write f.Y, f.Cb or f.Cr, nor those of any copy of f (a copy of the struct shares the planes),
+// because the next DecodeSample may overwrite them. Recycle each Frame at most once and only after
+// the last use of its planes; the decoder keeps a plane set once, but it cannot tell a Frame that
+// was recycled and then reissued from a live one. Recycle only the Frames this decoder returned,
+// whole: a Frame whose planes were resliced is ignored, and one that another decoder returned only
+// takes a slot that no picture of a different size can use. Recycle is
+// a no-op for H.264 and HEVC, after Close, and when the decoder already holds a few unused sets
+// (it keeps at most 4). Like the other methods it is not safe for concurrent use. It saves one
+// picture allocation per picture, 3.2 MB at 1080p 4:2:0.
+func (d *Decoder) Recycle(f Frame) {
+	v := d.vpx
+	if v == nil || len(f.Y) == 0 || len(f.Cb) == 0 || len(f.Cr) == 0 {
+		return
+	}
+	if cap(f.Y) != len(f.Y) || cap(f.Cb) != len(f.Cb) || cap(f.Cr) != len(f.Cr) {
+		return // resliced: not the planes this decoder allocated
+	}
+	if &f.Y[0] == &f.Cb[0] || &f.Y[0] == &f.Cr[0] || &f.Cb[0] == &f.Cr[0] {
+		return
+	}
+	for _, s := range v.free {
+		if &s.y[0] == &f.Y[0] || &s.cb[0] == &f.Cb[0] || &s.cr[0] == &f.Cr[0] {
+			return // already given back
+		}
+	}
+	if len(v.free) >= maxFreePlanes {
+		return
+	}
+	v.free = append(v.free, planeSet{f.Y, f.Cb, f.Cr})
 }
 
 // NewVP8 returns a VP8 decoder (RFC 6386). A sample is one VP8 frame, as MP4 and Matroska
@@ -153,7 +214,7 @@ func (d *Decoder) vpxFrame(img govpx.Image, pts int64) (Frame, error) {
 	}
 	// planeFits holds stride >= w, so each plane has at least w*h (cw*ch) samples: these products
 	// are lengths of slices that exist, and cannot overflow int.
-	f.Y, f.Cb, f.Cr = make([]byte, f.YStride*h), make([]byte, f.CStride*ch), make([]byte, f.CStride*ch)
+	f.Y, f.Cb, f.Cr = d.vpx.planes(f.YStride*h, f.CStride*ch)
 	if depth == 8 {
 		packPlane8(f.Y, img.Y, img.YStride, w, h)
 		packPlane8(f.Cb, img.U, img.UStride, cw, ch)

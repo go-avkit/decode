@@ -148,7 +148,7 @@ func webmBlocks(b []byte) ([][]byte, error) {
 }
 
 // libvpxDecode decodes every sample and returns the pictures' md5s; it stops at the first error.
-func libvpxDecode(name string, samples [][]byte) (sums []string, err error) {
+func libvpxDecode(name string, samples [][]byte, recycle bool) (sums []string, err error) {
 	mk := NewVP9
 	if strings.HasPrefix(name, "vp80") {
 		mk = NewVP8
@@ -162,6 +162,9 @@ func libvpxDecode(name string, samples [][]byte) (sums []string, err error) {
 		frames, err := d.DecodeSample(s, int64(i))
 		for _, f := range frames {
 			sums = append(sums, sum(f))
+			if recycle {
+				d.Recycle(f)
+			}
 		}
 		if err != nil {
 			return sums, fmt.Errorf("sample %d: %w", i, err)
@@ -188,14 +191,20 @@ func libvpxNames(t testing.TB) []string {
 // holding them, as `go run ./tools/vpxfetch` (in tools) downloads them. VP8 vectors (vp80) and VP9
 // profile 0 to 3 vectors (vp90 to vp93) must match picture for picture, except the 4:4:0 ones,
 // which must be refused as ErrUnsupported (Frame has no 4:4:0).
-func TestLibvpxVectors(t *testing.T) {
+func TestLibvpxVectors(t *testing.T) { libvpxVectorsAt(t, false) }
+
+// TestLibvpxVectorsRecycle is the same oracle with every picture given back through Recycle once
+// hashed: recycling must not change a picture, including across the vectors that change size.
+func TestLibvpxVectorsRecycle(t *testing.T) { libvpxVectorsAt(t, true) }
+
+func libvpxVectorsAt(t *testing.T, recycle bool) {
 	dir := os.Getenv("LIBVPX_VECTORS_DIR")
 	if dir == "" {
 		t.Skip("LIBVPX_VECTORS_DIR is not set: the libvpx test vectors were NOT run")
 	}
 	matched, refused := 0, 0
 	defer func() {
-		t.Logf("libvpx vectors: %d match libvpx's md5s, %d 4:4:0 refused, of %d", matched, refused, libvpxVectors)
+		t.Logf("libvpx vectors, recycle %v: %d match libvpx's md5s, %d 4:4:0 refused, of %d", recycle, matched, refused, libvpxVectors)
 	}()
 	for _, name := range libvpxNames(t) {
 		t.Run(name, func(t *testing.T) {
@@ -208,7 +217,7 @@ func TestLibvpxVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := libvpxDecode(name, samples)
+			got, err := libvpxDecode(name, samples, recycle)
 			if strings.Contains(name, "yuv440") {
 				// 4:4:0 has no Chroma value: refused on the first picture, nothing decoded.
 				if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "4:4:0") || len(got) != 0 {

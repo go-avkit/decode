@@ -470,6 +470,49 @@ is still 1.9 to 2.5 times slower than ffmpeg's native decoder on one core.
 and all PASS on arm64 (Apple M-series). CI runs the whole suite with it on amd64 and arm64 (the
 `simd` job), next to the plain lanes. Details: [#125](https://github.com/go-avkit/decode/issues/125).
 
+### Recycling pictures
+
+By default every VP8 or VP9 picture is returned in freshly allocated planes (3.2 MB at 1080p
+4:2:0), and a `Frame` owns its planes for as long as the caller keeps it. `(*Decoder).Recycle(f)`
+is an opt-in that gives the planes back so that a later `DecodeSample` writes its picture into
+them instead of allocating. **The ownership rule**: after `Recycle(f)` the caller must not read or
+write `f.Y`, `f.Cb` or `f.Cr`, nor those of a copy of `f` (a copy of the struct shares the planes);
+call it once per `Frame`, after the last use of its planes. A decoder whose `Recycle` is never
+called behaves exactly as before. The decoder keeps at most 4 unused sets, takes each set out of
+its free list when it reuses it (so a recycled set backs one picture only), and ignores a `Frame`
+whose planes were resliced; `Recycle` is a no-op for H.264 and HEVC and after `Close`. It cannot
+tell a `Frame` recycled and then reissued from a live one, so recycling the same `Frame` twice
+after a reissue is the caller's error.
+
+```go
+for _, s := range samples {
+	frames, err := dec.DecodeSample(s, pts)
+	// ... use frames ...
+	for _, f := range frames {
+		dec.Recycle(f) // f's planes now belong to dec
+	}
+}
+```
+
+Tests: `TestVPXRecycleAllocs` asserts the allocations saved (three per picture after the first, on
+three streams), `TestVPXRecycleNotHandedOutTwice` that a recycled set backs one picture and a kept
+`Frame` is never overwritten, `TestVPXNoRecycleOwnsPlanes` that without it every picture has its
+own planes, and `TestLibvpxVectorsRecycle` runs the libvpx vectors with every picture recycled:
+373 of 376 match, 3 4:4:0 refused, 0 differ, with and without `GOEXPERIMENT=simd` and under
+`-race`.
+
+Measured on fractal (Ryzen 9 7950X), cpus 0-7 (`taskset`), 1-minute load below 1, one thread,
+`GOEXPERIMENT=simd`, through decode itself (`BenchmarkVP9Decode` and `BenchmarkVP8Decode`, with
+`VPX_BENCH_RECYCLE` for the second arm; 3 whole-file decodes per sample, 5 interleaved rounds,
+median), 300 frames of 1080p `testsrc2`, microseconds per picture and bytes allocated per
+whole-file decode:
+
+| clip | default | with `Recycle` | time saved | B/op default | B/op with `Recycle` |
+|---|---|---|---|---|---|
+| VP9, 4 tile columns | 3920 | 3646 | 7.0 % | 955 MB | 19.8 MB |
+| VP9, 1 tile column | 3716 | 3447 | 7.2 % | 959 MB | 23.2 MB |
+| VP8 | 2886 | 2634 | 8.7 % | 960 MB | 24.5 MB |
+
 ## HEVC
 
 The decoding is [`github.com/go-avkit/h265`](https://github.com/go-avkit/h265)
