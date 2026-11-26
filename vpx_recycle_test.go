@@ -152,7 +152,6 @@ func TestVPXRecycleIgnores(t *testing.T) {
 	planes := func() Frame {
 		return Frame{Y: make([]byte, 4), Cb: make([]byte, 1), Cr: make([]byte, 1)}
 	}
-	d.Recycle(Frame{})
 	resliced := planes()
 	resliced.Y = resliced.Y[:3]
 	d.Recycle(resliced)
@@ -161,6 +160,7 @@ func TestVPXRecycleIgnores(t *testing.T) {
 	}
 	one := make([]byte, 4)
 	cases := map[string]Frame{
+		"empty":         {},
 		"no luma":       {Cb: make([]byte, 1), Cr: make([]byte, 1)},
 		"no cb":         {Y: make([]byte, 4), Cr: make([]byte, 1)},
 		"no cr":         {Y: make([]byte, 4), Cb: make([]byte, 1)},
