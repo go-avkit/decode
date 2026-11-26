@@ -17,7 +17,10 @@ import (
 // aacSBRAdjustBound is the stated bound of the binary32 envelope adjustment: over the
 // conformance and corpus streams the PCM (binary32, full scale 1) differs from the PCM
 // of the float64 adjustment of v0.17.1 (the oracle, aac_sbr_adjf64_test.go) by at most
-// this much. Measured values are in the pull request that introduced the path.
+// this much. Measured over the seven ISO PS conformance streams and ps4-he2, long1,
+// long2 and transients: 1.192e-07 (2^-23, one binary32 ulp at 0.5), on the repository's
+// fixtures the same; the stated bound is 2^-17, a margin of 64.
+// ps4-he2 is the largest.
 const aacSBRAdjustBound = 0x1p-17
 
 // sbrFixtureOut decodes the first frames of an HE-AAC fixture through the SBR path
@@ -136,7 +139,7 @@ func aacFloatPCM(t testing.TB, path string) []float32 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	au, err := DecodeAudioTrack(r, id, AudioConfig{})
+	au, err := DecodeAudioTrack(r, id, AudioConfig{MaxOutputBytes: 1 << 30})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +157,7 @@ func aacFloatPCM(t testing.TB, path string) []float32 {
 
 // TestSBRAdjustBoundStreams is TestSBRAdjustBound through the whole decoder (PS
 // included) on the ISO conformance streams (AAC_CONFORMANCE_DIR) and the corpus file
-// AAC_BENCH_FILE, the streams the bound is stated over.
+// AAC_BENCH_FILE (a path list), the streams the bound is stated over.
 func TestSBRAdjustBoundStreams(t *testing.T) {
 	var files []string
 	if dir := os.Getenv("AAC_CONFORMANCE_DIR"); dir != "" {
@@ -165,7 +168,7 @@ func TestSBRAdjustBoundStreams(t *testing.T) {
 		files = append(files, m...)
 	}
 	if f := os.Getenv("AAC_BENCH_FILE"); f != "" {
-		files = append(files, f)
+		files = append(files, filepath.SplitList(f)...) // a path list
 	}
 	if len(files) == 0 {
 		t.Skip("neither AAC_CONFORMANCE_DIR nor AAC_BENCH_FILE is set")
