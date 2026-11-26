@@ -415,7 +415,7 @@ libvpx's own decoder test vectors (`test/test_vectors.cc`: 376 streams; the per-
 files are committed in `testdata/libvpx`, the streams are not): `TestLibvpxVectors` runs when
 `LIBVPX_VECTORS_DIR` points at them (`go run ./vpxfetch` in `tools` downloads them) and skips
 loudly otherwise. With the directory set, a vector missing from it fails the test. Results with
-govpx v0.3.1: **373 match libvpx on every picture** (all VP8 vectors, and all VP9 vectors of
+govpx v0.5.2: **373 match libvpx on every picture** (all VP8 vectors, and all VP9 vectors of
 profiles 0 to 3 except the 4:4:0 ones), **3 are refused** (the `yuv440` vectors, as `ErrUnsupported`
 naming 4:4:0), **0 differ**, with and without `GOEXPERIMENT=simd`. There is no list of known
 failures: until govpx v0.3.1 (out-of-frame coefficient contexts at partial frame edges, fixed in
