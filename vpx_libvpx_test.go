@@ -148,12 +148,12 @@ func webmBlocks(b []byte) ([][]byte, error) {
 }
 
 // libvpxDecode decodes every sample and returns the pictures' md5s; it stops at the first error.
-func libvpxDecode(name string, samples [][]byte) (sums []string, err error) {
+func libvpxDecode(name string, samples [][]byte, threads int) (sums []string, err error) {
 	mk := NewVP9
 	if strings.HasPrefix(name, "vp80") {
 		mk = NewVP8
 	}
-	d, err := mk(Config{})
+	d, err := mk(Config{Threads: threads})
 	if err != nil {
 		return nil, err
 	}
@@ -188,14 +188,19 @@ func libvpxNames(t testing.TB) []string {
 // holding them, as `go run ./tools/vpxfetch` (in tools) downloads them. VP8 vectors (vp80) and VP9
 // profile 0 to 3 vectors (vp90 to vp93) must match picture for picture, except the 4:4:0 ones,
 // which must be refused as ErrUnsupported (Frame has no 4:4:0).
-func TestLibvpxVectors(t *testing.T) {
+func TestLibvpxVectors(t *testing.T) { libvpxVectorsAt(t, 0) }
+
+// TestLibvpxVectorsThreaded is the same oracle with Config.Threads 4: threads must not change a picture.
+func TestLibvpxVectorsThreaded(t *testing.T) { libvpxVectorsAt(t, 4) }
+
+func libvpxVectorsAt(t *testing.T, threads int) {
 	dir := os.Getenv("LIBVPX_VECTORS_DIR")
 	if dir == "" {
 		t.Skip("LIBVPX_VECTORS_DIR is not set: the libvpx test vectors were NOT run")
 	}
 	matched, refused := 0, 0
 	defer func() {
-		t.Logf("libvpx vectors: %d match libvpx's md5s, %d 4:4:0 refused, of %d", matched, refused, libvpxVectors)
+		t.Logf("libvpx vectors, %d threads: %d match libvpx's md5s, %d 4:4:0 refused, of %d", threads, matched, refused, libvpxVectors)
 	}()
 	for _, name := range libvpxNames(t) {
 		t.Run(name, func(t *testing.T) {
@@ -208,7 +213,7 @@ func TestLibvpxVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := libvpxDecode(name, samples)
+			got, err := libvpxDecode(name, samples, threads)
 			if strings.Contains(name, "yuv440") {
 				// 4:4:0 has no Chroma value: refused on the first picture, nothing decoded.
 				if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "4:4:0") || len(got) != 0 {

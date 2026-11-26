@@ -470,6 +470,34 @@ is still 1.9 to 2.5 times slower than ffmpeg's native decoder on one core.
 and all PASS on arm64 (Apple M-series). CI runs the whole suite with it on amd64 and arm64 (the
 `simd` job), next to the plain lanes. Details: [#125](https://github.com/go-avkit/decode/issues/125).
 
+### Threads
+
+`Config.Threads` sets the worker count of the VP8 and VP9 decoders. **The default is 1** (0 and 1
+decode serially): threads cost CPU, and a caller on a shared machine should choose them knowingly.
+VP9 with `Threads >= 2` turns on govpx's row-parallel decoding (`Threads` with `DecoderRowMT`);
+`Threads` without row-MT would slow a one-tile stream by 11 %, and the threaded loop filter adds
+nothing once row-MT is on, so neither is used. VP8 uses 2 threads for any `Threads >= 2`, because
+govpx's gain is flat from 2 to 8. VP9 above 8 bits is decoded serially whatever is asked. The
+pictures are byte-identical to the serial decoder's: `TestLibvpxVectorsThreaded` gives 373 of 376
+libvpx vectors matching (3 4:4:0 refused, 0 differ) with 4 threads, with and without
+`GOEXPERIMENT=simd` and under `-race`, and `TestVPXThreadsMatchSerial` compares 1, 2, 4 and 8
+threads on the committed streams. A negative value is `ErrConfig`.
+
+Measured on fractal (Ryzen 9 7950X, Ubuntu 24.04), cpus 0-7 (`taskset`), 1-minute load below 2.2,
+`GOEXPERIMENT=simd`, through decode itself (`BenchmarkVP9Decode` and `BenchmarkVP8Decode` with
+`VPX_BENCH_THREADS`, 3 whole-file decodes per sample, 5 interleaved rounds with the arm order
+reversed on odd rounds, median), 300 frames of 1080p `testsrc2`, microseconds per picture. The
+decode time includes the copy of each picture into a fresh `Frame`:
+
+| clip | serial | 2 threads | 4 threads | 8 threads |
+|---|---|---|---|---|
+| VP9, 4 tile columns | 3928 | 2687 (1.46x) | 2101 (**1.87x**) | 2173 (1.81x) |
+| VP9, 1 tile column | 3730 | 2713 (1.38x) | 2457 (1.52x) | 2450 (1.52x) |
+| VP8 | 2874 | 2008 (1.43x) | 2011 (1.43x) | 2010 (1.43x) |
+
+The useful ceiling is about 4 threads. The clips are synthetic, and the arm64 gain was not
+measured (the output was checked identical there).
+
 ## HEVC
 
 The decoding is [`github.com/go-avkit/h265`](https://github.com/go-avkit/h265)
