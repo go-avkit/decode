@@ -86,6 +86,9 @@ func psGoldenRoute() string {
 func psGoldenLoad(t *testing.T, route string) map[string]string {
 	t.Helper()
 	f, err := os.Open(filepath.Join("testdata", "aac", "psgolden", route+".txt"))
+	if os.IsNotExist(err) {
+		return nil // no file for this route yet: the test dumps what it decodes
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,8 +151,8 @@ func TestPSOutputGolden(t *testing.T) {
 	check := func(name, got string) {
 		t.Helper()
 		seen++
-		if record {
-			fmt.Fprintf(&recorded, "%s %s\n", name, got)
+		fmt.Fprintf(&recorded, "%s %s\n", name, got)
+		if record || golden == nil {
 			return
 		}
 		if want, ok := golden[name]; !ok || want != got {
@@ -174,6 +177,14 @@ func TestPSOutputGolden(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("recorded %d streams for route %s", seen, route)
+		return
+	}
+	if golden == nil {
+		// a lane that cannot be run by hand (qemu in CI) records from its log
+		for _, ln := range strings.Split(strings.TrimSpace(recorded.String()), "\n") {
+			t.Logf("PSGOLDEN %s %s", route, ln)
+		}
+		t.Errorf("route %s has no testdata/aac/psgolden/%s.txt", route, route)
 		return
 	}
 	if seen != len(golden) {
