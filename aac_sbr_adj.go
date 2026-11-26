@@ -232,9 +232,6 @@ func (s *sbrState) adjust(ch int) {
 	kx, m := t.kx[1], t.m[1]
 	smoothing := s.smoothing == 0
 	copy(a.tail[:], a.y[sbrQMFSlots:])
-	if c.numEnv == 0 {
-		return
-	}
 	first := 2 * int(c.tEnv[0]) // the first slot adjusted: slot i is row sbrSmoothOrder+i-first
 	last := min(2*int(c.tEnv[c.numEnv]), sbrHFSlots)
 

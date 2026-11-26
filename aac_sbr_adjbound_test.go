@@ -91,6 +91,34 @@ func TestSBRAdjustBound(t *testing.T) {
 	if worst > aacSBRAdjustBound {
 		t.Errorf("PCM differs from the float64 adjustment by %.3e, the bound is %.3e", worst, aacSBRAdjustBound)
 	}
+	// the two paths are different arithmetic: a difference of exactly zero means the
+	// oracle was not the one that ran
+	if worst == 0 {
+		t.Error("the oracle's output is the decoder's to the bit: the hook did not route")
+	}
+}
+
+// TestSBRDequantPowers: the powers of two built in the exponent field are 2^(q/a) to a
+// binary32 rounding (exactly for the integer part), for both steps and negative q, and a
+// value beyond the guard is replaced by 1.
+func TestSBRDequantPowers(t *testing.T) {
+	for _, a := range []int{1, 2} {
+		for q := -60; q <= 100*a; q++ { // the exponent is held to ±100, tested below
+			got, want := float64(sbrExp2(q, a)), math.Exp2(float64(q)/float64(a))
+			if math.Abs(got-want) > want*0x1p-23 {
+				t.Errorf("sbrExp2(%d, %d) = %v, want %v", q, a, got, want)
+			}
+		}
+	}
+	if sbrExp2(10, 1) != 1024 || sbrExp2(10, 2) != 32 || sbrExp2(-3, 1) != 0.125 {
+		t.Error("an integer power of two is not exact")
+	}
+	if sbrPow2(1000) != sbrPow2(100) || sbrPow2(-1000) != sbrPow2(-100) {
+		t.Error("the exponent is not held to its range")
+	}
+	if sbrGuard(sbrMaxDequant) != sbrMaxDequant || sbrGuard(sbrMaxDequant*2) != 1 || sbrGuard(5) != 5 {
+		t.Error("the guard on a dequantised value")
+	}
 }
 
 // aacFloatPCM decodes the first audio track of an MP4 to its binary32 samples.
