@@ -590,7 +590,7 @@ func TestPSHybridTones(t *testing.T) {
 // hybrid bank saw it, its rows, and what the round trip wrote back.
 func psChain(n, kx int) (in, back []psQFrame, rows [][sbrQMFSlots][psMaxRows]complex128) {
 	d := new(sbrChanDSP)
-	s := &sbrState{}
+	h := new(psHybrid)
 	rng := rand.New(rand.NewSource(3))
 	pcm := make([]float32, aacFrameLen)
 	for fr := 0; fr < n; fr++ {
@@ -607,11 +607,11 @@ func psChain(n, kx int) (in, back []psQFrame, rows [][sbrQMFSlots][psMaxRows]com
 		// the garbage collector finds it: "found bad pointer in Go heap" (decode#74).
 		in = append(in, psQFrame{})
 		copy(in[len(in)-1][:], d.x[:])
-		s.psRoundTrip(d, kx)
+		psRoundTripF64(h, d, kx, false)
 		back = append(back, psQFrame{})
 		copy(back[len(back)-1][:], d.x[:])
 		rows = append(rows, [sbrQMFSlots][psMaxRows]complex128{})
-		copy(rows[len(rows)-1][:], s.hyb.rows[:])
+		copy(rows[len(rows)-1][:], h.rows[:])
 	}
 	return in, back, rows
 }
@@ -738,7 +738,7 @@ func TestPSHybridKeepsOutput(t *testing.T) {
 	for i := range plain {
 		worst = max(worst, math.Abs(float64(plain[i])-float64(hyb[i])))
 	}
-	if worst > 1e-7 {
+	if worst > 0x1p-17 { // the binary32 bank's stated bound (aac_ps_hybridbound_test.go)
 		t.Errorf("the round trip moved the output by %g", worst)
 	}
 	t.Logf("%d samples, largest difference %g", len(plain), worst)
