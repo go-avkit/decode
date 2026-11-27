@@ -354,6 +354,20 @@ history is not updated while PS is off (here it is only updated by frames that g
 the bank). The comparison with ffmpeg's PCM (streams S1 to S6) needs the mixing of PS3 and
 the writer's PS payloads, and is left to PS3.
 
+**Binary32 bank.** The bank of the decoder (`psHyb32`) works in binary32: the split bands'
+windows are planar (real and imaginary rows), the six sums and six differences of the
+symmetric taps are built once per band over all 32 slots of the frame (`Add32`, `Sub32`),
+and each split row is two `floats.MulAddRows32` calls against a broadcast row of its
+filter (`c0`, `c[1..6]`, `s[1..6]`): the sine terms are pure real products, because the
+imaginary part of the difference feeds the real part and the negated real part the
+imaginary one. The pipeline reads one slot of the rows at a time; the sums of the
+synthesis are formed in float64 and rounded once, into the inputs of the synthesis
+bank's transforms. The float64 bank (v0.17.1) is the test-tree oracle
+(`aac_ps_hybridf64_test.go`, installed by `installHybOracle`). Stated bound: the PCM
+differs from the oracle's by at most 2^-17 of full scale (`TestPSHybridBoundFixtures`,
+`TestPSHybridBoundStreams`); measured 2^-23 on the synthetic PS streams and `he44-ps.aac`.
+The golden output hashes (`testdata/aac/psgolden`) are re-recorded per route.
+
 ## PS3 as built
 
 `aac_ps_mix.go` (decorrelator, transient attenuation, interpolation, procedure A mixing)
