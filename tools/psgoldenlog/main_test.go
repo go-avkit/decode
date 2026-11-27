@@ -94,6 +94,38 @@ func TestLogWithoutTheRouteIsAnError(t *testing.T) {
 	}
 }
 
+func TestErrorsNameTheirCause(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "lane.log")
+	if err := os.WriteFile(log, []byte("S01 (route amd64): output SHA-256 "+h1+", recorded \"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// a missing log is reported as such, not as "no stream"
+	_, err := run(t, "--route", "amd64", "--log", filepath.Join(dir, "none"), "--golden", filepath.Join(dir, "g.txt"))
+	if err == nil || !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("missing log: %v", err)
+	}
+	// a golden path that cannot be read (a directory) is an error, not an empty file
+	_, err = run(t, "--route", "amd64", "--log", log, "--golden", dir)
+	if err == nil || !strings.HasPrefix(err.Error(), "read ") {
+		t.Errorf("unreadable golden: %v", err)
+	}
+	// a golden file that cannot be written
+	_, err = run(t, "--route", "amd64", "--log", log, "--golden", filepath.Join(dir, "no", "g.txt"))
+	if err == nil || !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("unwritable golden: %v", err)
+	}
+	// a line longer than the scanner's buffer is a read error, not a silent truncation
+	long := filepath.Join(dir, "long.log")
+	if err := os.WriteFile(long, []byte(strings.Repeat("x", 2<<20)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = run(t, "--route", "amd64", "--log", long, "--golden", filepath.Join(dir, "g.txt"))
+	if err == nil || !strings.Contains(err.Error(), "too long") {
+		t.Errorf("long line: %v", err)
+	}
+}
+
 func TestFlagsRequiredAndMissingLog(t *testing.T) {
 	if _, err := run(t, "--route", "amd64"); err == nil {
 		t.Error("missing flags accepted")
