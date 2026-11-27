@@ -253,9 +253,6 @@ func psHybCoefsOf(is34 bool) *psHybCoefs {
 	psHybCoefsOnce.Do(func() {
 		for i := range psHybCoefsTab {
 			ly := psLayouts[i]
-			if ly.start[ly.nSplit] > psHybSplit {
-				panic("decode: PS layout has more split rows than psHybSplit")
-			}
 			tab := new(psHybCoefs)
 			for r, f := range ly.filt[:ly.start[ly.nSplit]] {
 				fill := func(t int, v float64) {

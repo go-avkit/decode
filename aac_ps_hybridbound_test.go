@@ -60,6 +60,33 @@ func TestPSHybridBankBound(t *testing.T) {
 	}
 }
 
+// TestPSHybridCoefTables: every split row of both layouts has a row of the broadcast
+// table (psHybSplit holds them all, the 34-band layout's being the most) and a row holds
+// its filter in every column, in the order of the dot product.
+func TestPSHybridCoefTables(t *testing.T) {
+	for i, is34 := range []bool{false, true} {
+		ly := psLayoutOf(is34)
+		n := ly.start[ly.nSplit]
+		if n > psHybSplit {
+			t.Fatalf("layout %d has %d split rows, the table %d", i, n, psHybSplit)
+		}
+		tab := psHybCoefsOf(is34)
+		for r := 0; r < n; r++ {
+			f := &ly.filt[r]
+			for j := 0; j < sbrQMFSlots; j++ {
+				if tab[r][j] != float32(f.c0) {
+					t.Fatalf("layout %d row %d column %d: c0 %v, want %v", i, r, j, tab[r][j], float32(f.c0))
+				}
+				for tp := 1; tp <= psLook; tp++ {
+					if tab[r][tp*sbrQMFSlots+j] != float32(f.c[tp]) || tab[r][(psLook+tp)*sbrQMFSlots+j] != float32(f.s[tp]) {
+						t.Fatalf("layout %d row %d tap %d column %d", i, r, tp, j)
+					}
+				}
+			}
+		}
+	}
+}
+
 // TestPSHybridBoundFixtures: the binary32 bank against its float64 oracle through the
 // whole decoder, on the synthetic PS streams and the fixture.
 func TestPSHybridBoundFixtures(t *testing.T) {
