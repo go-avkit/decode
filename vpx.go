@@ -102,20 +102,43 @@ var (
 
 func newVPX(cfg Config, vp9 bool) (*Decoder, error) {
 	// A cap per side; the area is bounded by Config.MaxFrameMBs in checkVPX, before the decoder sees a header.
+	if cfg.Threads < 0 {
+		return nil, fmt.Errorf("%w: Threads %d is negative", ErrConfig, cfg.Threads)
+	}
 	d := &Decoder{cfg: cfg, lengthSize: 4, vpx: new(vpx)}
 	var err error
 	if vp9 {
 		side := int(min(int64(cfg.frameMBs())*16, 1<<16)) // VP9 sizes are 16 bits plus one
-		d.vpx.vp9, err = newGovpx9(govpx.VP9DecoderOptions{MaxWidth: side, MaxHeight: side})
+		d.vpx.vp9, err = newGovpx9(vp9Options(cfg, side))
 	} else {
 		side := int(min(int64(cfg.frameMBs())*16, 1<<14-1)) // VP8 sizes are 14 bits
-
-		d.vpx.vp8, err = newGovpx8(govpx.DecoderOptions{MaxWidth: side, MaxHeight: side})
+		d.vpx.vp8, err = newGovpx8(vp8Options(cfg, side))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrConfig, err)
 	}
 	return d, nil
+}
+
+// vp9Options maps Config.Threads: n >= 2 is govpx Threads with row-MT. Threads without row-MT
+// slows a one-tile stream, and loop-filter threading adds nothing once row-MT is on (study of
+// 2026-11-26, section 4.2), so neither DecoderLoopFilterOpt nor Threads alone is ever set.
+func vp9Options(cfg Config, side int) govpx.VP9DecoderOptions {
+	o := govpx.VP9DecoderOptions{MaxWidth: side, MaxHeight: side}
+	if cfg.Threads >= 2 {
+		o.Threads, o.DecoderRowMT = cfg.Threads, true
+	}
+	return o
+}
+
+// vp8Options maps Config.Threads: n >= 2 is 2 threads, since govpx's two-stage row pipeline gains
+// the same 1.46x from 2 to 8 and no more.
+func vp8Options(cfg Config, side int) govpx.DecoderOptions {
+	o := govpx.DecoderOptions{MaxWidth: side, MaxHeight: side}
+	if cfg.Threads >= 2 {
+		o.Threads = 2
+	}
+	return o
 }
 
 // isVP8 and isVP9 report whether a container track's sample entry names the codec.

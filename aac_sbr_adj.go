@@ -3,7 +3,12 @@
 
 package decode
 
-import "math"
+import (
+	"math"
+	"unsafe"
+
+	"github.com/go-simd/floats"
+)
 
 // SBR envelope adjustment (HE-AAC v1): the generated high band is given the spectral
 // envelope the stream describes. Per envelope and subband the energy of the
@@ -25,7 +30,19 @@ import "math"
 // noise table (aac_sbr_noise_table.go, bare values) and the smoothing filter, which is
 // computed.
 //
-// Everything is float64 and the synthesis rounds once.
+// Everything from the dequantisation to the adjusted band is binary32 (the float64
+// adjustment of v0.17.1 is the oracle of the tests, aac_sbr_adjf64_test.go, which
+// assert a stated bound on the PCM, TestSBRAdjustBound). The high band the generator
+// leaves in float64 is narrowed once per frame, as it is transposed to the slot-major
+// rows the application reads; that pass also measures the energy of every envelope.
+//
+// The application of a slot is vector work on rows of 2m binary32 (m complex): the
+// high band row times the gain row (each gain repeated for the real and imaginary
+// part), plus the noise table's window times the noise level row, plus the few
+// sinusoids. A row of the smoothing filter's input is the envelope's own row, so the
+// filter is evaluated only for the first four slots of an envelope, whose history
+// reaches into the previous one; for the others the weights, which sum to one, give
+// the row back, and it is used as it stands.
 
 // Constants of the algorithm.
 const (
@@ -35,62 +52,138 @@ const (
 	sbrNoiseOffset  = 6           // noise floor scalefactor zero is 2^6
 	sbrSmoothTaps   = 5           // taps of the smoothing filter
 	sbrSmoothOrder  = sbrSmoothTaps - 1
+	// sbrMaxEnergy bounds a measured energy: a corrupt stream can make the generated
+	// band huge, and an infinite energy times a zero gain would be NaN.
+	sbrMaxEnergy = 1e30
+	// sbrMaxDequant is the largest dequantised energy or noise level taken as it is:
+	// a corrupt scalefactor beyond it is replaced by 1. At 1e30 no sum or square the
+	// adjustment forms from two such values leaves binary32 (the gain is capped at 1e5
+	// before it multiplies an energy).
+	sbrMaxDequant = 1e30
+	// sbrNoisePad is the number of complex entries the padded noise table repeats
+	// after its end, so that a row of up to sbrSynBands entries never wraps.
+	sbrNoisePad = sbrSynBands
+	// sbrAdjRows is the height of the gain and noise level tables: the four slots of
+	// history, then the slots of the frame.
+	sbrAdjRows = sbrSmoothOrder + sbrHFSlots
 )
 
 // sbrLimiterGain is the largest gain relative to the band's average gain, by
 // bs_limiter_gains: -3 dB, 0 dB, +3 dB, no limit.
-var sbrLimiterGain = [4]float64{0.70795, 1.0, 1.41254, 1e10}
+var sbrLimiterGain = [4]float32{0.70795, 1.0, 1.41254, 1e10}
 
 // sbrSmooth is the smoothing filter, a raised cosine: (1+cos(n*pi/5))/6, which sums
 // to 1 over n = 0..4 (0.3333, 0.3015, 0.2182, 0.1152, 0.0318).
-var sbrSmooth = func() (h [sbrSmoothTaps]float64) {
+var sbrSmooth = func() (h [sbrSmoothTaps]float32) {
 	for n := range h {
-		h[n] = (1 + math.Cos(float64(n)*math.Pi/5)) / 6
+		h[n] = float32((1 + math.Cos(float64(n)*math.Pi/5)) / 6)
 	}
 	return h
 }()
 
+// sbrNoise32 is the noise table as interleaved binary32 followed by its first
+// sbrNoisePad entries again, so that a window of a row's length never wraps.
+var sbrNoise32 = func() (t [2 * (512 + sbrNoisePad)]float32) {
+	for i := range 512 + sbrNoisePad {
+		t[2*i], t[2*i+1] = float32(sbrNoiseTable[i&511][0]), float32(sbrNoiseTable[i&511][1])
+	}
+	return t
+}()
+
+// sbrHalf is 2^(r/2) for r = 0, 1: the half step of a 1.5 dB scalefactor.
+var sbrHalf = [2]float32{1, math.Sqrt2}
+
+// sbrPow2 is 2^e built in the exponent field, exact; the exponent is held to the
+// range where the result is a normal binary32 with room for the factors it meets.
+func sbrPow2(e int) float32 {
+	return math.Float32frombits(uint32(min(max(e, -100), 100)+127) << 23)
+}
+
+// sbrExp2 is 2^(q/a) for a scalefactor q and a step a of 1 or 2: an integer power of
+// two, times sqrt(2) for the odd q of the half step. q>>1 is the floor, so negative
+// q are right.
+func sbrExp2(q, a int) float32 {
+	if a == 1 {
+		return sbrPow2(q)
+	}
+	return sbrPow2(q>>1) * sbrHalf[q&1]
+}
+
+// sbrGuard replaces a dequantised value beyond what a stream can mean by 1.
+func sbrGuard(v float32) float32 {
+	if v > sbrMaxDequant {
+		return 1
+	}
+	return v
+}
+
 // sbrAdjState is what the adjustment keeps from one frame to the next, per channel.
 type sbrAdjState struct {
-	eOrig [sbrMaxEnv][sbrMaxBands]float64 // dequantised envelope energies, by table band
-	qOrig [2][sbrMaxNoise]float64         // dequantised noise floor, by noise band
+	eOrig [sbrMaxEnv][sbrMaxBands]float32 // dequantised envelope energies, by table band
+	qOrig [2][sbrMaxNoise]float32         // dequantised noise floor, by noise band
 
-	hist     [sbrSmoothOrder][2][sbrSynBands]float64 // gains and noise levels of the last 4 slots
-	histPos  int                                     // the newest entry of hist
-	noiseIdx int
-	sineIdx  int
-	prevS    [sbrSynBands]bool // sinusoid present in the last envelope of the previous frame
+	// gain and noise level of each slot, by subband, every value written twice (real
+	// and imaginary part) so that a row multiplies a row of complex values; the first
+	// sbrSmoothOrder rows are the last slots of the previous frame (the history of the
+	// smoothing filter), the others the slots of this one.
+	gain, noise [sbrAdjRows][2 * sbrSynBands]float32
+	noiseIdx    int
+	sineIdx     int
+	prevS       [sbrSynBands]bool // sinusoid present in the last envelope of the previous frame
+
+	// scratch of one call: the generated band narrowed and transposed (slot by band,
+	// interleaved), the energy of each envelope by band, a smoothed row and a masked one
+	hf    [sbrHFSlots][2 * sbrSynBands]float32
+	eSum  [sbrMaxEnv][sbrSynBands]float32
+	gRow  [2 * sbrSynBands]float32
+	qRow  [2 * sbrSynBands]float32
+	nzRow [2 * sbrSynBands]float32
 
 	// y is the adjusted high band by slot and band (Y), and tail the last 6 slots of
 	// the previous frame's, which the first slots of this frame still carry.
-	y       [sbrHFSlots][sbrSynBands]complex128
-	tail    [sbrHFSlots - sbrQMFSlots][sbrSynBands]complex128
+	y       [sbrHFSlots][sbrSynBands]complex64
+	tail    [sbrHFSlots - sbrQMFSlots][sbrSynBands]complex64
 	prevKx  int
 	prevM   int
 	prevEnd int // the last envelope border of the previous frame, 0 for none
 }
 
+// sbrAdjOracle is the float64 adjustment of v0.17.1, which the tests install in place
+// of the binary32 one (aac_sbr_adjf64_test.go); nil in the decoder.
+type sbrAdjOracle interface {
+	dequantise(s *sbrState, nch int)
+	adjust(s *sbrState, ch int)
+}
+
+// sbrNewAdjOracle, when a test sets it, makes every new SBR state use its oracle.
+var sbrNewAdjOracle func() sbrAdjOracle
+
 // dequantise computes the transmitted energies of both channels of the element:
 // E_orig = 64*2^(q/a), a = 2 for a 1.5 dB step and 1 for 3 dB; the noise floor
 // 2^(6-q); for a coupled pair the second channel carries the balance, and the left
-// and right values split the first channel's by it.
+// and right values split the first channel's by it: with the mean level M and the
+// ratio r = 2^((pan-bal)/a) the left is M/(1+r) and the right the left times r.
+// Powers of two are built, not computed (sbrExp2).
 func (s *sbrState) dequantise(nch int) {
+	if s.adjOracle != nil {
+		s.adjOracle.dequantise(s, nch)
+		return
+	}
 	for ch := 0; ch < nch; ch++ {
 		c := &s.ch[ch]
-		a := 2.0
+		a := 2
 		if c.ampRes != 0 {
 			a = 1
 		}
 		d := &s.channelDSP(ch).adj
 		for e := 0; e < c.numEnv; e++ {
 			for i := 0; i < s.t.n[c.freqRes[e+1]]; i++ {
-				q := float64(c.envQ[e+1][i])
-				d.eOrig[e][i] = 64 * math.Exp2(q/a)
+				d.eOrig[e][i] = sbrGuard(64 * sbrExp2(int(c.envQ[e+1][i]), a))
 			}
 		}
 		for k := 0; k < c.numNoise; k++ {
 			for i := 0; i < s.t.nQ; i++ {
-				d.qOrig[k][i] = math.Exp2(sbrNoiseOffset - float64(c.noiseQ[k+1][i]))
+				d.qOrig[k][i] = sbrGuard(sbrPow2(sbrNoiseOffset - int(c.noiseQ[k+1][i])))
 			}
 		}
 	}
@@ -99,32 +192,39 @@ func (s *sbrState) dequantise(nch int) {
 	}
 	// coupled: ch 0 holds the sum (level), ch 1 the balance
 	c0, c1 := &s.ch[0], &s.ch[1]
-	a, pan := 2.0, 24.0
+	a, pan := 2, 24
 	if c0.ampRes != 0 {
 		a, pan = 1, 12
 	}
 	l, r := &s.channelDSP(0).adj, &s.channelDSP(1).adj
 	for e := 0; e < c0.numEnv; e++ {
 		for i := 0; i < s.t.n[c0.freqRes[e+1]]; i++ {
-			level := 64 * math.Exp2(float64(c0.envQ[e+1][i])/a+1)
-			bal := float64(c1.envQ[e+1][i])
-			l.eOrig[e][i] = level / (1 + math.Exp2((pan-bal)/a))
-			r.eOrig[e][i] = level / (1 + math.Exp2((bal-pan)/a))
+			level := 128 * sbrExp2(int(c0.envQ[e+1][i]), a)
+			ratio := sbrExp2(pan-int(c1.envQ[e+1][i]), a)
+			left := level / (1 + ratio)
+			l.eOrig[e][i], r.eOrig[e][i] = sbrGuard(left), sbrGuard(left*ratio)
 		}
 	}
 	for k := 0; k < c0.numNoise; k++ {
 		for i := 0; i < s.t.nQ; i++ {
-			level := math.Exp2(sbrNoiseOffset - float64(c0.noiseQ[k+1][i]) + 1)
-			bal := float64(c1.noiseQ[k+1][i])
-			l.qOrig[k][i] = level / (1 + math.Exp2(12-bal))
-			r.qOrig[k][i] = level / (1 + math.Exp2(bal-12))
+			level := sbrPow2(sbrNoiseOffset - int(c0.noiseQ[k+1][i]) + 1)
+			ratio := sbrPow2(12 - int(c1.noiseQ[k+1][i]))
+			left := level / (1 + ratio)
+			l.qOrig[k][i], r.qOrig[k][i] = sbrGuard(left), sbrGuard(left*ratio)
 		}
 	}
 }
 
+// f32s is a view of n complex64 values as 2n binary32.
+func f32s(p *complex64, n int) []float32 { return unsafe.Slice((*float32)(unsafe.Pointer(p)), 2*n) }
+
 // adjust computes the adjusted high band of channel ch for the envelopes of this
 // frame, from the generated band and the dequantised energies.
 func (s *sbrState) adjust(ch int) {
+	if s.adjOracle != nil {
+		s.adjOracle.adjust(s, ch)
+		return
+	}
 	d := s.channelDSP(ch)
 	a := &d.adj
 	c := &s.ch[ch]
@@ -132,10 +232,28 @@ func (s *sbrState) adjust(ch int) {
 	kx, m := t.kx[1], t.m[1]
 	smoothing := s.smoothing == 0
 	copy(a.tail[:], a.y[sbrQMFSlots:])
+	first := 2 * int(c.tEnv[0]) // the first slot adjusted: slot i is row sbrSmoothOrder+i-first
+	last := min(2*int(c.tEnv[c.numEnv]), sbrHFSlots)
+
+	// The generated band, narrowed and transposed to slot-major rows, and the energy
+	// of every envelope in each subband.
+	for j := 0; j < m; j++ {
+		row := &d.high[kx+j]
+		for e := 0; e < c.numEnv; e++ {
+			var sum float32
+			for i, hi := 2*int(c.tEnv[e]), min(2*int(c.tEnv[e+1]), sbrHFSlots); i < hi; i++ {
+				re, im := float32(real(row[i])), float32(imag(row[i]))
+				a.hf[i][2*j], a.hf[i][2*j+1] = re, im
+				sum += re*re + im*im
+			}
+			a.eSum[e][j] = sum
+		}
+	}
+
 	for e := 0; e < c.numEnv; e++ {
 		var (
-			eo, qo, eCurr [sbrSynBands]float64
-			gain, qm, sm  [sbrSynBands]float64
+			eo, qo, eCurr [sbrSynBands]float32
+			gain, qm, sm  [sbrSynBands]float32
 			band          [sbrSynBands]bool // a sinusoid in the table band holding the subband
 			onset         [sbrSynBands]bool // the sinusoid itself, at its band's midpoint
 		)
@@ -176,24 +294,22 @@ func (s *sbrState) adjust(ch int) {
 				band[k-kx] = any
 			}
 		}
-		// measured energy of the generated band
-		n := float64(hi - lo)
+		// measured energy of the generated band: one multiply by a reciprocal
+		var inv float32
+		if hi > lo {
+			inv = 1 / float32(hi-lo)
+		}
 		if s.interpolFreq != 0 {
 			for j := 0; j < m; j++ {
-				for i := lo; i < hi; i++ {
-					eCurr[j] += sbrAbs2(d.high[kx+j][i])
-				}
-				eCurr[j] /= n
+				eCurr[j] = min(a.eSum[e][j]*inv, sbrMaxEnergy)
 			}
 		} else {
 			for i := 0; i+1 < len(tab); i++ {
-				var sum float64
+				var sum float32
 				for k := tab[i]; k < tab[i+1]; k++ {
-					for sl := lo; sl < hi; sl++ {
-						sum += sbrAbs2(d.high[k][sl])
-					}
+					sum += a.eSum[e][k-kx]
 				}
-				mean := sum / (n * float64(tab[i+1]-tab[i]))
+				mean := min(sum*(inv/float32(tab[i+1]-tab[i])), sbrMaxEnergy)
 				for k := tab[i]; k < tab[i+1]; k++ {
 					eCurr[k-kx] = mean
 				}
@@ -203,17 +319,17 @@ func (s *sbrState) adjust(ch int) {
 		noAttack := e != int(c.eA[1]) && e != int(c.eA[0])
 		for j := 0; j < m; j++ {
 			share := eo[j] / (1 + qo[j])
-			qm[j] = math.Sqrt(share * qo[j])
+			qm[j] = sqrt32(share * qo[j])
 			if onset[j] {
-				sm[j] = math.Sqrt(share)
+				sm[j] = sqrt32(share)
 			}
 			switch {
 			case band[j]:
-				gain[j] = math.Sqrt(eo[j] * qo[j] / ((1 + eCurr[j]) * (1 + qo[j])))
+				gain[j] = sqrt32(share * qo[j] / (1 + eCurr[j])) // eo*qo/((1+eCurr)(1+qo)), no product that can overflow
 			case noAttack:
-				gain[j] = math.Sqrt(eo[j] / ((1 + eCurr[j]) * (1 + qo[j])))
+				gain[j] = sqrt32(share / (1 + eCurr[j]))
 			default:
-				gain[j] = math.Sqrt(eo[j] / (1 + eCurr[j]))
+				gain[j] = sqrt32(eo[j] / (1 + eCurr[j]))
 			}
 			if !noAttack {
 				qm[j] = 0 // no noise is added in an attack envelope, nor counted in its boost
@@ -222,13 +338,13 @@ func (s *sbrState) adjust(ch int) {
 		// limiter bands: cap the gains, then boost what is left to the energy asked
 		for b := 0; b < t.nLim; b++ {
 			j0, j1 := t.fLim[b]-kx, t.fLim[b+1]-kx
-			var sumO, sumC float64
+			var sumO, sumC float32
 			for j := j0; j < j1; j++ {
 				sumO += eo[j]
 				sumC += eCurr[j]
 			}
-			gmax := math.Min(sbrLimiterGain[s.limGains]*math.Sqrt((sbrEpsilon+sumO)/(sbrEpsilon+sumC)), sbrMaxGain)
-			var sumNew float64
+			gmax := min(sbrLimiterGain[s.limGains]*sqrt32((sbrEpsilon+sumO)/(sbrEpsilon+sumC)), sbrMaxGain)
+			var sumNew float32
 			for j := j0; j < j1; j++ {
 				if gain[j] > gmax {
 					scale := gmax / gain[j]
@@ -240,78 +356,109 @@ func (s *sbrState) adjust(ch int) {
 					sumNew += qm[j] * qm[j]
 				}
 			}
-			boost := math.Min(math.Sqrt((sbrEpsilon+sumO)/(sbrEpsilon+sumNew)), sbrMaxGainBoost)
+			boost := min(sqrt32((sbrEpsilon+sumO)/(sbrEpsilon+sumNew)), sbrMaxGainBoost)
 			for j := j0; j < j1; j++ {
 				gain[j] *= boost
 				qm[j] *= boost
 				sm[j] *= boost
 			}
 		}
-		// slots: smoothed gain and noise level, noise, sinusoid
+		if hi <= lo || lo < first { // no slots (borders out of order in a corrupt stream)
+			a.prevS = onset
+			continue
+		}
+		// the envelope's rows of the gain and noise level tables
+		g0, q0 := &a.gain[sbrSmoothOrder+lo-first], &a.noise[sbrSmoothOrder+lo-first]
+		for j := 0; j < m; j++ {
+			g0[2*j], g0[2*j+1] = gain[j], gain[j]
+			q0[2*j], q0[2*j+1] = qm[j], qm[j]
+		}
+		if s.refill[ch] {
+			// after a header reset the history is the first slot's own gains, so the
+			// filter starts at rest
+			for k := 0; k < sbrSmoothOrder; k++ {
+				a.gain[k], a.noise[k] = *g0, *q0
+			}
+			s.refill[ch] = false
+			// and the noise table starts again at its first entry (the sinusoid
+			// phase is not reset): ffmpeg's output on S17 is 3e-4 off without it
+			a.noiseIdx = 0
+		}
+		for i := lo + 1; i < hi; i++ {
+			a.gain[sbrSmoothOrder+i-first], a.noise[sbrSmoothOrder+i-first] = *g0, *q0
+		}
+		// the sinusoids of the envelope, and which slots need the filter
+		var sin [sbrSynBands]int
+		ns := 0
+		for j := 0; j < m; j++ {
+			if sm[j] != 0 {
+				sin[ns] = j
+				ns++
+			}
+		}
 		smooth := smoothing && noAttack
+		w := 2 * m
 		for i := lo; i < hi; i++ {
-			if s.refill[ch] {
-				// after a header reset the history is the first slot's own gains, so the
-				// filter starts at rest
-				for k := range a.hist {
-					for j := 0; j < m; j++ {
-						a.hist[k][0][j], a.hist[k][1][j] = gain[j], qm[j]
-					}
-				}
-				s.refill[ch] = false
-				// and the noise table starts again at its first entry (the sinusoid
-				// phase is not reset): ffmpeg's output on S17 is 3e-4 off without it
-				a.noiseIdx = 0
-			}
-			for j := 0; j < m; j++ {
-				g, q := gain[j]*sbrSmooth[0], qm[j]*sbrSmooth[0]
-				if smooth {
+			r := sbrSmoothOrder + i - first
+			gr, qr := a.gain[r][:w], a.noise[r][:w]
+			if smooth && i-lo < sbrSmoothOrder {
+				// the history reaches into the previous envelope
+				for x := 0; x < w; x++ {
+					g, q := gr[x]*sbrSmooth[0], qr[x]*sbrSmooth[0]
 					for k := 1; k <= sbrSmoothOrder; k++ {
-						h := &a.hist[(a.histPos+1-k+2*sbrSmoothOrder)%sbrSmoothOrder]
-						g += h[0][j] * sbrSmooth[k]
-						q += h[1][j] * sbrSmooth[k]
+						g += a.gain[r-k][x] * sbrSmooth[k]
+						q += a.noise[r-k][x] * sbrSmooth[k]
 					}
-				} else {
-					g, q = gain[j], qm[j]
+					a.gRow[x], a.qRow[x] = g, q
 				}
-				a.noiseIdx = (a.noiseIdx + 1) & 511
-				z := d.high[kx+j][i] * complex(g, 0)
-				if sm[j] != 0 {
-					z += sbrSinusoid(sm[j], a.sineIdx, kx+j)
-				} else {
-					nz := sbrNoiseTable[a.noiseIdx]
-					z += complex(nz[0]*q, nz[1]*q)
-				}
-				a.y[i][kx+j] = z
+				gr, qr = a.gRow[:w], a.qRow[:w]
 			}
+			out := f32s(&a.y[i][kx], m)
+			floats.Mul32(out, a.hf[i][:w], gr)
+			if noAttack {
+				if ns > 0 { // where a sinusoid is, no noise
+					if &qr[0] != &a.qRow[0] {
+						copy(a.qRow[:w], qr)
+						qr = a.qRow[:w]
+					}
+					for _, j := range sin[:ns] {
+						qr[2*j], qr[2*j+1] = 0, 0
+					}
+				}
+				p := 2 * ((a.noiseIdx + 1) & 511)
+				floats.Mul32(a.nzRow[:w], sbrNoise32[p:p+w], qr)
+				floats.Add32(out, out, a.nzRow[:w])
+			}
+			for _, j := range sin[:ns] {
+				v := sm[j]
+				if (kx+j)&1 != 0 {
+					v = -v
+				}
+				switch a.sineIdx {
+				case 0:
+					out[2*j] += sm[j]
+				case 1:
+					out[2*j+1] += v
+				case 2:
+					out[2*j] -= sm[j]
+				default:
+					out[2*j+1] -= v
+				}
+			}
+			a.noiseIdx = (a.noiseIdx + m) & 511
 			a.sineIdx = (a.sineIdx + 1) & 3
-			a.histPos = (a.histPos + 1) % sbrSmoothOrder
-			for j := 0; j < m; j++ {
-				a.hist[a.histPos][0][j], a.hist[a.histPos][1][j] = gain[j], qm[j]
-			}
 		}
 		a.prevS = onset
 	}
+	// the last slots of the frame are the history of the next
+	n := last - first
+	for k := 0; k < sbrSmoothOrder; k++ {
+		a.gain[k], a.noise[k] = a.gain[n+k], a.noise[n+k]
+	}
 }
 
-// sbrSinusoid is a sinusoid of level lv at phase index ph (a quarter turn per slot)
-// in the absolute subband k: the real part {1, 0, -1, 0}, the imaginary part
-// {0, 1, 0, -1}, negated in odd subbands.
-func sbrSinusoid(lv float64, ph, k int) complex128 {
-	sign := 1.0
-	if k&1 != 0 {
-		sign = -1
-	}
-	switch ph {
-	case 0:
-		return complex(lv, 0)
-	case 1:
-		return complex(0, sign*lv)
-	case 2:
-		return complex(-lv, 0)
-	}
-	return complex(0, -sign*lv)
-}
+// sqrt32 is the correctly rounded binary32 square root.
+func sqrt32(x float32) float32 { return float32(math.Sqrt(float64(x))) }
 
 // frame runs the signal path over the nch channels of an element: analysis of the
 // core signal pcm, then for a frame that carries SBR data the high band generation
@@ -369,9 +516,9 @@ func (d *sbrChanDSP) assemble(x *[sbrQMFSlots][sbrSynBands]complex128, kx, m, en
 		}
 		for k := k0; k < k0+m0; k++ {
 			if l < carry {
-				row[k] = a.tail[l][k]
+				row[k] = complex128(a.tail[l][k])
 			} else {
-				row[k] = a.y[l][k]
+				row[k] = complex128(a.y[l][k])
 			}
 		}
 	}

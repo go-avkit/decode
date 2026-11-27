@@ -150,9 +150,14 @@ func TestSBRSmoothing(t *testing.T) {
 	want := [5]float64{0.33333333333333, 0.30150283239582, 0.21816949906249, 0.11516383427084, 0.03183050093751}
 	var sum float64
 	for i, w := range want {
-		sum += sbrSmooth[i]
-		if math.Abs(sbrSmooth[i]-w) > 1e-13 {
-			t.Errorf("tap %d: %v, want %v", i, sbrSmooth[i], w)
+		sum += oracleSmooth[i]
+		if math.Abs(oracleSmooth[i]-w) > 1e-13 {
+			t.Errorf("tap %d: %v, want %v", i, oracleSmooth[i], w)
+		}
+		// the decoder's binary32 filter is the float64 one rounded; it sums to one
+		// within 2^-24, which is why an envelope's own row needs no filtering
+		if sbrSmooth[i] != float32(oracleSmooth[i]) {
+			t.Errorf("tap %d: binary32 %v, want %v", i, sbrSmooth[i], float32(oracleSmooth[i]))
 		}
 	}
 	if math.Abs(sum-1) > 1e-15 {

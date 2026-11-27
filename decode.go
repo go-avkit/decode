@@ -98,6 +98,14 @@ type Config struct {
 	// presentation times are those of the presentation, as ffmpeg does by default.
 	// The streaming Decoder does not read it.
 	IgnoreEditList bool
+	// Threads is the worker count of the VP8 and VP9 decoders; H.264 and HEVC ignore it. 0 and 1
+	// decode serially, which is the default: threads cost CPU (VP9 with 8 threads uses about 4.6
+	// cores for 1.7x), so a caller chooses them knowingly. VP9 with 2 or more threads turns on
+	// govpx's row-parallel mode, which also speeds up a one-tile stream; the useful ceiling is
+	// about 4. VP8 uses 2 threads whatever n >= 2 is asked. VP9 above 8 bits is decoded serially
+	// by govpx whatever is asked. The pictures are byte-identical to the serial decoder's. A
+	// negative value is ErrConfig.
+	Threads int
 }
 
 func (c Config) frameMBs() int {
