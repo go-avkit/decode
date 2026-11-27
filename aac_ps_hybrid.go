@@ -6,6 +6,9 @@ package decode
 import (
 	"math"
 	"sort"
+	"sync"
+
+	"github.com/go-simd/floats"
 )
 
 // The Parametric Stereo hybrid filter bank (HE-AAC v2), stages 1 and 6 of
@@ -226,139 +229,167 @@ func psLayoutOf(is34 bool) *psLayout {
 	return psLayouts[0]
 }
 
-// psHybrid is the hybrid bank of one channel element: the history of the split QMF
-// bands, which serves both layouts (a switch between them needs no reset), and the rows
-// of the frame.
-type psHybrid struct {
-	hist [psSplitMax][psLook]complex128 // slots 26..31 of the previous frame
-	win  [psSplitMax][psLook + sbrQMFSlots + psLook]complex128
-	rows [sbrQMFSlots][psMaxRows]complex128
-}
+// psHybTaps is the number of rows of one split row's dot product: the centre, the six
+// sums and the six differences.
+const psHybTaps = 2*psLook + 1
 
-// analyse computes the hybrid rows of the 32 slots of x, the 64-band signal of the
-// frame, into h.rows. look[j][k] is slot 32+j of band k, which the SBR output has not
-// released yet. It also takes the frame's last six slots as the next frame's history.
-// It is the three steps below run over the whole frame; the slot by slot pipeline runs
-// them between the stages that follow.
-func (h *psHybrid) analyse(x *[sbrQMFSlots][sbrSynBands]complex128, look *[psLook][psSplitMax]complex128, is34 bool) {
-	h.begin(x, look, is34)
-	for l := range h.rows {
-		h.slot(l, x, is34, &h.rows[l])
+// psHybSplit is the most split rows of a layout (the 34-band layout's 12+8+4+4+4).
+const psHybSplit = 32
+
+// psHybWin is the length of a split band's window: the history, the frame, the look-ahead.
+const psHybWin = psLook + sbrQMFSlots + psLook
+
+// psHybCoefs is the filters of a layout as the broadcast rows MulAddRows32 takes: for
+// split row r, row t of [psHybTaps][sbrQMFSlots] is c0 (t = 0), c[t] (1..6) or s[t-6]
+// (7..12) in every column.
+type psHybCoefs [psHybSplit][psHybTaps * sbrQMFSlots]float32
+
+var (
+	psHybCoefsOnce sync.Once
+	psHybCoefsTab  [2]*psHybCoefs
+)
+
+func psHybCoefsOf(is34 bool) *psHybCoefs {
+	psHybCoefsOnce.Do(func() {
+		for i := range psHybCoefsTab {
+			ly := psLayouts[i]
+			if ly.start[ly.nSplit] > psHybSplit {
+				panic("decode: PS layout has more split rows than psHybSplit")
+			}
+			tab := new(psHybCoefs)
+			for r, f := range ly.filt[:ly.start[ly.nSplit]] {
+				fill := func(t int, v float64) {
+					for j := 0; j < sbrQMFSlots; j++ {
+						tab[r][t*sbrQMFSlots+j] = float32(v)
+					}
+				}
+				fill(0, f.c0)
+				for t := 1; t <= psLook; t++ {
+					fill(t, f.c[t])
+					fill(psLook+t, f.s[t])
+				}
+			}
+			psHybCoefsTab[i] = tab
+		}
+	})
+	if is34 {
+		return psHybCoefsTab[1]
 	}
-	h.end(x)
+	return psHybCoefsTab[0]
 }
 
-// begin starts the analysis of a frame: the window of every split band, the six slots of
-// history, the 32 of the frame and the six of look-ahead.
-func (h *psHybrid) begin(x *[sbrQMFSlots][sbrSynBands]complex128, look *[psLook][psSplitMax]complex128, is34 bool) {
+// psHyb32 is the hybrid bank of one channel element in binary32: the history of the split
+// QMF bands, which serves both layouts (a switch between them needs no reset), the window
+// of the band being filtered, and the split rows of the frame. The filters are the
+// fused multiply-add rows of a band's centre, sums and differences against a
+// broadcast coefficient row, over the 32 slots of a frame at once (band-major); the
+// pipeline then reads one slot of them at a time.
+type psHyb32 struct {
+	hist [psSplitMax][2][psLook]float32 // slots 26..31 of the previous frame, [re/im]
+	win  [2][psHybWin]float32
+	sig  [2][psHybTaps * sbrQMFSlots]float32 // the rows of the band's dot products
+	out  [psHybSplit][2][sbrQMFSlots]float32 // split row, re/im, slot
+}
+
+// begin starts the analysis of a frame: for every split band the window (six slots of
+// history, the 32 of the frame and six of look-ahead), and its rows over all the slots.
+func (h *psHyb32) begin(x *[sbrQMFSlots][sbrSynBands]complex128, look *[psLook][psSplitMax]complex128, is34 bool) {
 	ly := psLayoutOf(is34)
+	tab := psHybCoefsOf(is34)
+	w, sg := &h.win, &h.sig
 	for k := 0; k < ly.nSplit; k++ {
-		w := &h.win[k]
-		copy(w[:psLook], h.hist[k][:])
+		copy(w[0][:psLook], h.hist[k][0][:])
+		copy(w[1][:psLook], h.hist[k][1][:])
 		for l := range x {
-			w[psLook+l] = x[l][k]
+			w[0][psLook+l], w[1][psLook+l] = float32(real(x[l][k])), float32(imag(x[l][k]))
 		}
 		for j := range look {
-			w[psLook+sbrQMFSlots+j] = look[j][k]
+			v := look[j][k]
+			w[0][psLook+sbrQMFSlots+j], w[1][psLook+sbrQMFSlots+j] = float32(real(v)), float32(imag(v))
+		}
+		copy(sg[0][:sbrQMFSlots], w[0][psLook:])
+		copy(sg[1][:sbrQMFSlots], w[1][psLook:])
+		for t := 1; t <= psLook; t++ {
+			up, dn := psLook+t, psLook-t
+			p := t * sbrQMFSlots
+			d := (psLook + t) * sbrQMFSlots
+			floats.Add32(sg[0][p:p+sbrQMFSlots], w[0][up:up+sbrQMFSlots], w[0][dn:dn+sbrQMFSlots])
+			floats.Add32(sg[1][p:p+sbrQMFSlots], w[1][up:up+sbrQMFSlots], w[1][dn:dn+sbrQMFSlots])
+			// y_re takes + s imag(a-b) and y_im - s real(a-b)
+			floats.Sub32(sg[0][d:d+sbrQMFSlots], w[1][up:up+sbrQMFSlots], w[1][dn:dn+sbrQMFSlots])
+			floats.Sub32(sg[1][d:d+sbrQMFSlots], w[0][dn:dn+sbrQMFSlots], w[0][up:up+sbrQMFSlots])
+		}
+		for r := ly.start[k]; r < ly.start[k+1]; r++ {
+			o := &h.out[r]
+			o[0], o[1] = [sbrQMFSlots]float32{}, [sbrQMFSlots]float32{}
+			floats.MulAddRows32(o[0][:], sg[0][:], sbrQMFSlots, tab[r][:], sbrQMFSlots, psHybTaps)
+			floats.MulAddRows32(o[1][:], sg[1][:], sbrQMFSlots, tab[r][:], sbrQMFSlots, psHybTaps)
 		}
 	}
 }
 
-// slot computes the hybrid rows of slot l into rows: the filters of the split bands over
-// the window, and the other bands as they are.
-func (h *psHybrid) slot(l int, x *[sbrQMFSlots][sbrSynBands]complex128, is34 bool, rows *[psMaxRows]complex128) {
+// slot gives the hybrid rows of slot l: the split rows begin computed, and the other
+// bands as they are.
+func (h *psHyb32) slot(l int, x *[sbrQMFSlots][sbrSynBands]complex128, is34 bool, rows *[psMaxRows]complex128) {
 	ly := psLayoutOf(is34)
-	for k := 0; k < ly.nSplit; k++ {
-		w := &h.win[k]
-		filt := ly.filt[ly.start[k]:ly.start[k+1]]
-		out := ly.start[k]
-		var sm, df [psLook + 1]complex128
-		for t := 1; t <= psLook; t++ {
-			a, b := w[l+psLook+t], w[l+psLook-t]
-			sm[t], df[t] = a+b, a-b
-		}
-		ctr := w[l+psLook]
-		for i := range filt {
-			f := &filt[i]
-			yr, yi := f.c0*real(ctr), f.c0*imag(ctr)
-			for t := 1; t <= psLook; t++ {
-				yr += f.c[t]*real(sm[t]) + f.s[t]*imag(df[t])
-				yi += f.c[t]*imag(sm[t]) - f.s[t]*real(df[t])
-			}
-			rows[out+i] = complex(yr, yi)
-		}
-	}
 	n := ly.start[ly.nSplit]
+	for r := 0; r < n; r++ {
+		rows[r] = complex(float64(h.out[r][0][l]), float64(h.out[r][1][l]))
+	}
 	copy(rows[n:], x[l][ly.nSplit:])
 }
 
 // end finishes the frame: its last six slots are the history of the next. All five bands
 // keep a history, whichever are split now.
-func (h *psHybrid) end(x *[sbrQMFSlots][sbrSynBands]complex128) {
+func (h *psHyb32) end(x *[sbrQMFSlots][sbrSynBands]complex128) {
 	for k := range h.hist {
-		for i := range h.hist[k] {
-			h.hist[k][i] = x[sbrQMFSlots-psLook+i][k]
+		for i := range h.hist[k][0] {
+			v := x[sbrQMFSlots-psLook+i][k]
+			h.hist[k][0][i], h.hist[k][1][i] = float32(real(v)), float32(imag(v))
 		}
 	}
 }
 
-// synthesise sums the rows of each split band of h.rows back into the 64-band signal x,
-// and copies the others: no filter, gain or delay.
-func (h *psHybrid) synthesise(x *[sbrQMFSlots][sbrSynBands]complex128, is34 bool) {
-	psSynthesise(&h.rows, x, is34)
-}
-
-// psSynthesise is the synthesis of any block of rows (the left or the right channel).
-func psSynthesise(rows *[sbrQMFSlots][psMaxRows]complex128, x *[sbrQMFSlots][sbrSynBands]complex128, is34 bool) {
-	ly := psLayoutOf(is34)
-	n := ly.start[ly.nSplit]
-	for l := range x {
-		r := &rows[l]
-		for k := 0; k < ly.nSplit; k++ {
-			var sum complex128
-			for _, v := range r[ly.start[k]:ly.start[k+1]] {
-				sum += v
-			}
-			x[l][k] = sum
-		}
-		copy(x[l][ly.nSplit:], r[n:])
-	}
-}
-
-// psSlotPlanes is one slot of the 64-band signal as the two real planes the synthesis
-// bank's transforms take: re[k] the real part of band k and im[63-k] its imaginary part.
-type psSlotPlanes struct {
-	re, im [sbrSynBands]float64
-}
-
-// psSynthesiseSlot is psSynthesise for one slot, into planes: the sums of the rows of the
-// split bands (added in row order) and the other rows copied.
-func psSynthesiseSlot(r *[psMaxRows]complex128, is34 bool, p *psSlotPlanes) {
+// psSynthesiseSlot32 is the synthesis of one slot of rows: the sums of the rows of the
+// split bands (added in row order, in complex128) and the other rows copied, into the
+// synthesis bank's inputs, binary32: a[k] the real part of band k and b[63-k] its
+// imaginary part.
+func psSynthesiseSlot32(r *[psMaxRows]complex128, is34 bool, a, b *[sbrSynBands]float32) {
 	ly := psLayoutOf(is34)
 	for k := 0; k < ly.nSplit; k++ {
 		var sum complex128
 		for _, v := range r[ly.start[k]:ly.start[k+1]] {
 			sum += v
 		}
-		p.re[k], p.im[sbrSynBands-1-k] = real(sum), imag(sum)
+		a[k], b[sbrSynBands-1-k] = float32(real(sum)), float32(imag(sum))
 	}
 	for j, v := range r[ly.start[ly.nSplit]:] {
 		k := ly.nSplit + j
 		if k >= sbrSynBands {
 			break
 		}
-		p.re[k], p.im[sbrSynBands-1-k] = real(v), imag(v)
+		a[k], b[sbrSynBands-1-k] = float32(real(v)), float32(imag(v))
 	}
 }
 
-// psPipelineFrame is the applied PS path of a frame run slot by slot: for each of the 32
+// psHybOracle is the slot pipeline of a frame; the decoder's is psHyb32.pipeline and the
+// tests substitute the float64 bank (psNewHybOracle, as sbrNewAdjOracle does for the
+// envelope adjustment).
+type psHybOracle interface {
+	pipeline(s *sbrState, d *sbrChanDSP, kx, m int, out [2][]float32)
+}
+
+// psNewHybOracle, when set by a test, makes every sbrState made after it run its PS
+// frames through the oracle it returns.
+var psNewHybOracle func() psHybOracle
+
+// pipeline is the applied PS path of a frame run slot by slot: for each of the 32
 // slots the hybrid analysis, the transient detector, the decorrelator and mixer, the hybrid
 // synthesis of the left and of the right block, and the synthesis bank's transform of
 // each, so that a slot's rows live in the cache from analysis to PCM instead of the frame's
-// 46 KB matrices being written and read by every stage in turn. The arithmetic of every
-// sample is that of the stages run over the whole frame (TestPSOutputGolden).
-func (s *sbrState) psPipelineFrame(d *sbrChanDSP, kx, m int, out [2][]float32) {
-	mx, h := s.mix, s.hyb
+// 46 KB matrices being written and read by every stage in turn.
+func (h *psHyb32) pipeline(s *sbrState, d *sbrChanDSP, kx, m int, out [2][]float32) {
+	mx := s.mix
 	is34 := s.ps.is34
 	var look [psLook][psSplitMax]complex128
 	d.psLookAhead(kx, &look)
@@ -366,15 +397,13 @@ func (s *sbrState) psPipelineFrame(d *sbrChanDSP, kx, m int, out [2][]float32) {
 	dl := mx.begin(&s.ps, kx+m)
 	outL, outR := d.syn.begin(out[0]), mx.syn.begin(out[1])
 	var rows, rr [psMaxRows]complex128
-	var pl, pr psSlotPlanes
 	for n := 0; n < sbrQMFSlots; n++ {
 		h.slot(n, &d.x, is34, &rows)
 		mx.transientSlot(n, &rows, dl)
 		mx.step(n, &rows, &rr, dl)
-		psSynthesiseSlot(&rows, is34, &pl)
-		psSynthesiseSlot(&rr, is34, &pr)
-		slotQuad(&d.syn, &mx.syn, (*[sbrSynBands]float32)(outL[n*sbrSynBands:]), (*[sbrSynBands]float32)(outR[n*sbrSynBands:]),
-			&pl.re, &pl.im, &pr.re, &pr.im)
+		psSynthesiseSlot32(&rows, is34, &d.syn.a, &d.syn.b)
+		psSynthesiseSlot32(&rr, is34, &mx.syn.a, &mx.syn.b)
+		slotQuad32(&d.syn, &mx.syn, (*[sbrSynBands]float32)(outL[n*sbrSynBands:]), (*[sbrSynBands]float32)(outR[n*sbrSynBands:]))
 	}
 	h.end(&d.x)
 }
@@ -407,10 +436,14 @@ func (s *sbrState) psApplyFrame(d *sbrChanDSP, kx, m int, withSBR bool, out [2][
 	mx := s.mix
 	mx.baseline, mx.ffImage = s.psBaselineTest, s.psFFImageTest
 	if withSBR && s.ps.start {
-		if s.hyb == nil {
-			s.hyb = new(psHybrid)
+		if s.hybOracle != nil {
+			s.hybOracle.pipeline(s, d, kx, m, out)
+			return
 		}
-		s.psPipelineFrame(d, kx, m, out)
+		if s.hyb == nil {
+			s.hyb = new(psHyb32)
+		}
+		s.hyb.pipeline(s, d, kx, m, out)
 		return
 	}
 	{
@@ -424,14 +457,27 @@ func (s *sbrState) psApplyFrame(d *sbrChanDSP, kx, m int, withSBR bool, out [2][
 }
 
 // psRoundTrip runs the frame of d.x through the hybrid analysis and synthesis. The PS
-// stages between them are not written yet, so this is the identity: it is how the bank
-// is wired and tested before PS is applied to the output (sbrState.psHybridTest).
+// stages between them are not applied, so this is the identity (to binary32): it is how
+// the bank is wired and tested in a real stream (sbrState.psHybridTest).
 func (s *sbrState) psRoundTrip(d *sbrChanDSP, kx int) {
 	if s.hyb == nil {
-		s.hyb = new(psHybrid)
+		s.hyb = new(psHyb32)
 	}
+	h, is34 := s.hyb, s.ps.is34
 	var look [psLook][psSplitMax]complex128
 	d.psLookAhead(kx, &look)
-	s.hyb.analyse(&d.x, &look, s.ps.is34)
-	s.hyb.synthesise(&d.x, s.ps.is34)
+	h.begin(&d.x, &look, is34)
+	ly := psLayoutOf(is34)
+	var rows [psMaxRows]complex128
+	for l := range d.x {
+		h.slot(l, &d.x, is34, &rows)
+		for k := 0; k < ly.nSplit; k++ {
+			var sum complex128
+			for _, v := range rows[ly.start[k]:ly.start[k+1]] {
+				sum += v
+			}
+			d.x[l][k] = sum
+		}
+	}
+	h.end(&d.x)
 }
