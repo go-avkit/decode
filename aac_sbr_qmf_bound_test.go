@@ -11,7 +11,7 @@ import (
 
 // The error bounds of the float32 QMF banks (go-avkit/decode#77). The banks run in
 // single precision: the history, the windows, the window sums (floats.MulAddRows32, one
-// fused float32 step per tap) and, in the synthesis, the DCT-IV pair (fft.DCTPlan32.DCTPair,
+// fused float32 step per tap) and the DCT-IV (fft.DCTPlan32.DCTPair and DCTQuad,
 // relative 2-norm error at most eps32*log2(64) of its stream, asserted against
 // double-double by go-fft). The bounds below are derived from those parts, per slot, and
 // asserted against the definition evaluated in float64 (refAnalysis, refSynthesis: 1e-13
@@ -30,10 +30,12 @@ import (
 // |c_b|_inf for the first term.
 //
 // Analysis, per slot: the window sum has |Delta u_n| <= 6*2^-24 * sum_j |c x| (five fused
-// steps and the window rounded), the fold is a signed permutation, the transforms are
-// float64 (DCTMixedPair) rounded once to float32: the 2-norm over the 32 bands of the
-// error is at most 7*2^-24 * g*sqrt(2) * |m|_2 with m_n = sum_j |c x| and g the gain
-// of the transform with its factor 2 (|DCT x| = g |x|).
+// steps and the window rounded), the fold is a signed permutation, the one float32
+// transform (DCTQuad, same stated bound as DCTPair) adds sbrDCT32Bound times the 2-norm
+// of its output, and the 64 outputs are the 64 values of the 32 bands (real parts and
+// negated reversed imaginary parts), so the 2-norm over the bands is that of the
+// transform: at most (6*2^-24 + sbrDCT32Bound) * g * |m|_2 with m_n = sum_j |c x| and g
+// the gain of the transform with its factor 2 (|DCT x| = g |x|).
 const (
 	sbrEps32      = 0x1p-23
 	sbrDCT32Bound = 6 * sbrEps32 // eps32*log2(64), the stated bound of DCTPair
@@ -64,7 +66,7 @@ func sbrAnalysisBound(h []float64) float64 {
 		}
 		m2 += m * m
 	}
-	return 7 * 0x1p-24 * sbrBoundSlack * sbrDCTGain() * math.Sqrt2 * math.Sqrt(m2)
+	return (6*0x1p-24 + sbrDCT32Bound) * sbrBoundSlack * sbrDCTGain() * math.Sqrt(m2)
 }
 
 // sbrBandsError is the 2-norm over the bands of the difference of two slots.

@@ -30,20 +30,22 @@ import (
 // ffmpeg n9.0.2 libavcodec/aacsbr_template.c:1366-1461 and sbrdsp.c:46-95,
 // sbrdsp_template.c:27-48 were read to confirm these forms and the order of the
 // stages (window, five-term sum, transform, shuffle; transform, butterfly, window in
-// ten passes); read, not copied. The transforms are not the 64-point MDCT ffmpeg
-// uses: with the angle of the kernel written as pi*(2k+1)*(2m+1)/256, the analysis
-// is a DCT-IV (real part) plus i times a DST-IV (imaginary part) of the 64 sums
-// folded onto odd indices m, and the synthesis is the same pair of transforms in the
-// other direction. go-fft's DCT-IV plan computes both, with the factor 2 the analysis
-// needs built in: DST-IV(x)[k] is (-1)^k times DCT-IV of x reversed (go-fft's own
-// dst.go states it), so the reversal is folded into the folding and the sign into the
-// last step, and the plan's second pass and wrapper are saved.
+// ten passes); read, not copied. With the angle of the kernel written as
+// pi*(2k+1)*(2m+1)/256, the analysis is ONE real 64-point DCT-IV of the 64 sums folded
+// onto odd indices m, whose lower half is the real parts and whose upper half, reversed
+// and negated, is the imaginary parts (derived at process); the synthesis is two
+// DCT-IVs per slot, one on the real plane and one on the imaginary plane, then a
+// butterfly. Both run on go-fft's float32 DCT-IV plan, which has the factor 2 the
+// analysis needs built in.
 //
 // The banks run in float32 (go-avkit/decode#77): the history, the windows, the window
-// sums (floats.MulAddRows32, one fused step per tap) and, in the synthesis, the DCT-IV
-// pair (fft.DCTPlan32.DCTPair, relative 2-norm error at most eps32*log2(64) against
-// double-double, asserted by go-fft). This replaces the earlier contract of one
-// float32 rounding at the output. The error of a slot is bounded, per slot and in
+// sums (floats.MulAddRows32, one fused step per tap) and the DCT-IV
+// (fft.DCTPlan32, relative 2-norm error at most eps32*log2(64) against
+// double-double, asserted by go-fft), the analysis four slots per call (DCTQuad), the
+// synthesis a plane pair per slot (DCTPair, DCTQuad for the two channels of a
+// parameter stereo frame). The analysis of go-avkit/decode up to #133 ran two float64
+// transforms per slot; that version is the oracle of the tests (aac_sbr_qmff64_test.go).
+// The error of a slot is bounded, per slot and in
 // 2-norm, by the sums derived in aac_sbr_qmf_bound_test.go from those parts, and the
 // tests assert it against the definition in float64 and against 256-bit arithmetic;
 // the chain of a whole stream is asserted to an empirical 2^-21 of its peak. The
@@ -67,10 +69,8 @@ const (
 )
 
 var (
-	sbrDCT4 = fft.NewDCTPlan(sbrSynBands, 4)
-
-	// sbrDCT4f is the float32 plan of the synthesis bank (single precision throughout
-	// where the CPU has AVX2 and FMA).
+	// sbrDCT4f is the float32 plan of both banks (single precision throughout where the
+	// CPU has AVX2 and FMA).
 	sbrDCT4f = fft.NewDCTPlan32(sbrSynBands, 4)
 
 	// sbrAnaWindow is the analysis window: every second tap of the prototype.
@@ -100,15 +100,37 @@ var (
 	}()
 )
 
+// sbrAnaBatch is the number of slots whose transforms the analysis runs in one
+// fft.DCTPlan32.DCTQuad call.
+const sbrAnaBatch = 4
+
 // sbrAnalysis is the state of the analysis bank of one channel.
 type sbrAnalysis struct {
-	hist    [sbrAnaKeep + aacFrameLen]float32 // newest sample first, in 16-bit units
-	u, v, w [sbrSynBands]float32
-	c, s    [sbrSynBands]float32
+	hist [sbrAnaKeep + aacFrameLen]float32 // newest sample first, in 16-bit units
+	u    [sbrSynBands]float32
+	w, c [sbrAnaBatch][sbrSynBands]float32 // the folded sums and their transforms
 }
 
 // process takes the 1024 core samples of a frame and writes the 32 subband
 // samples of each of the 32 bands to low[k][first:first+32].
+//
+// One real 64-point transform per slot: with the 64 window sums u folded into w (see
+// below), the transform C of w, factor 2 included, is the whole slot,
+//
+//	X[k] = C[k] - i C[63-k],  k < 32.
+//
+// Derivation. X[k] = 2 sum over n < 64 of u[n] exp(i*theta), theta = (2k+1)(4n-1) pi/256.
+// The angle (4n-1) is 2m+1 for m = 2n-1 up to n = 32, and for n >= 33 it is mirrored
+// (256-(4n-1) = 2m+1 with m = 128-2n), which turns cos theta into -cos of the mirrored
+// angle and keeps sin theta; n = 0 is m = -1, the mirror of m = 0 about -1/2 (cos kept,
+// sin negated). So w[2n-1] = u[n] (n = 1..32), w[128-2n] = -u[n] (n = 33..63), w[0] = u[0],
+// and Re X[k] = C[k] with C[j] = 2 sum over m of w[m] cos((2j+1)(2m+1) pi/256). For the
+// imaginary part, (2(63-k)+1) = 128-(2k+1) gives cos((2m+1)pi/2 - (2k+1)(2m+1)pi/256) =
+// (-1)^m sin((2k+1)(2m+1)pi/256): the odd m of n <= 32 give -sin = -sin theta; the even
+// m of n >= 33 give -sin of the mirrored angle, and sin theta is +sin of it; n = 0 gives
+// +sin((2k+1)pi/256) where sin theta is the negative of it. In all three cases the term
+// of C[63-k] is the negative of the term of Im X[k], so C[63-k] = -Im X[k]. The upper
+// half of the transform is the imaginary part: one transform per slot, no second one.
 func (a *sbrAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]complex128, first int) {
 	// the history is kept newest first, so that the samples the window meets in the
 	// order of the definition (x[0] the newest) are consecutive: the old frame's newest
@@ -117,30 +139,31 @@ func (a *sbrAnalysis) process(in []float32, low *[sbrAnaBands][sbrLowSlots]compl
 	for i, s := range in[:aacFrameLen] {
 		a.hist[aacFrameLen-1-i] = s * sbrPCMUnit // exact: a power of two
 	}
-	for l := 0; l < sbrQMFSlots; l++ {
-		// x[i] of the definition is h[i], h the 320 samples from the newest of the
-		// slot: u[n] = sum over j < 5 of c[n+64j] * x[n+64j], five rows of 64 that the
-		// kernel sums with the 64 results in registers, in the order of j
-		h := a.hist[aacFrameLen-32-32*l : aacFrameLen-32-32*l+sbrAnaTaps]
-		a.u = [sbrSynBands]float32{}
-		floats.MulAddRows32(a.u[:], sbrAnaWindow32[:], 64, h, 64, 5)
-		// fold the 64 sums onto the odd angles of the DCT-IV kernel: the angle
-		// (4n-1) is 2m+1 for m = 2n-1 up to n = 32, and for n >= 33 it is mirrored
-		// (256-(4n-1) = 2m+1 with m = 128-2n), which negates the cosine and keeps
-		// the sine; n = 0 is m = -1, the mirror of m = 0 about -1/2. The sine part
-		// is a DST-IV, which is the DCT-IV of the reversed input: w[63-m] is the
-		// sine part's value at m.
-		a.v[0], a.w[63] = a.u[0], -a.u[0]
-		for n := 1; n <= 32; n++ {
-			a.v[2*n-1], a.w[64-2*n] = a.u[n], a.u[n]
+	for l0 := 0; l0 < sbrQMFSlots; l0 += sbrAnaBatch {
+		for q := range a.w {
+			// x[i] of the definition is h[i], h the 320 samples from the newest of the
+			// slot: u[n] = sum over j < 5 of c[n+64j] * x[n+64j], five rows of 64 that the
+			// kernel sums with the 64 results in registers, in the order of j
+			l := l0 + q
+			h := a.hist[aacFrameLen-32-32*l : aacFrameLen-32-32*l+sbrAnaTaps]
+			a.u = [sbrSynBands]float32{}
+			floats.MulAddRows32(a.u[:], sbrAnaWindow32[:], 64, h, 64, 5)
+			w := &a.w[q]
+			w[0] = a.u[0]
+			for n := 1; n <= 32; n++ {
+				w[2*n-1] = a.u[n]
+			}
+			for n := 33; n < sbrSynBands; n++ {
+				w[128-2*n] = -a.u[n]
+			}
 		}
-		for n := 33; n < sbrSynBands; n++ {
-			a.v[128-2*n], a.w[2*n-65] = -a.u[n], a.u[n]
-		}
-		sbrDCT4.DCTMixedPair(a.c[:], a.s[:], a.v[:], a.w[:], fft.NormBackward)
-		for k := 0; k < sbrAnaBands; k += 2 {
-			low[k][first+l] = complex(float64(a.c[k]), float64(a.s[k]))
-			low[k+1][first+l] = complex(float64(a.c[k+1]), -float64(a.s[k+1]))
+		sbrDCT4f.DCTQuad([4][]float32{a.c[0][:], a.c[1][:], a.c[2][:], a.c[3][:]},
+			[4][]float32{a.w[0][:], a.w[1][:], a.w[2][:], a.w[3][:]}, fft.NormBackward)
+		for q := range a.c {
+			c := &a.c[q]
+			for k := 0; k < sbrAnaBands; k++ {
+				low[k][first+l0+q] = complex(float64(c[k]), -float64(c[sbrSynBands-1-k]))
+			}
 		}
 	}
 }
