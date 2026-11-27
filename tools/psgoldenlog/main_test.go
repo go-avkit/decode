@@ -4,7 +4,10 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -102,7 +105,7 @@ func TestErrorsNameTheirCause(t *testing.T) {
 	}
 	// a missing log is reported as such, not as "no stream"
 	_, err := run(t, "--route", "amd64", "--log", filepath.Join(dir, "none"), "--golden", filepath.Join(dir, "g.txt"))
-	if err == nil || !strings.Contains(err.Error(), "no such file") {
+	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("missing log: %v", err)
 	}
 	// a golden path that cannot be read (a directory) is an error, not an empty file
@@ -112,7 +115,7 @@ func TestErrorsNameTheirCause(t *testing.T) {
 	}
 	// a golden file that cannot be written
 	_, err = run(t, "--route", "amd64", "--log", log, "--golden", filepath.Join(dir, "no", "g.txt"))
-	if err == nil || !strings.Contains(err.Error(), "no such file") {
+	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("unwritable golden: %v", err)
 	}
 	// a line longer than the scanner's buffer is a read error, not a silent truncation
@@ -121,7 +124,7 @@ func TestErrorsNameTheirCause(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = run(t, "--route", "amd64", "--log", long, "--golden", filepath.Join(dir, "g.txt"))
-	if err == nil || !strings.Contains(err.Error(), "too long") {
+	if !errors.Is(err, bufio.ErrTooLong) {
 		t.Errorf("long line: %v", err)
 	}
 }
