@@ -523,7 +523,7 @@ A `Frame` owns its planes: the pictures h265 returns are read-only views of its 
 pictures, and each is copied into the `Frame` (packed, one byte a sample, or a little-endian
 word above eight bits), so what a caller does with a `Frame` never reaches the decoder.
 
-**Security fix in v0.17.3.** It takes h265 v0.24.2 (v0.24.1 holds the fix, v0.24.2 only a
+**Security fix in v0.18.1.** It takes h265 v0.24.2 (v0.24.1 holds the fix, v0.24.2 only a
 performance change). Before, a stream that swapped a parameter set between the slice segments of
 one picture made the HEVC decoder panic with an index out of range, and a stream whose slice
 segments restarted the picture made it decode the picture again for each segment (a CPU
