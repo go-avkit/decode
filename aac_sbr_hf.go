@@ -59,6 +59,8 @@ const (
 type sbrChanDSP struct {
 	ana sbrAnalysis
 	syn sbrSynthesis
+	// anaOracle is a test hook: when set, it replaces ana (aac_sbr_qmff64_test.go).
+	anaOracle sbrAnaOracle
 	// low is the analysis of the core signal by band and slot (X_low). Bands
 	// at or above the start frequency are kept too: they are cheap and the
 	// standard defines them.
@@ -79,8 +81,21 @@ func (d *sbrChanDSP) analyse(pcm []float32) {
 	for k := range d.low {
 		copy(d.low[k][:sbrHFGen], d.low[k][sbrQMFSlots:])
 	}
+	if d.anaOracle != nil {
+		d.anaOracle.process(pcm, &d.low, sbrHFGen)
+		return
+	}
 	d.ana.process(pcm, &d.low, sbrHFGen)
 }
+
+// sbrAnaOracle is the analysis bank of go-avkit/decode#133 and before (two float64
+// transforms per slot), which the tests install in its place (aac_sbr_qmff64_test.go).
+type sbrAnaOracle interface {
+	process(in []float32, low *[sbrAnaBands][sbrLowSlots]complex128, first int)
+}
+
+// sbrNewAnaOracle, when a test sets it, makes every new channel use its oracle.
+var sbrNewAnaOracle func() sbrAnaOracle
 
 // inverseFilter estimates the coefficients a0, a1 of the low bands 0 to k0-1 from
 // the low band array.
@@ -200,6 +215,9 @@ func (d *sbrChanDSP) generate(t *sbrTables, c *sbrChannel) {
 func (s *sbrState) channelDSP(ch int) *sbrChanDSP {
 	if s.dsp[ch] == nil {
 		s.dsp[ch] = new(sbrChanDSP)
+		if sbrNewAnaOracle != nil {
+			s.dsp[ch].anaOracle = sbrNewAnaOracle()
+		}
 	}
 	return s.dsp[ch]
 }
