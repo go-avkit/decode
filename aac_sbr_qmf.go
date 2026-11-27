@@ -184,13 +184,10 @@ func (y *sbrSynthesis) slot32(o *[sbrSynBands]float32, a, b *[sbrSynBands]float3
 	y.finish(o)
 }
 
-// slotQuad is slot32 of two banks (the left and the right channel of a parameter
-// stereo frame) with their four transforms batched in one DCTQuad call.
-func slotQuad(y1, y2 *sbrSynthesis, o1, o2 *[sbrSynBands]float32, a1, b1, a2, b2 *[sbrSynBands]float64) {
-	for k := range y1.a {
-		y1.a[k], y1.b[k] = float32(a1[k]), float32(b1[k])
-		y2.a[k], y2.b[k] = float32(a2[k]), float32(b2[k])
-	}
+// slotQuad32 is slot32 of two banks (the left and the right channel of a parameter
+// stereo frame), whose inputs a and b are already in place, with their four transforms
+// batched in one DCTQuad call.
+func slotQuad32(y1, y2 *sbrSynthesis, o1, o2 *[sbrSynBands]float32) {
 	sbrDCT4f.DCTQuad([4][]float32{y1.c[:], y1.s[:], y2.c[:], y2.s[:]},
 		[4][]float32{y1.a[:], y1.b[:], y2.a[:], y2.b[:]}, fft.NormBackward)
 	y1.finish(o1)

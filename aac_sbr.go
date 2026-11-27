@@ -84,9 +84,10 @@ type sbrState struct {
 	psBaselineTest bool // test switch: baseline mixing, procedure A for every ICC mode and IPD/OPD ignored (decode v0.7.0 to v0.7.x)
 	psOn           bool // PS may be carried (the channel policy, aacConfig.stereoOut): its extension is parsed into ps and applied
 	ps             psState
-	hyb            *psHybrid // the PS hybrid bank, made when psHybridTest or PS first needs it
-	mix            *psMixer  // the PS decorrelator, mixer and right synthesis bank, made when PS first needs it
-	extBits        int       // bits of bs_extension_data in the last frame, 0 for none
+	hyb            *psHyb32    // the PS hybrid bank, made when psHybridTest or PS first needs it
+	hybOracle      psHybOracle // test hook: the float64 hybrid bank and planes replace the binary32 ones (aac_ps_hybridf64_test.go)
+	mix            *psMixer    // the PS decorrelator, mixer and right synthesis bank, made when PS first needs it
+	extBits        int         // bits of bs_extension_data in the last frame, 0 for none
 	ch             [2]sbrChannel
 	dsp            [2]*sbrChanDSP      // signal state of the channels (aac_sbr_hf.go)
 	refill         [2]bool             // a header reset: the smoothing history is refilled at the next adjustment
@@ -101,6 +102,9 @@ func newSBRState(coreRate int) *sbrState {
 	s.t.rate = 2 * coreRate
 	if sbrNewAdjOracle != nil {
 		s.adjOracle = sbrNewAdjOracle()
+	}
+	if psNewHybOracle != nil {
+		s.hybOracle = psNewHybOracle()
 	}
 	s.turnoff()
 	return s

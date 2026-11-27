@@ -534,18 +534,6 @@ func (m *psMixer) transientSlot(n int, s *[psMaxRows]complex128, dl *psDecLayout
 	}
 }
 
-// apply turns the mono hybrid rows of h into the left rows (in place) and the right rows
-// (m.rr), for an applied frame; top is the SBR top kx+M. It is the slot steps below run
-// over the whole frame; the slot by slot pipeline interleaves them with the stages that
-// precede and follow.
-func (m *psMixer) apply(h *psHybrid, p *psState, top int) {
-	dl := m.begin(p, top)
-	for n := range h.rows {
-		m.transientSlot(n, &h.rows[n], dl)
-		m.step(n, &h.rows[n], &m.rr[n], dl)
-	}
-}
-
 // begin starts a frame: the layout (a switch resets the decorrelator), the phase mode,
 // the past of the rows above the SBR top, and the matrices of the frame's slots. It
 // returns the layout.

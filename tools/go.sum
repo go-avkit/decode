@@ -13,8 +13,8 @@ github.com/go-avkit/bitstream v0.4.0 h1:cpPNgKWeAjEpTzjORXPH4Advu2BdtCBHloQXSwgl
 github.com/go-avkit/bitstream v0.4.0/go.mod h1:aA50I8nXKyJu6ElfTHM957BRrx5JjgSYUxs++n5VM8o=
 github.com/go-avkit/h264 v0.15.0 h1:qS2p5P49/5IORABb/LX87Dsx3Ow65DsGv40GOVcstSU=
 github.com/go-avkit/h264 v0.15.0/go.mod h1:pV4PlD0loEiFsV9+A3tNZtCmbPjHoLTIKB7m1oGvREs=
-github.com/go-avkit/h265 v0.24.0 h1:87u8YUm+Bvr2W8lAM7KfAEwHh1Ho5zHlgZu14fZpq3s=
-github.com/go-avkit/h265 v0.24.0/go.mod h1:u5U+6CDxmxTmcwu+rzfqQ6WQgWmQKz0v6laZn7RBYeY=
+github.com/go-avkit/h265 v0.24.2 h1:w0ByM/ydnIBGqBn+b9HWBkAJidOSwUZD0m/iNBR907g=
+github.com/go-avkit/h265 v0.24.2/go.mod h1:zxEkIW5Tw0h1pi1KsoHbZaX1xneKIlQHV5qokikUNOk=
 github.com/go-dsp/signal v0.2.0 h1:+566tdjkOtNctyqU+xzf7NRGYu4rR9GvCk4QtF9pYWY=
 github.com/go-dsp/signal v0.2.0/go.mod h1:V1WJie25RkckmxghlSe11czV9MfD7H8ba+QB0ZR1XCI=
 github.com/go-fft/fft v0.45.0 h1:i3ZxohNGFiwk5xBVIKZiU6iDIgf8OZdhfvQ1sLta1co=
