@@ -26,6 +26,8 @@ github.com/go-scikit/refbench v0.1.1 h1:3UNGHqwOzIdjaKQo2A1j6q0UtmqIXBZ4htCiVEb1
 github.com/go-scikit/refbench v0.1.1/go.mod h1:PhJxvLwXiQeKLP2f5ndcb9k5k4PTvU1rSFJ/MKRCrU0=
 github.com/go-simd/floats v0.41.0 h1:VIygG7l4wGOwverwJysKCd2rsG7YpnimnxGzjd4K8WI=
 github.com/go-simd/floats v0.41.0/go.mod h1:Aq5a6oY5pUqm9Hpi+iV2nrNmaaUb0rwHvUHIerXWSvA=
+github.com/go-simd/floats v0.43.0 h1:hWqztVqRtfN6wauVSceVmELlXN0Og03x5zgXQCBtlyg=
+github.com/go-simd/floats v0.43.0/go.mod h1:Aq5a6oY5pUqm9Hpi+iV2nrNmaaUb0rwHvUHIerXWSvA=
 github.com/go-test/deep v1.1.0 h1:WOcxcdHcvdgThNXjw0t76K42FXTU7HpNQWHpA2HHNlg=
 github.com/go-test/deep v1.1.0/go.mod h1:5C2ZWiW0ErCdrYzpqxLbTX7MG14M9iiw8DgHncVwcsE=
 github.com/go-videodsp/kernels v0.21.0 h1:wXb5PliwZsrQqQyzvC9ga2+1bYjGHfO6WIXCIPLY2/U=

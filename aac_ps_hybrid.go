@@ -440,7 +440,7 @@ func (s *sbrState) psApplyFrame(d *sbrChanDSP, kx, m int, withSBR bool, out [2][
 		if s.hyb == nil {
 			s.hyb = new(psHyb32)
 		}
-		s.hyb.pipeline(s, d, kx, m, out)
+		s.hyb.pipeline32(s, d, kx, m, out)
 		return
 	}
 	{

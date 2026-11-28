@@ -211,8 +211,10 @@ type psDecLayout struct {
 	band             []uint8
 	runs             []psBandRun // the rows grouped by consecutive equal band, in row order
 	ap               [psMaxAllPass]psAllPass
-	apRows           floats.AllPassRows // the constants of ap as one table per field, for floats.AllPass3
-	image            [psMaxRows]bool    // rows of negative centre frequency: they take the conjugate phases (section 6.2)
+	apRows           floats.AllPassRows   // the constants of ap as one table per field, for floats.AllPass3
+	image            [psMaxRows]bool      // rows of negative centre frequency: they take the conjugate phases (section 6.2)
+	apRows32         floats.AllPassRows32 // the same constants in float32, for floats.AllPass3Split32
+	segs             []psMixSeg           // runs split by the source of the decorrelated signal
 }
 
 // psBandRun is rows [start, end) of one parameter band.
@@ -279,6 +281,7 @@ func newPSDecLayout(is34 bool) *psDecLayout {
 		}
 		dl.runs = append(dl.runs, psBandRun{uint8(r), uint8(r + 1), dl.band[r]})
 	}
+	dl.initStage32()
 	return dl
 }
 
@@ -324,6 +327,10 @@ type psMixer struct {
 	w    [3][psLinkMaxDelay + 1][psMaxAllPass]complex128
 	tick int
 
+	// the float32 stage's rings and plan (aac_ps_mix32.go); the complex128 ones above and
+	// below are the oracle's
+	st32 psStage32
+
 	// the proved memory of the all-pass rows (allPassPlan) and its output
 	plan     *floats.AllPass3Plan
 	planFor  *psDecLayout
@@ -343,6 +350,7 @@ type psMixer struct {
 func (m *psMixer) reset() {
 	m.in = [psHist + 1][psMaxRows]complex128{}
 	m.w = [3][psLinkMaxDelay + 1][psMaxAllPass]complex128{}
+	m.st32.reset()
 	m.peak, m.avg, m.dev = [psMaxBands]float64{}, [psMaxBands]float64{}, [psMaxBands]float64{}
 	// the phase history before the first envelope, and after a layout switch, is angle 0
 	for i := range m.hist {
@@ -389,6 +397,7 @@ func (m *psMixer) clearAbove(dl *psDecLayout, top int) {
 			break
 		}
 	}
+	m.st32.clearAbove(dl, kt)
 	for s := range m.in {
 		clear(m.in[s][kt:dl.rows])
 	}
@@ -521,7 +530,12 @@ func (m *psMixer) transient(rows *[sbrQMFSlots][psMaxRows]complex128, dl *psDecL
 func (m *psMixer) transientSlot(n int, s *[psMaxRows]complex128, dl *psDecLayout) {
 	var pw [psMaxBands]float64
 	dl.bandPowers(&pw, s)
-	for b := 0; b < dl.nb; b++ {
+	m.transientBands(n, &pw, dl.nb)
+}
+
+// transientBands is the detector of slot n from the powers pw of the nb parameter bands.
+func (m *psMixer) transientBands(n int, pw *[psMaxBands]float64, nb int) {
+	for b := 0; b < nb; b++ {
 		pk := max(psPeakDecay*m.peak[b], pw[b])
 		m.peak[b] = pk
 		m.avg[b] += psSmooth * (pw[b] - m.avg[b])
