@@ -20,19 +20,18 @@ import (
 // binary32 adjustment and hybrid bank.
 const aacSBRAnalysisBound = 0x1p-17
 
-// aacSBRIllConditionedBound is the bound for two fixtures whose SBR path amplifies any
-// rounding: he48-mono.aac and he44-ps.aac (the PS hybrid's own filters). There the two-
-// transform oracle itself is 2.7e-5 from the float64 five-pass definition (3.4e-5 for the
-// new bank), so a difference of 1.8e-5 between the two banks is two errors of the same
-// size, not a defect of one. 2^-14 is the bound stated for them; the corpus and the
-// conformance streams keep 2^-17.
-const aacSBRIllConditionedBound = 0x1p-14
+// aacSBRDefinitionBound is the bound for two fixtures whose SBR path amplifies any
+// rounding: he48-mono.aac and he44-ps.aac (the PS hybrid's own filters). Against the
+// two-transform bank they differ by 1.76e-5 and 9.4e-6, which is two errors of the same
+// size, so for them the decoder is held to the float64 definition of the analysis bank
+// (refAnalysis, a direct sum with nothing folded) through the whole decoder instead.
+// Measured: he48-mono 3.41e-5 (2^-14.9), he44-ps 1.59e-5 (2^-15.9) from the definition;
+// the bound is 2^-14 (6.1e-5). The corpus and the conformance streams keep 2^-17
+// against the two-transform bank.
+const aacSBRDefinitionBound = 0x1p-14
 
-func aacSBRFixtureBound(name string) float64 {
-	if name == "he48-mono.aac" || name == "he44-ps.aac" {
-		return aacSBRIllConditionedBound
-	}
-	return aacSBRAnalysisBound
+func aacSBRIllConditioned(name string) bool {
+	return name == "he48-mono.aac" || name == "he44-ps.aac"
 }
 
 // TestSBRAnalysisBound: the analysis bank against its two-transform oracle through the SBR
@@ -46,8 +45,19 @@ func TestSBRAnalysisBound(t *testing.T) {
 		if d > worst {
 			worst, at = d, name
 		}
-		if b := aacSBRFixtureBound(name); d > b {
-			t.Errorf("%s: PCM differs from the two-transform analysis by %.3e, the bound is %.3e", name, d, b)
+		if aacSBRIllConditioned(name) {
+			return // held to the definition instead, by def below
+		}
+		if d > aacSBRAnalysisBound {
+			t.Errorf("%s: PCM differs from the two-transform analysis by %.3e, the bound is %.3e", name, d, aacSBRAnalysisBound)
+		}
+	}
+	// the two ill-conditioned fixtures: the decoder against the float64 definition of the
+	// bank (the extended-precision side); the two-transform bank is logged beside it
+	def := func(name string, d, peak float64) {
+		t.Logf("%-28s against the definition: max |PCM difference| %.3e (peak %.3f)", name, d, peak)
+		if d > aacSBRDefinitionBound {
+			t.Errorf("%s: PCM differs from the float64 definition by %.3e, the bound is %.3e", name, d, aacSBRDefinitionBound)
 		}
 	}
 	for _, fx := range []struct {
@@ -62,6 +72,15 @@ func TestSBRAnalysisBound(t *testing.T) {
 			d, peak := sbrMaxDiff(got[c], want[c])
 			note(fx.name, d, peak)
 		}
+		if aacSBRIllConditioned(fx.name) {
+			restore := installDefOracle()
+			ref := sbrFixtureOut(t, fx.name, fx.frames, false)
+			restore()
+			for c := range got {
+				d, peak := sbrMaxDiff(got[c], ref[c])
+				def(fx.name, d, peak)
+			}
+		}
 	}
 	run := func(name string, frames [][]byte, cfg aacConfig, n int) {
 		t.Helper()
@@ -72,6 +91,14 @@ func TestSBRAnalysisBound(t *testing.T) {
 		d1, p1 := sbrMaxDiff(l, wl)
 		d2, _ := sbrMaxDiff(r, wr)
 		note(name, math.Max(d1, d2), p1)
+		if aacSBRIllConditioned(name) {
+			restore := installDefOracle()
+			rl, rr, _ := psDecodeFrames(t, cfg, frames, n)
+			restore()
+			e1, q1 := sbrMaxDiff(l, rl)
+			e2, _ := sbrMaxDiff(r, rr)
+			def(name, math.Max(e1, e2), q1)
+		}
 	}
 	for _, spec := range psStreamSpecs() {
 		b := psBuildStream(t, spec)

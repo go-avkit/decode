@@ -50,6 +50,27 @@ func (a *sbrAnaOracleF64) process(in []float32, low *[sbrAnaBands][sbrLowSlots]c
 	}
 }
 
+// sbrAnaOracleDef is the analysis bank by its definition in float64 (refAnalysis: a direct
+// sum, no transform), the extended-precision side of the bound of the two fixtures whose SBR
+// path amplifies rounding (aac_sbr_anabound_test.go).
+type sbrAnaOracleDef struct{ r refAnalysis }
+
+func (a *sbrAnaOracleDef) process(in []float32, low *[sbrAnaBands][sbrLowSlots]complex128, first int) {
+	out := a.r.frame(in)
+	for l := range out {
+		for k := range out[l] {
+			low[k][first+l] = out[l][k]
+		}
+	}
+}
+
+// installDefOracle makes every channel made from now on run its analysis by the definition.
+func installDefOracle() func() {
+	old := sbrNewAnaOracle
+	sbrNewAnaOracle = func() sbrAnaOracle { return new(sbrAnaOracleDef) }
+	return func() { sbrNewAnaOracle = old }
+}
+
 // installAnaOracle makes every channel made from now on run its analysis through the
 // two-transform bank; the returned function restores the decoder's.
 func installAnaOracle() func() {
