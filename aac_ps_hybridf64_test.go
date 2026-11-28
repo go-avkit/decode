@@ -197,3 +197,47 @@ func installHybOracle() func() {
 	psNewHybOracle = func() psHybOracle { return new(psHybOracleF64) }
 	return func() { psNewHybOracle = old }
 }
+
+// psSynthesiseSlot32 is the synthesis of one slot of complex128 rows: the sums of the rows of
+// the split bands (added in row order) and the other rows copied, into the synthesis bank's
+// inputs, binary32: a[k] the real part of band k and b[63-k] its imaginary part. It is the
+// test oracle of psSynthesiseSlot32P.
+func psSynthesiseSlot32(r *[psMaxRows]complex128, is34 bool, a, b *[sbrSynBands]float32) {
+	ly := psLayoutOf(is34)
+	for k := 0; k < ly.nSplit; k++ {
+		var sum complex128
+		for _, v := range r[ly.start[k]:ly.start[k+1]] {
+			sum += v
+		}
+		a[k], b[sbrSynBands-1-k] = float32(real(sum)), float32(imag(sum))
+	}
+	for j, v := range r[ly.start[ly.nSplit]:] {
+		k := ly.nSplit + j
+		if k >= sbrSynBands {
+			break
+		}
+		a[k], b[sbrSynBands-1-k] = float32(real(v)), float32(imag(v))
+	}
+}
+
+// pipeline is the slot pipeline of a frame with the complex128 decorrelator and mixer
+// (psMixer.step) behind the binary32 hybrid bank: the test oracle of pipeline32.
+func (h *psHyb32) pipeline(s *sbrState, d *sbrChanDSP, kx, m int, out [2][]float32) {
+	mx := s.mix
+	is34 := s.ps.is34
+	var look [psLook][psSplitMax]complex128
+	d.psLookAhead(kx, &look)
+	h.begin(&d.x, &look, is34)
+	dl := mx.begin(&s.ps, kx+m)
+	outL, outR := d.syn.begin(out[0]), mx.syn.begin(out[1])
+	var rows, rr [psMaxRows]complex128
+	for n := 0; n < sbrQMFSlots; n++ {
+		h.slot(n, &d.x, is34, &rows)
+		mx.transientSlot(n, &rows, dl)
+		mx.step(n, &rows, &rr, dl)
+		psSynthesiseSlot32(&rows, is34, &d.syn.a, &d.syn.b)
+		psSynthesiseSlot32(&rr, is34, &mx.syn.a, &mx.syn.b)
+		slotQuad32(&d.syn, &mx.syn, (*[sbrSynBands]float32)(outL[n*sbrSynBands:]), (*[sbrSynBands]float32)(outR[n*sbrSynBands:]))
+	}
+	h.end(&d.x)
+}
