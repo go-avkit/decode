@@ -263,7 +263,7 @@ jobs:
           # go-avkit/decode#95): the whole package takes 310 s on riscv64, 343 s on
           # loong64, 416 s on ppc64le and 418 s on s390x, the slowest tests being
           # TestAACAccuracy (52 to 124 s), TestOpusCompareSanity, TestSBRTablesSweep and
-          # TestAACWindowSequences; TestPSOutputGolden is 3 to 7 s of it. The default
+          # TestAACWindowSequences; TestPSOutputBound is 3 to 7 s of it. The default
           # 10 minute timeout of go test is 1.4 times the slowest lane, and a loaded runner
           # went past it (riscv64 and ppc64le, a red main): 30 minutes is 4 times the
           # slowest measured lane.

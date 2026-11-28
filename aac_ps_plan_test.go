@@ -18,6 +18,35 @@ func TestPSAllPassPlanRefusalPanics(t *testing.T) {
 	new(psMixer).allPassPlan(dl)
 }
 
+// TestPSAllPassPlan32Guards pins the guards of allPassPlan32: the plan is kept for its layout
+// and stage, rebuilt for another layout and for a copy of the stage (a plan proves the memory
+// of the stage it was built for, not of a copy's), and a refused table panics.
+func TestPSAllPassPlan32Guards(t *testing.T) {
+	a, b := newPSDecLayout(false), newPSDecLayout(true)
+	s := new(psStage32)
+	p := s.allPassPlan32(a)
+	if s.allPassPlan32(a) != p {
+		t.Fatal("the plan was rebuilt for the same layout")
+	}
+	if s.allPassPlan32(b) == s.allPassPlan32(a) {
+		t.Fatal("the plan was kept across a layout change")
+	}
+	q := s.allPassPlan32(a)
+	c := new(psStage32)
+	*c = *s
+	if c.allPassPlan32(a) == q {
+		t.Fatal("the plan of the original stage served a copy")
+	}
+	bad := newPSDecLayout(false)
+	bad.apRows32.Q1Re = bad.apRows32.Q1Re[:bad.nAP-1]
+	defer func() {
+		if recover() == nil {
+			t.Fatal("allPassPlan32 accepted a layout table that is one row short")
+		}
+	}()
+	new(psStage32).allPassPlan32(bad)
+}
+
 // TestPSAllPassPlanIsReused checks that a plan is kept for its layout and mixer and rebuilt
 // for another layout.
 func TestPSAllPassPlanIsReused(t *testing.T) {

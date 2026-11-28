@@ -4,109 +4,21 @@
 package decode
 
 import (
-	"bufio"
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
-	"fmt"
 	"math"
-	"os"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"testing"
-
-	"golang.org/x/sys/cpu"
 )
 
-// psOutputSHA is the SHA-256 of the left then the right PCM, as float32 bits.
-func psOutputSHA(l, r []float32) string {
-	h := sha256.New()
-	var b [4]byte
-	for _, ch := range [2][]float32{l, r} {
-		for _, v := range ch {
-			binary.LittleEndian.PutUint32(b[:], math.Float32bits(v))
-			h.Write(b[:])
-		}
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// The golden hashes are the SHA-256 of the decoded PCM of every written stream (S01 to
-// S19, which exercise the layout switch, the freeze and resume, the carried matrix and
-// the fade in of the first matrix), of the two streams below in which SBR drops out, and
-// of he44-ps.aac. They pin the output bit for bit: a restructuring that keeps the
-// arithmetic of every sample (the order of the additions, the fused multiply-adds) leaves
-// them unchanged.
-//
-// One file per route of the float32 arithmetic, testdata/aac/psgolden/<route>.txt, a
-// line "<stream> <sha256>" each. The routes (go-avkit/decode#77): arm64 (the NEON kernels
-// of go-fft's DCT pair and of floats.MulAddRows32), amd64 with AVX2+FMA, and "portable"
-// for everything else where the pair is two single transforms and the row sums are Go
-// code (amd64 without AVX2 and the like); the lanes where the compiler fuses
-// multiply-adds on its own or the integers are 32 bits (386, loong64, ppc64le, riscv64,
-// s390x) and arm64 under the race detector have a file of their own. The banks' PCM is
-// float32 arithmetic, so the order of the fused steps of each kernel reaches it and the
-// routes do not agree bit for bit; every route meets the bounds of
-// aac_sbr_qmf_bound_test.go and aac_sbr_adjbound_test.go. A change of the arithmetic on
-// purpose records them again and says why: PS_GOLDEN_RECORD=1 on each route rewrites its
-// file.
-
-// psPairFused reports whether go-fft runs the DCT pair as one fused kernel here.
-func psPairFused() bool {
-	switch runtime.GOARCH {
-	case "arm64":
-		return true
-	case "amd64":
-		return cpu.X86.HasAVX2 && cpu.X86.HasFMA
-	}
-	return false
-}
-
-// psGoldenRoute is the name of this machine's route.
-func psGoldenRoute() string {
-	route := runtime.GOARCH
-	if psRaceBuild {
-		route += "race"
-	}
-	switch route {
-	case "386", "arm64race", "loong64", "ppc64le", "riscv64", "s390x":
-		return route
-	}
-	switch {
-	case runtime.GOARCH == "arm64":
-		return "arm64"
-	case psPairFused():
-		return "amd64"
-	}
-	return "portable"
-}
-
-// psGoldenLoad reads a route's file.
-func psGoldenLoad(t *testing.T, route string) map[string]string {
-	t.Helper()
-	f, err := os.Open(filepath.Join("testdata", "aac", "psgolden", route+".txt"))
-	if os.IsNotExist(err) {
-		return nil // no file for this route yet: the test dumps what it decodes
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	golden := map[string]string{}
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		name, sum, ok := strings.Cut(sc.Text(), " ")
-		if !ok || len(sum) != 64 {
-			t.Fatalf("%s: line %q is not \"<stream> <sha256>\"", route, sc.Text())
-		}
-		golden[name] = sum
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatal(err)
-	}
-	return golden
-}
+// The PS output is held to a stated bound of its float64 definition, not to recorded hashes
+// (decode#77). The decorrelation and mixing stage runs in binary32 planes (aac_ps_mix32.go)
+// and its rounding depends on the route (fused multiply-adds, kernel order), so a hash is a
+// property of one machine; the bound is the contract: over every written stream (S01 to
+// S19, which exercise the layout switch, the freeze and resume, the carried matrix and the
+// fade in of the first matrix), the two streams below in which SBR drops out, and he44-ps.aac,
+// the PCM (binary32, full scale 1) differs from the PCM of the float64 pipeline of v0.17.1
+// (psHybOracleF64: the float64 hybrid bank, decorrelator and mixer) by at most
+// aacPSHybridBound = 2^-17, the bound of the binary32 envelope adjustment and hybrid bank.
+// The measured worst case is in the test log.
 
 // psDropoutSpecs are two streams in which SBR drops out, the frames of S16a34 (34 bands,
 // IPD/OPD) and of S09c with no SBR fill element at all (withSBR false: PS is suspended
@@ -138,56 +50,42 @@ func psDropoutSpecs() []psStreamSpec {
 	return out
 }
 
-// TestPSOutputGolden: the decoded PCM is the recorded one, bit for bit.
-func TestPSOutputGolden(t *testing.T) {
-	route := psGoldenRoute()
-	record := os.Getenv("PS_GOLDEN_RECORD") != ""
-	var golden map[string]string
-	var recorded strings.Builder
-	if !record {
-		golden = psGoldenLoad(t, route)
-	}
-	seen := 0
-	check := func(name, got string) {
+// TestPSOutputBound: the decoded PCM of every PS stream is within aacPSHybridBound of the
+// float64 pipeline's, and is not the same to the bit (the binary32 stage ran).
+func TestPSOutputBound(t *testing.T) {
+	var worst float64
+	var at string
+	check := func(name string, run func(t *testing.T) (l, r []float32)) {
 		t.Helper()
-		seen++
-		fmt.Fprintf(&recorded, "%s %s\n", name, got)
-		if record || golden == nil {
-			return
+		l, r := run(t)
+		restore := installHybOracle()
+		wl, wr := run(t)
+		restore()
+		d1, _ := sbrMaxDiff(l, wl)
+		d2, _ := sbrMaxDiff(r, wr)
+		d := math.Max(d1, d2)
+		if d > worst {
+			worst, at = d, name
 		}
-		if want, ok := golden[name]; !ok || want != got {
-			t.Errorf("%s (route %s): output SHA-256 %s, recorded %q", name, route, got, want)
+		if d > aacPSHybridBound {
+			t.Errorf("%s: PCM differs from the float64 pipeline by %.3e, the bound is %.3e", name, d, aacPSHybridBound)
 		}
 	}
 	for _, spec := range append(psStreamSpecs(), psDropoutSpecs()...) {
 		b := psBuildStream(t, spec)
 		cfg, frames := aacADTSFrames(t, psStreamFile(t, spec.name, b))
-		l, r, _ := psDecodeFramesMode(t, cfg, frames, psStreamFrames, psTestMode{ffImage: spec.ffImage})
-		check(spec.name, psOutputSHA(l, r))
+		check(spec.name, func(t *testing.T) ([]float32, []float32) {
+			l, r, _ := psDecodeFramesMode(t, cfg, frames, psStreamFrames, psTestMode{ffImage: spec.ffImage})
+			return l, r
+		})
 	}
 	cfg, fr := aacADTSFrames(t, filepath.Join("testdata", "aac", "he44-ps.aac"))
-	l, r, _ := psDecodeFrames(t, cfg, fr, len(fr))
-	check("he44-ps.aac", psOutputSHA(l, r))
-	if record {
-		path := filepath.Join("testdata", "aac", "psgolden", route+".txt")
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(recorded.String()), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		t.Logf("recorded %d streams for route %s", seen, route)
-		return
-	}
-	if golden == nil {
-		// a lane that cannot be run by hand (qemu in CI) records from its log
-		for _, ln := range strings.Split(strings.TrimSpace(recorded.String()), "\n") {
-			t.Logf("PSGOLDEN %s %s", route, ln)
-		}
-		t.Errorf("route %s has no testdata/aac/psgolden/%s.txt", route, route)
-		return
-	}
-	if seen != len(golden) {
-		t.Errorf("route %s: %d streams decoded, %d recorded", route, seen, len(golden))
+	check("he44-ps.aac", func(t *testing.T) ([]float32, []float32) {
+		l, r, _ := psDecodeFrames(t, cfg, fr, len(fr))
+		return l, r
+	})
+	t.Logf("largest over the streams %.3e (2^%.2f) in %s, the bound is 2^-17", worst, math.Log2(worst), at)
+	if worst == 0 {
+		t.Error("the float64 pipeline's output is the decoder's to the bit: the oracle did not route")
 	}
 }

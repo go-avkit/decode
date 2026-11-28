@@ -347,28 +347,6 @@ func (h *psHyb32) end(x *[sbrQMFSlots][sbrSynBands]complex128) {
 	}
 }
 
-// psSynthesiseSlot32 is the synthesis of one slot of rows: the sums of the rows of the
-// split bands (added in row order, in complex128) and the other rows copied, into the
-// synthesis bank's inputs, binary32: a[k] the real part of band k and b[63-k] its
-// imaginary part.
-func psSynthesiseSlot32(r *[psMaxRows]complex128, is34 bool, a, b *[sbrSynBands]float32) {
-	ly := psLayoutOf(is34)
-	for k := 0; k < ly.nSplit; k++ {
-		var sum complex128
-		for _, v := range r[ly.start[k]:ly.start[k+1]] {
-			sum += v
-		}
-		a[k], b[sbrSynBands-1-k] = float32(real(sum)), float32(imag(sum))
-	}
-	for j, v := range r[ly.start[ly.nSplit]:] {
-		k := ly.nSplit + j
-		if k >= sbrSynBands {
-			break
-		}
-		a[k], b[sbrSynBands-1-k] = float32(real(v)), float32(imag(v))
-	}
-}
-
 // psHybOracle is the slot pipeline of a frame; the decoder's is psHyb32.pipeline and the
 // tests substitute the float64 bank (psNewHybOracle, as sbrNewAdjOracle does for the
 // envelope adjustment).
@@ -379,31 +357,6 @@ type psHybOracle interface {
 // psNewHybOracle, when set by a test, makes every sbrState made after it run its PS
 // frames through the oracle it returns.
 var psNewHybOracle func() psHybOracle
-
-// pipeline is the applied PS path of a frame run slot by slot: for each of the 32
-// slots the hybrid analysis, the transient detector, the decorrelator and mixer, the hybrid
-// synthesis of the left and of the right block, and the synthesis bank's transform of
-// each, so that a slot's rows live in the cache from analysis to PCM instead of the frame's
-// 46 KB matrices being written and read by every stage in turn.
-func (h *psHyb32) pipeline(s *sbrState, d *sbrChanDSP, kx, m int, out [2][]float32) {
-	mx := s.mix
-	is34 := s.ps.is34
-	var look [psLook][psSplitMax]complex128
-	d.psLookAhead(kx, &look)
-	h.begin(&d.x, &look, is34)
-	dl := mx.begin(&s.ps, kx+m)
-	outL, outR := d.syn.begin(out[0]), mx.syn.begin(out[1])
-	var rows, rr [psMaxRows]complex128
-	for n := 0; n < sbrQMFSlots; n++ {
-		h.slot(n, &d.x, is34, &rows)
-		mx.transientSlot(n, &rows, dl)
-		mx.step(n, &rows, &rr, dl)
-		psSynthesiseSlot32(&rows, is34, &d.syn.a, &d.syn.b)
-		psSynthesiseSlot32(&rr, is34, &mx.syn.a, &mx.syn.b)
-		slotQuad32(&d.syn, &mx.syn, (*[sbrSynBands]float32)(outL[n*sbrSynBands:]), (*[sbrSynBands]float32)(outR[n*sbrSynBands:]))
-	}
-	h.end(&d.x)
-}
 
 // psLookAhead takes the six slots that follow the frame from the low band analysis: the
 // SBR output lags the analysis by sbrHFAdj slots and the array holds sbrHFGen slots of
@@ -440,7 +393,7 @@ func (s *sbrState) psApplyFrame(d *sbrChanDSP, kx, m int, withSBR bool, out [2][
 		if s.hyb == nil {
 			s.hyb = new(psHyb32)
 		}
-		s.hyb.pipeline(s, d, kx, m, out)
+		s.hyb.pipeline32(s, d, kx, m, out)
 		return
 	}
 	{

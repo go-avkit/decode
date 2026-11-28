@@ -9,7 +9,7 @@ require (
 	github.com/go-avkit/h265 v0.24.2
 	github.com/go-dsp/signal v0.2.0
 	github.com/go-fft/fft v0.45.0
-	github.com/go-simd/floats v0.41.0
+	github.com/go-simd/floats v0.43.0
 	github.com/mewkiz/flac v1.0.14
 	github.com/pion/opus v0.1.0
 	github.com/thesyncim/govpx v0.5.2

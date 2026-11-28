@@ -366,7 +366,11 @@ bank's transforms. The float64 bank (v0.17.1) is the test-tree oracle
 (`aac_ps_hybridf64_test.go`, installed by `installHybOracle`). Stated bound: the PCM
 differs from the oracle's by at most 2^-17 of full scale (`TestPSHybridBoundFixtures`,
 `TestPSHybridBoundStreams`); measured 2^-23 on the synthetic PS streams and `he44-ps.aac`.
-The golden output hashes (`testdata/aac/psgolden`) are re-recorded per route.
+The decorrelation and mixing stage runs on binary32 split re/im planes (`aac_ps_mix32.go`,
+all-pass links by `floats.AllPass3Split32`); the float64 `step` stays as the test oracle.
+There are no recorded output hashes any more: `TestPSOutputBound` holds the PCM of every
+PS stream to 2^-17 of the float64 pipeline, and `TestPSStage32Bound` holds the stage alone
+to 2^-20 of each row's peak (measured 1.9e-7).
 
 ## PS3 as built
 

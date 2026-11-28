@@ -50,7 +50,7 @@ import (
 // tests assert it against the definition in float64 and against 256-bit arithmetic;
 // the chain of a whole stream is asserted to an empirical 2^-21 of its peak. The
 // output PCM is no longer bit identical across routes (arm64, amd64 with AVX2+FMA,
-// portable), see the goldens of aac_ps_golden_test.go. The plan is immutable and shared; the working memory of one channel
+// portable), see the stated bound of aac_ps_golden_test.go. The plan is immutable and shared; the working memory of one channel
 // lives in its sbrAnalysis and sbrSynthesis, so decoders never share a buffer.
 
 // Sizes of the banks.
